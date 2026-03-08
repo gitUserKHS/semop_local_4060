@@ -1,0 +1,1 @@
+{"rules": [{"id": "rule1", "domain": "warehouse_exception", "scenario": "exception_response", "trigger_terms": ["blocked", "approval"], "require_terms": ["approval", "safety"], "avoid_phrases": ["proceed without approval"], "recommended_actions": ["Check approval and safety conditions before moving the pallet."], "explanation": "Supervisor feedback rule"}]}

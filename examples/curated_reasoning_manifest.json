@@ -1,0 +1,68 @@
+[
+  {
+    "name": "gsm8k_train",
+    "source": "gsm8k_train",
+    "urls": [
+      "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/train.jsonl"
+    ],
+    "extract": false,
+    "augment": false,
+    "train_ratio": 0.9,
+    "query_fields": [
+      "question"
+    ],
+    "answer_fields": [
+      "answer"
+    ]
+  },
+  {
+    "name": "gsm_ic_2step",
+    "source": "gsm_ic_2step",
+    "urls": [
+      "https://raw.githubusercontent.com/google-research-datasets/GSM-IC/main/GSM-IC_2step.json"
+    ],
+    "extract": false,
+    "augment": false,
+    "train_ratio": 0.8,
+    "query_fields": [
+      "new_question",
+      "original_question"
+    ],
+    "answer_fields": [
+      "answer"
+    ]
+  },
+  {
+    "name": "officeqa",
+    "source": "officeqa",
+    "urls": [
+      "https://raw.githubusercontent.com/databricks/officeqa/main/officeqa.csv"
+    ],
+    "extract": false,
+    "augment": false,
+    "train_ratio": 0.85,
+    "query_fields": [
+      "question"
+    ],
+    "answer_fields": [
+      "answer"
+    ]
+  },
+  {
+    "name": "bigbench_mistake_logical",
+    "source": "bigbench_mistake_logical",
+    "urls": [
+      "https://raw.githubusercontent.com/WHGTyen/BIG-Bench-Mistake/main/logical_deduction.jsonl"
+    ],
+    "extract": false,
+    "augment": false,
+    "train_ratio": 0.85,
+    "query_fields": [
+      "input"
+    ],
+    "answer_fields": [
+      "target",
+      "answer"
+    ]
+  }
+]

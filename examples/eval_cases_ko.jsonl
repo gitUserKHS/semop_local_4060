@@ -1,0 +1,2 @@
+{"query":"가방에 책을 넣으려면 어떻게 해야 하나요?","expected_relations":[["zipper","PART_OF","bag"],["compartment","PART_OF","bag"],["insert_book","REQUIRES","open_access"]],"forbidden_advice":["가방을 열지 않고 그냥 밀어 넣는다"]}
+{"query":"세차장이 멀고 길이 막히는데 어떻게 가야 할까요?","expected_relations":[["car_wash","REQUIRES","vehicle_present"],["drive_to_car_wash","BLOCKED_BY","traffic"]],"forbidden_advice":["차 없이 걸어서 세차장까지 간다"]}

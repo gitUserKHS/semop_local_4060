@@ -1,0 +1,102 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Virtual environments and local Python installs
+.venv/
+.venv312/
+venv/
+env/
+ENV/
+python312/
+
+# Local machine and editor files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local secrets and machine-specific overrides
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+secrets/
+
+# Build and packaging artifacts
+build/
+dist/
+site/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Temporary and diagnostic files
+.tmp/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.log
+*.pid
+
+# Model caches and downloaded checkpoints
+.cache/
+.huggingface/
+models/
+checkpoints/
+outputs/
+runs/
+artifacts/
+*.safetensors
+*.bin
+*.ot
+*.onnx
+*.h5
+
+# Runtime data and local experiment outputs
+data/**/*.db
+data/**/*.sqlite
+data/**/*.sqlite3
+data/**/*_downloads/
+data/**/*_downloads_312/
+data/**/*_normalized/
+data/**/*_normalized_312/
+data/downloads/
+data/manifest_downloads/
+data/manifest_downloads_312/
+data/manifest_normalized/
+data/manifest_normalized_312/
+data/reasoning_core_downloads_312/
+data/reasoning_core_normalized_312/
+data/starter_downloads_312/
+data/starter_normalized_312/
+data/all_public_downloads_312/
+data/all_public_normalized_312/
+data/evals/
+data/feedback_rules*.json
+data/*review_queue*.db
+data/*manifest*.json
+
+# Keep empty customer document folder in git, but not uploaded customer docs
+data/customer_docs/*
+!data/customer_docs/.gitkeep
+
+# Generated customer evaluation outputs
+data/customer_eval*.jsonl
+
+# Project-local reference documents
+semantic_operator_plan_2026_v3_structured_meaning.pdf

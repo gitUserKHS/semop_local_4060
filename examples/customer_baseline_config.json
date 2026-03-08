@@ -1,0 +1,1 @@
+﻿{"name": "customer_ops_keyword_baseline", "top_k": 2, "required_any": ["승인", "보류", "라벨"], "preferred_order": ["보류", "승인", "재스캔"], "keyword_bonus": {"승인": 1.5, "보류": 1.5, "재스캔": 1.2, "안전": 1.0}}

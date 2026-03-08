@@ -1,0 +1,2 @@
+{"query": "학생이 이동 중이에요. 가방이 꽉 차 있는데 책을 넣으려면 먼저 무엇을 봐야 하나요?", "normalized_query": "학생이 이동 중이에요. 가방이 꽉 차 있는데 책을 넣으려면 먼저 무엇을 봐야 하나요", "source": "public_reasoning_sample", "split": "train", "tags": ["container_access"], "augmented": false}
+{"query": "차량을 가지고 이동해야 해요. 세차장이 멀고 길이 막히는데 어떻게 가야 할까요?", "normalized_query": "차량을 가지고 이동해야 해요. 세차장이 멀고 길이 막히는데 어떻게 가야 할까요", "source": "public_reasoning_sample", "split": "train", "tags": ["service_place", "travel_constraint"], "augmented": false}

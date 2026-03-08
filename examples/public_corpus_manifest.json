@@ -1,0 +1,24 @@
+﻿[
+  {
+    "name": "sample_csv_remote",
+    "source": "manifest_csv_demo",
+    "urls": ["public_reasoning_sample.csv"],
+    "extract": false,
+    "augment": true,
+    "train_ratio": 0.8,
+    "query_fields": ["question"],
+    "context_fields": ["context"],
+    "answer_fields": ["answer"]
+  },
+  {
+    "name": "sample_json_remote",
+    "source": "manifest_json_demo",
+    "urls": ["public_reasoning_sample.json"],
+    "extract": false,
+    "augment": true,
+    "train_ratio": 0.8,
+    "query_fields": ["question", "instruction"],
+    "context_fields": ["context"],
+    "answer_fields": ["answer", "output"]
+  }
+]

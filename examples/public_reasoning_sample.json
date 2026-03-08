@@ -1,0 +1,13 @@
+﻿[
+  {
+    "instruction": "옷장이 꽉 차 있는데 물건을 넣으려면 어떤 점검이 필요한가요?",
+    "output": "먼저 접근 가능한 상태를 만들고 공간을 확인해야 합니다.",
+    "domain": "container_access"
+  },
+  {
+    "question": "주차장이 멀고 차가 막히는데 지금 가는 게 맞을까요?",
+    "context": "시간은 촉박하지 않습니다.",
+    "answer": "교통과 긴급도를 같이 보고 미루거나 대안을 검토해야 합니다.",
+    "domain": "travel_constraint"
+  }
+]
