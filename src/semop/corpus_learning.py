@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 from .latent_abstraction import OperatorAbstractionClustering
+from .logical_grammar import LogicalGrammarInducer, LogicalPattern
 from .pipeline import StructuredMeaningPipeline
 from .structures import OperatorCandidate, StructuredMeaningGraph
 
@@ -39,6 +40,7 @@ class CorpusLearningResult:
     intent_distribution: Dict[str, int]
     relation_distribution: Dict[str, int]
     learned_families: List[LearnedOperatorFamily]
+    logical_patterns: List[LogicalPattern]
     examples: List[CorpusExampleSummary]
 
     def to_dict(self) -> Dict[str, object]:
@@ -54,6 +56,7 @@ class CorpusReasoningLearner:
     def __init__(self, mode: str = "heuristic", model_id: str = "Qwen/Qwen2.5-3B-Instruct"):
         self.pipeline = StructuredMeaningPipeline(mode=mode, model_id=model_id)
         self.clusterer = OperatorAbstractionClustering()
+        self.grammar_inducer = LogicalGrammarInducer()
 
     def learn_from_queries(self, queries: Sequence[str]) -> CorpusLearningResult:
         graphs: List[StructuredMeaningGraph] = []
@@ -78,11 +81,13 @@ class CorpusReasoningLearner:
             )
 
         learned_families = self._learn_operator_families(graphs)
+        logical_patterns = self.grammar_inducer.induce(graphs).patterns
         return CorpusLearningResult(
             corpus_size=len(queries),
             intent_distribution=dict(sorted(intent_distribution.items())),
             relation_distribution=dict(sorted(relation_distribution.items())),
             learned_families=learned_families,
+            logical_patterns=logical_patterns,
             examples=example_summaries,
         )
 

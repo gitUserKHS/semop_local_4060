@@ -1,0 +1,76 @@
+{
+  "label": "simple geometric scene",
+  "objects": [
+    {
+      "id": "region_outer",
+      "kind": "region",
+      "bbox": [
+        0,
+        0,
+        10,
+        10
+      ]
+    },
+    {
+      "id": "region_inner",
+      "kind": "region",
+      "bbox": [
+        2,
+        2,
+        4,
+        4
+      ]
+    },
+    {
+      "id": "region_right",
+      "kind": "region",
+      "bbox": [
+        12,
+        2,
+        16,
+        6
+      ]
+    }
+  ],
+  "geometry": [
+    {
+      "id": "line_ab",
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          4,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "line_cd",
+      "points": [
+        [
+          1,
+          2
+        ],
+        [
+          5,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "line_ef",
+      "points": [
+        [
+          2,
+          -1
+        ],
+        [
+          2,
+          3
+        ]
+      ]
+    }
+  ]
+}

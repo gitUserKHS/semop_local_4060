@@ -58,7 +58,7 @@ Also write a short resolution note.
 ### 3. Learn rules from reviewed items
 
 ```bash
-.\.venv312\Scripts\python.exe learn_feedback_rules.py ^
+.\.venv312\Scripts\python.exe tools/ops/learn_feedback_rules.py ^
   --review-queue data\ops_review_queue.db ^
   --output data\feedback_rules.json
 ```
@@ -88,7 +88,7 @@ So if you want a rule to apply later, the future run must use the same or compat
 If a customer gives you a folder of `.txt` or `.md` files, build eval stubs first.
 
 ```bash
-.\.venv312\Scripts\python.exe build_customer_eval_from_docs.py ^
+.\.venv312\Scripts\python.exe tools/ops/build_customer_eval_from_docs.py ^
   --inputs data\customer_docs ^
   --output data\customer_eval.jsonl ^
   --max-cases 50
@@ -97,7 +97,7 @@ If a customer gives you a folder of `.txt` or `.md` files, build eval stubs firs
 Then benchmark against the customer baseline.
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py ^
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py ^
   --input data\customer_eval.jsonl ^
   --baseline configurable_keyword ^
   --baseline-config data\customer_baseline_config.json
@@ -113,3 +113,4 @@ Start with:
 - repeated clarification misses
 
 Those four categories usually give the highest value first.
+

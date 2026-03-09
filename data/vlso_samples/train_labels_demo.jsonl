@@ -1,0 +1,2 @@
+{"image_path": "data/vlso_samples/backpack_public_domain.jpg", "targets": [{"subject_id": "", "positive_labels": ["BAG_LIKE_CONTAINER"], "negative_labels": []}], "notes": "dominant backpack body"}
+{"image_path": "data/vlso_samples/military_backpack_cc0.jpg", "targets": [{"subject_id": "", "positive_labels": ["BAG_LIKE_CONTAINER"], "negative_labels": []}], "notes": "dominant military backpack body"}

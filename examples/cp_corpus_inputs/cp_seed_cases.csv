@@ -1,0 +1,6 @@
+﻿problem
+Given a grid maze, find the minimum number of steps from S to T.
+There are point updates and range sum queries on an array. Process every query online.
+Process point updates and range minimum queries on an array.
+Support range add updates and range sum queries with lazy propagation.
+Find the minimum possible maximum segment sum when splitting the array into at most K groups.

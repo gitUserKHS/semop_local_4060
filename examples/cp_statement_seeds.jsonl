@@ -1,0 +1,8 @@
+﻿{"statement":"Given an array and many range sum queries, output the sum from l to r for each query."}
+{"statement":"Given a weighted graph with N cities and M roads, answer the shortest path from city 1 to all cities."}
+{"statement":"Process connectivity queries on an undirected graph where edges are added over time and answer whether two nodes are in the same component."}
+{"statement":"You are given item weights and values and a maximum capacity W. Maximize the total value without exceeding W."}
+{"statement":"Given a grid maze, find the minimum number of steps from S to T."}
+{"statement":"Process point updates and range minimum queries on an array."}
+{"statement":"Support range add updates and range sum queries with lazy propagation."}
+{"statement":"Find the minimum possible maximum segment sum when splitting the array into at most K groups."}

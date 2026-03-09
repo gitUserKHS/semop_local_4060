@@ -1,4 +1,4 @@
-# Corpus-Scale Operator Hierarchy Plan
+﻿# Corpus-Scale Operator Hierarchy Plan
 
 ## Target
 
@@ -20,7 +20,7 @@ Goals:
 
 Implemented:
 - `src/semop/operator_hierarchy.py`
-- `build_operator_hierarchy.py`
+- `tools/corpus/build_operator_hierarchy.py`
 - SQLite persistence in `src/semop/corpus_store.py`
 
 ## Phase 2: Typed operator registry
@@ -63,3 +63,4 @@ Metrics:
 4. Turn high-support L3 nodes into registry seeds.
 5. Refresh stored corpora so new diversity-aware induction replaces stale graphs.
 6. Connect registry-guided execution back into the pipeline.
+

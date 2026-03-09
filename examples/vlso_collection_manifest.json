@@ -1,0 +1,49 @@
+{
+  "sources": [
+    {
+      "provider": "wikimedia_commons",
+      "query": "backpack zipper",
+      "limit": 10,
+      "categories": [
+        "Backpacks"
+      ],
+      "output_tags": [
+        "container",
+        "bag",
+        "opening"
+      ],
+      "metadata": {
+        "purpose": "seed_vlso_container_concepts"
+      }
+    },
+    {
+      "provider": "openverse",
+      "query": "tool bag handle",
+      "limit": 10,
+      "license_filters": [
+        "by",
+        "cc0"
+      ],
+      "output_tags": [
+        "bag",
+        "handle",
+        "few_shot"
+      ],
+      "metadata": {
+        "purpose": "concept_expansion"
+      }
+    },
+    {
+      "provider": "pexels",
+      "query": "travel backpack",
+      "limit": 8,
+      "output_tags": [
+        "bag",
+        "photo_quality"
+      ],
+      "metadata": {
+        "requires_key": true
+      }
+    }
+  ]
+}

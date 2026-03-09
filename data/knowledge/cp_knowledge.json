@@ -1,0 +1,776 @@
+{
+  "version": 1,
+  "updated_at": "2026-03-09",
+  "sources": [
+    {
+      "id": "nvidia_rtx_4060",
+      "title": "GeForce RTX 4060 Family",
+      "url": "https://www.nvidia.com/en-gb/geforce/graphics-cards/40-series/rtx-4060-4060ti/"
+    },
+    {
+      "id": "pytorch_cuda_semantics",
+      "title": "PyTorch CUDA semantics",
+      "url": "https://docs.pytorch.org/docs/stable/notes/cuda"
+    },
+    {
+      "id": "gcc_cpp17",
+      "title": "GCC Standards",
+      "url": "https://gcc.gnu.org/onlinedocs/gcc-14.3.0/gcc/Standards.html"
+    },
+    {
+      "id": "acl_index",
+      "title": "AtCoder Library Document",
+      "url": "https://atcoder.github.io/ac-library/production/document_en/index.html"
+    },
+    {
+      "id": "acl_dsu",
+      "title": "AtCoder Library DSU",
+      "url": "https://atcoder.github.io/ac-library/production/document_en/dsu.html"
+    },
+    {
+      "id": "acl_fenwick",
+      "title": "AtCoder Library Fenwick Tree",
+      "url": "https://atcoder.github.io/ac-library/production/document_en/fenwicktree.html"
+    },
+    {
+      "id": "acl_segtree",
+      "title": "AtCoder Library Segtree",
+      "url": "https://atcoder.github.io/ac-library/production/document_en/segtree.html"
+    },
+    {
+      "id": "acl_lazy_segtree",
+      "title": "AtCoder Library Lazy Segtree",
+      "url": "https://atcoder.github.io/ac-library/master/document_en/lazysegtree.html"
+    }
+  ],
+  "hardware_profile": {
+    "gpu": "RTX 4060 8GB",
+    "notes": [
+      "Use the GPU for lightweight reranking, embedding, or local parser assistance rather than large-model training.",
+      "The main CP pipeline should stay CPU-first: parsing, algorithm selection, complexity analysis, code generation, and g++ syntax checks.",
+      "On RTX 4060 8GB, keep model usage auxiliary and avoid large fine-tuning workloads."
+    ],
+    "source_ids": [
+      "nvidia_rtx_4060",
+      "pytorch_cuda_semantics"
+    ]
+  },
+  "compiler_profile": {
+    "language_standard": "c++17",
+    "compile_command": "g++ -std=c++17 -O2 -Wall -Wextra -fsyntax-only",
+    "source_ids": [
+      "gcc_cpp17"
+    ],
+    "local_compiler_observation": {
+      "binary": "g++",
+      "version": "MinGW.org GCC 6.3.0-1",
+      "implication": "Prefer a conservative C++17 subset and avoid relying on structured bindings in generated templates."
+    }
+  },
+  "algorithms": [
+    {
+      "id": "prefix_sum_range_query",
+      "family": "array_query",
+      "triggers": [
+        "range sum",
+        "sum from l to r",
+        "interval sum",
+        "many queries",
+        "prefix sum"
+      ],
+      "hidden_concepts": [
+        "offline preprocessing",
+        "constant-time range answer",
+        "additive monoid"
+      ],
+      "time_complexity": "O(N+Q)",
+      "memory_complexity": "O(N)",
+      "source_ids": [
+        "acl_fenwick"
+      ],
+      "template_kind": "prefix_sum"
+    },
+    {
+      "id": "fenwick_tree",
+      "family": "array_query",
+      "triggers": [
+        "point update",
+        "range sum",
+        "dynamic sum queries",
+        "increment and sum"
+      ],
+      "hidden_concepts": [
+        "binary indexed tree",
+        "prefix decomposition"
+      ],
+      "time_complexity": "O((N+Q) log N)",
+      "memory_complexity": "O(N)",
+      "source_ids": [
+        "acl_fenwick"
+      ],
+      "template_kind": "fenwick"
+    },
+    {
+      "id": "segment_tree",
+      "family": "range_data_structure",
+      "triggers": [
+        "range query",
+        "point update",
+        "min query",
+        "max query",
+        "segtree"
+      ],
+      "hidden_concepts": [
+        "monoid",
+        "associativity",
+        "logarithmic query/update"
+      ],
+      "time_complexity": "O((N+Q) log N)",
+      "memory_complexity": "O(N)",
+      "source_ids": [
+        "acl_segtree"
+      ],
+      "template_kind": "segtree"
+    },
+    {
+      "id": "lazy_segment_tree",
+      "family": "range_data_structure",
+      "triggers": [
+        "range update",
+        "range query",
+        "lazy propagation",
+        "interval add",
+        "interval assign"
+      ],
+      "hidden_concepts": [
+        "monoid action",
+        "lazy tag propagation"
+      ],
+      "time_complexity": "O((N+Q) log N)",
+      "memory_complexity": "O(N)",
+      "source_ids": [
+        "acl_lazy_segtree"
+      ],
+      "template_kind": "lazy_segtree"
+    },
+    {
+      "id": "dsu_connectivity",
+      "family": "graph_connectivity",
+      "triggers": [
+        "connectivity queries",
+        "merge sets",
+        "disjoint set",
+        "union find",
+        "same component"
+      ],
+      "hidden_concepts": [
+        "connected components",
+        "amortized inverse Ackermann"
+      ],
+      "time_complexity": "O((N+Q) alpha(N))",
+      "memory_complexity": "O(N)",
+      "source_ids": [
+        "acl_dsu"
+      ],
+      "template_kind": "dsu"
+    },
+    {
+      "id": "dijkstra_shortest_path",
+      "family": "graph_shortest_path",
+      "triggers": [
+        "weighted graph",
+        "shortest path",
+        "minimum distance",
+        "minimum cost",
+        "roads",
+        "travel time"
+      ],
+      "hidden_concepts": [
+        "nonnegative edge weights",
+        "priority queue",
+        "stale heap entries"
+      ],
+      "time_complexity": "O((N+M) log N)",
+      "memory_complexity": "O(N+M)",
+      "source_ids": [
+        "acl_index"
+      ],
+      "template_kind": "dijkstra"
+    },
+    {
+      "id": "grid_bfs",
+      "family": "graph_shortest_path",
+      "triggers": [
+        "grid",
+        "maze",
+        "minimum steps",
+        "fewest moves",
+        "shortest path on board"
+      ],
+      "hidden_concepts": [
+        "unweighted graph",
+        "state as cell",
+        "four-direction traversal"
+      ],
+      "time_complexity": "O(HW)",
+      "memory_complexity": "O(HW)",
+      "source_ids": [
+        "acl_index"
+      ],
+      "template_kind": "grid_bfs"
+    },
+    {
+      "id": "binary_search_answer",
+      "family": "search",
+      "triggers": [
+        "minimum possible",
+        "maximum possible",
+        "maximize the minimum",
+        "minimize the maximum",
+        "monotone"
+      ],
+      "hidden_concepts": [
+        "feasibility predicate",
+        "monotonicity"
+      ],
+      "time_complexity": "O(log R * check)",
+      "memory_complexity": "O(1) or check-dependent",
+      "source_ids": [
+        "gcc_cpp17"
+      ],
+      "template_kind": "binary_search"
+    },
+    {
+      "id": "knapsack_dp",
+      "family": "dynamic_programming",
+      "triggers": [
+        "capacity",
+        "weight",
+        "value",
+        "maximize value",
+        "at most weight"
+      ],
+      "hidden_concepts": [
+        "state compression",
+        "1D DP",
+        "reverse iteration"
+      ],
+      "time_complexity": "O(NW)",
+      "memory_complexity": "O(W)",
+      "source_ids": [
+        "gcc_cpp17"
+      ],
+      "template_kind": "knapsack"
+    }
+  ],
+  "logical_frames": [
+    {
+      "id": "single_source_shortest_path",
+      "triggers": [
+        "weighted graph",
+        "shortest path",
+        "from city 1",
+        "roads",
+        "travel time"
+      ],
+      "inferred_concepts": [
+        "source fixed at one node",
+        "distance relaxation",
+        "priority-driven frontier"
+      ],
+      "reduction_goal": "reduce the statement into a graph shortest-path state space",
+      "reasoning_operator": "STATE_GRAPH + NONNEGATIVE_COST + FRONTIER_MINIMIZE"
+    },
+    {
+      "id": "offline_range_aggregation",
+      "triggers": [
+        "range sum",
+        "sum from l to r",
+        "many queries",
+        "interval sum"
+      ],
+      "inferred_concepts": [
+        "query repetition",
+        "prefix aggregation",
+        "preprocess once answer many"
+      ],
+      "reduction_goal": "reduce repeated interval questions into reusable aggregates",
+      "reasoning_operator": "PRECOMPUTE + RANGE_DECOMPOSE"
+    },
+    {
+      "id": "dynamic_range_aggregation",
+      "triggers": [
+        "point update",
+        "range query",
+        "dynamic sum queries",
+        "change and query"
+      ],
+      "inferred_concepts": [
+        "online updates",
+        "logarithmic maintenance",
+        "range decomposition"
+      ],
+      "reduction_goal": "maintain an aggregate under updates and queries",
+      "reasoning_operator": "UPDATE_PROPAGATE + RANGE_QUERY"
+    },
+    {
+      "id": "dynamic_connectivity",
+      "triggers": [
+        "union find",
+        "same component",
+        "connectivity queries",
+        "merge sets"
+      ],
+      "inferred_concepts": [
+        "equivalence classes",
+        "component representative",
+        "amortized merging"
+      ],
+      "reduction_goal": "represent connectivity as disjoint-set representatives",
+      "reasoning_operator": "MERGE_COMPONENTS + REPRESENTATIVE_QUERY"
+    },
+    {
+      "id": "grid_shortest_walk",
+      "triggers": [
+        "grid",
+        "maze",
+        "minimum steps",
+        "fewest moves"
+      ],
+      "inferred_concepts": [
+        "implicit graph",
+        "uniform edge cost",
+        "neighbor expansion"
+      ],
+      "reduction_goal": "turn cells into graph states and search breadth-first",
+      "reasoning_operator": "GRID_TO_GRAPH + BFS_LAYERING"
+    },
+    {
+      "id": "monotone_answer_search",
+      "triggers": [
+        "minimum possible",
+        "maximum possible",
+        "maximize the minimum",
+        "minimize the maximum",
+        "monotone"
+      ],
+      "inferred_concepts": [
+        "ordered answer space",
+        "feasibility predicate",
+        "monotonicity"
+      ],
+      "reduction_goal": "search the answer space through monotone feasibility",
+      "reasoning_operator": "FEASIBILITY_CHECK + BISECTION"
+    },
+    {
+      "id": "capacity_value_tradeoff",
+      "triggers": [
+        "capacity",
+        "weight",
+        "value",
+        "maximize value",
+        "at most weight"
+      ],
+      "inferred_concepts": [
+        "state by capacity",
+        "take-or-skip transition",
+        "optimal substructure"
+      ],
+      "reduction_goal": "compress the problem into dynamic-programming state transitions",
+      "reasoning_operator": "STATE_TRANSITION + OPTIMAL_SUBSTRUCTURE"
+    }
+  ],
+  "coding_rules": [
+    {
+      "id": "prefer_conservative_cpp17",
+      "rule": "Generate code that compiles under conservative C++17 toolchains and avoid fragile modern syntax when not necessary.",
+      "source_ids": [
+        "gcc_cpp17"
+      ]
+    },
+    {
+      "id": "always_compile_check",
+      "rule": "Run a syntax-only compile check after template generation before trusting the solution sketch.",
+      "source_ids": [
+        "gcc_cpp17"
+      ]
+    }
+  ],
+  "dsl_operators": [
+    {
+      "id": "HAS",
+      "category": "relation",
+      "description": "Entity owns or contains a property, resource, or adjacency relation.",
+      "trigger_hints": [
+        "has",
+        "contains",
+        "with",
+        "there is"
+      ]
+    },
+    {
+      "id": "IS_A",
+      "category": "relation",
+      "description": "Entity belongs to a structural type such as graph, tree, grid, or permutation.",
+      "trigger_hints": [
+        "is a",
+        "graph",
+        "tree",
+        "grid",
+        "permutation"
+      ]
+    },
+    {
+      "id": "CONSTRAINT",
+      "category": "constraint",
+      "description": "Explicit numeric or structural restriction from the statement.",
+      "trigger_hints": [
+        "n <=",
+        "time limit",
+        "memory limit",
+        "at most"
+      ]
+    },
+    {
+      "id": "COUNT",
+      "category": "goal",
+      "description": "Count the number of valid objects or outcomes.",
+      "trigger_hints": [
+        "count",
+        "how many",
+        "number of"
+      ]
+    },
+    {
+      "id": "OPTIMIZE",
+      "category": "goal",
+      "description": "Minimize or maximize an objective value.",
+      "trigger_hints": [
+        "minimum",
+        "maximum",
+        "minimize",
+        "maximize",
+        "best"
+      ]
+    },
+    {
+      "id": "DECIDE",
+      "category": "goal",
+      "description": "Answer a yes/no feasibility question.",
+      "trigger_hints": [
+        "possible",
+        "whether",
+        "can we",
+        "exists"
+      ]
+    },
+    {
+      "id": "CONSTRUCT",
+      "category": "goal",
+      "description": "Build one valid witness or arrangement.",
+      "trigger_hints": [
+        "construct",
+        "build",
+        "output any",
+        "find one"
+      ]
+    },
+    {
+      "id": "QUERY_LOOP",
+      "category": "interaction",
+      "description": "Process repeated queries over the same underlying object.",
+      "trigger_hints": [
+        "queries",
+        "for each query",
+        "many queries"
+      ]
+    },
+    {
+      "id": "STATE",
+      "category": "representation",
+      "description": "Introduce a problem state that can be transitioned or memoized.",
+      "trigger_hints": [
+        "state",
+        "dp",
+        "memo"
+      ]
+    },
+    {
+      "id": "TRANSITION",
+      "category": "dynamics",
+      "description": "Move from one state to another under local rules.",
+      "trigger_hints": [
+        "move",
+        "transition",
+        "step",
+        "next"
+      ]
+    },
+    {
+      "id": "DP_TRANSITION",
+      "category": "dynamics",
+      "description": "Use optimal-substructure state transitions.",
+      "trigger_hints": [
+        "capacity",
+        "value",
+        "weight",
+        "dp"
+      ]
+    },
+    {
+      "id": "INVARIANT",
+      "category": "logic",
+      "description": "Track a quantity or parity that stays preserved.",
+      "trigger_hints": [
+        "invariant",
+        "parity",
+        "preserve",
+        "unchanged"
+      ]
+    },
+    {
+      "id": "MONOTONE",
+      "category": "logic",
+      "description": "Use monotonicity to order feasible and infeasible regions.",
+      "trigger_hints": [
+        "monotone",
+        "minimum possible",
+        "maximum possible"
+      ]
+    },
+    {
+      "id": "CASE_SPLIT",
+      "category": "logic",
+      "description": "Split the analysis into disjoint structural cases.",
+      "trigger_hints": [
+        "case",
+        "otherwise",
+        "if",
+        "else"
+      ]
+    },
+    {
+      "id": "REDUCE_TO",
+      "category": "reduction",
+      "description": "Reduce the statement to a known algorithmic core.",
+      "trigger_hints": [
+        "reduce",
+        "equivalent to",
+        "can be seen as"
+      ]
+    },
+    {
+      "id": "PRECOMPUTE",
+      "category": "optimization",
+      "description": "Invest work once to answer many future queries cheaply.",
+      "trigger_hints": [
+        "precompute",
+        "many queries",
+        "prefix"
+      ]
+    },
+    {
+      "id": "PREFIX",
+      "category": "array",
+      "description": "Exploit prefix structure or cumulative aggregation.",
+      "trigger_hints": [
+        "prefix",
+        "prefix sum",
+        "cumulative"
+      ]
+    },
+    {
+      "id": "AGGREGATE",
+      "category": "array",
+      "description": "Combine local values through an associative summary.",
+      "trigger_hints": [
+        "sum",
+        "aggregate",
+        "combine"
+      ]
+    },
+    {
+      "id": "RANGE_QUERY",
+      "category": "array",
+      "description": "Answer interval or segment queries efficiently.",
+      "trigger_hints": [
+        "range",
+        "interval",
+        "segment",
+        "l to r"
+      ]
+    },
+    {
+      "id": "ARRAY_INDEX",
+      "category": "array",
+      "description": "Reason over positional indexing and boundaries.",
+      "trigger_hints": [
+        "array",
+        "index",
+        "position",
+        "1-indexed"
+      ]
+    },
+    {
+      "id": "SORT_BY",
+      "category": "ordering",
+      "description": "Order objects by a key to expose structure.",
+      "trigger_hints": [
+        "sort",
+        "ordered",
+        "increasing",
+        "decreasing"
+      ]
+    },
+    {
+      "id": "OFFLINE_PROCESS",
+      "category": "ordering",
+      "description": "Reorder queries or events before answering them.",
+      "trigger_hints": [
+        "offline",
+        "sort queries",
+        "process later"
+      ]
+    },
+    {
+      "id": "STATE_GRAPH",
+      "category": "graph",
+      "description": "Represent objects or states as vertices with transitions as edges.",
+      "trigger_hints": [
+        "graph",
+        "node",
+        "edge",
+        "state graph"
+      ]
+    },
+    {
+      "id": "SHORTEST_PATH",
+      "category": "graph",
+      "description": "Find minimal path cost in a graph or implicit graph.",
+      "trigger_hints": [
+        "shortest path",
+        "minimum distance",
+        "minimum cost"
+      ]
+    },
+    {
+      "id": "RELAX_EDGE",
+      "category": "graph",
+      "description": "Relax candidate distances through outgoing edges.",
+      "trigger_hints": [
+        "weighted graph",
+        "relax",
+        "distance"
+      ]
+    },
+    {
+      "id": "NEIGHBOR_EXPAND",
+      "category": "graph",
+      "description": "Expand local neighboring states such as adjacent cells.",
+      "trigger_hints": [
+        "neighbor",
+        "adjacent",
+        "grid",
+        "maze"
+      ]
+    },
+    {
+      "id": "GRID_TO_GRAPH",
+      "category": "graph",
+      "description": "Turn a board or grid into an implicit graph traversal problem.",
+      "trigger_hints": [
+        "grid",
+        "maze",
+        "board",
+        "cell"
+      ]
+    },
+    {
+      "id": "CONNECTIVITY",
+      "category": "graph",
+      "description": "Track whether elements are in the same connected component.",
+      "trigger_hints": [
+        "connected",
+        "same component",
+        "connectivity"
+      ]
+    },
+    {
+      "id": "MERGE_SETS",
+      "category": "graph",
+      "description": "Merge equivalence classes efficiently.",
+      "trigger_hints": [
+        "merge sets",
+        "union find",
+        "disjoint set"
+      ]
+    },
+    {
+      "id": "SUBTREE",
+      "category": "tree",
+      "description": "Exploit rooted subtree structure or Euler-tour style reduction.",
+      "trigger_hints": [
+        "subtree",
+        "rooted tree",
+        "children"
+      ]
+    },
+    {
+      "id": "TRAVERSE",
+      "category": "tree",
+      "description": "Traverse graph or tree states systematically.",
+      "trigger_hints": [
+        "dfs",
+        "bfs",
+        "traverse",
+        "visit"
+      ]
+    },
+    {
+      "id": "FEASIBILITY_CHECK",
+      "category": "search",
+      "description": "Test whether a candidate answer satisfies all requirements.",
+      "trigger_hints": [
+        "feasible",
+        "possible",
+        "check"
+      ]
+    },
+    {
+      "id": "BINARY_SEARCH",
+      "category": "search",
+      "description": "Search an ordered answer space via mid-point checks.",
+      "trigger_hints": [
+        "binary search",
+        "minimum possible",
+        "maximum possible"
+      ]
+    }
+  ],
+  "memory_schema": {
+    "semantic": [
+      "concepts",
+      "algorithm_families",
+      "invariants",
+      "complexity_signals"
+    ],
+    "structural": [
+      "goal_types",
+      "domain_tags",
+      "logical_frames",
+      "dsl_operators",
+      "constraints"
+    ],
+    "episodic": [
+      "retrieval_keys",
+      "candidate_algorithms",
+      "selected_algorithm",
+      "similar_failures"
+    ],
+    "procedural": [
+      "coding_rules",
+      "implementation_checklist",
+      "validation_plan"
+    ]
+  }
+}

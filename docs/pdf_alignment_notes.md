@@ -1,4 +1,4 @@
-# PDF Alignment Notes
+﻿# PDF Alignment Notes
 
 ## What The PDF Emphasizes
 
@@ -35,7 +35,7 @@ The new hierarchy learner moves the codebase in that direction because it:
 
 Relevant files:
 - `src/semop/operator_hierarchy.py`
-- `build_operator_hierarchy.py`
+- `tools/corpus/build_operator_hierarchy.py`
 - `src/semop/corpus_store.py`
 
 
@@ -78,3 +78,4 @@ The next high-value step is:
 - use the new hierarchy output as the registry seed, so `L3 -> L2 -> L1` becomes executable rather than only descriptive
 
 That would connect the current symbolic layer more directly to the PDF's ideas of operator hierarchy, composition grammar, and human-auditable reasoning.
+

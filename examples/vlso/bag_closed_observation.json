@@ -1,0 +1,53 @@
+{
+  "label": "closed bag with zipper",
+  "objects": [
+    {
+      "id": "bag",
+      "kind": "container",
+      "bbox": [
+        0,
+        0,
+        10,
+        10
+      ],
+      "parts": [
+        "zipper"
+      ]
+    },
+    {
+      "id": "zipper",
+      "kind": "part",
+      "bbox": [
+        2,
+        1,
+        8,
+        2
+      ]
+    },
+    {
+      "id": "book",
+      "kind": "object",
+      "bbox": [
+        12,
+        2,
+        18,
+        8
+      ]
+    }
+  ],
+  "affordances": [
+    {
+      "subject": "zipper",
+      "value": "OPENABLE"
+    }
+  ],
+  "states": [
+    {
+      "subject": "zipper",
+      "value": "CLOSED"
+    }
+  ],
+  "constraints": [
+    "book_not_inserted_yet"
+  ]
+}

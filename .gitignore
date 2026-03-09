@@ -71,6 +71,7 @@ artifacts/
 data/**/*.db
 data/**/*.sqlite
 data/**/*.sqlite3
+data/**/*.csv
 data/**/*_downloads/
 data/**/*_downloads_312/
 data/**/*_normalized/
@@ -87,9 +88,21 @@ data/starter_normalized_312/
 data/all_public_downloads_312/
 data/all_public_normalized_312/
 data/evals/
+data/tmp/
 data/feedback_rules*.json
 data/*review_queue*.db
 data/*manifest*.json
+data/*collection*.jsonl
+data/*collection*_summary.json
+data/*download_manifest*.jsonl
+data/open_images*.jsonl
+data/open_images*/
+data/vlso_downloads/
+data/vlso_collection_approved.jsonl
+data/vlso_collection_records.jsonl
+data/vlso_collection_plan.jsonl
+data/vlso_collection_plan_summary.json
+data/vlso_visual_prototypes_summary.json
 
 # Keep empty customer document folder in git, but not uploaded customer docs
 data/customer_docs/*
@@ -97,6 +110,16 @@ data/customer_docs/*
 
 # Generated customer evaluation outputs
 data/customer_eval*.jsonl
+
+# Test and smoke artifacts
+tests/*_smoke.json
+tests/*_smoke.jsonl
+tests/*_summary.json
+tests/*_plan*.jsonl
+tests/*_manifest*.json
+tests/*_records*.jsonl
+tests/*_approved*.jsonl
+tests/open_images_adapter_test/
 
 # Project-local reference documents
 semantic_operator_plan_2026_v3_structured_meaning.pdf

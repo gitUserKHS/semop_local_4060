@@ -25,15 +25,15 @@ Sell it as:
 - `src/semop/feedback_rules.py`
 
 ### Product-facing comparison and evaluation
-- `compare_ops_baseline.py`
-- `evaluate_ops_kpis.py`
+- `tools/eval/compare_ops_baseline.py`
+- `tools/eval/evaluate_ops_kpis.py`
 - `src/semop/labeled_eval.py`
 - `src/semop/baseline_runner.py`
 
 ### Customer PoC data tools
-- `build_customer_eval_template.py`
-- `build_customer_eval_from_docs.py`
-- `learn_feedback_rules.py`
+- `tools/ops/build_customer_eval_template.py`
+- `tools/ops/build_customer_eval_from_docs.py`
+- `tools/ops/learn_feedback_rules.py`
 
 ## What A Customer PoC Looks Like Now
 
@@ -82,3 +82,4 @@ Bring:
 - one short review cycle that produces reusable feedback rules
 
 That is enough for a serious paid PoC conversation.
+

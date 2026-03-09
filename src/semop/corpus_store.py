@@ -168,6 +168,17 @@ class CorpusMemoryStore:
             row = conn.execute(query, params).fetchone()
         return json.loads(row[0]) if row else None
 
+    def fetch_latest_learning_summary(self, source: Optional[str] = None) -> dict | None:
+        query = "SELECT summary_json FROM learning_runs"
+        params: List[str] = []
+        if source is not None:
+            query += " WHERE source = ?"
+            params.append(source)
+        query += " ORDER BY id DESC LIMIT 1"
+        with closing(self._connect()) as conn:
+            row = conn.execute(query, params).fetchone()
+        return json.loads(row[0]) if row else None
+
     def count_examples(self, split: Optional[str] = None, source: Optional[str] = None) -> int:
         query = "SELECT COUNT(*) FROM examples"
         clauses = []

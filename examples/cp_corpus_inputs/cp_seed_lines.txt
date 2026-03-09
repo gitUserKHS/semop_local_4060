@@ -1,0 +1,2 @@
+﻿Given an array and many range sum queries, output the sum from l to r for each query.
+Given a weighted graph with N cities and M roads, answer the shortest path from city 1 to all cities.

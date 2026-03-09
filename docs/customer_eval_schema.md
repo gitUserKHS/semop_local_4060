@@ -55,7 +55,7 @@ Use it when you want to:
 ### Option A: Start from a template
 
 ```bash
-python build_customer_eval_template.py --output examples\customer_ops_eval_template.jsonl
+python tools/ops/build_customer_eval_template.py --output examples\customer_ops_eval_template.jsonl
 ```
 
 ### Option B: Generate stubs from customer documents
@@ -63,7 +63,7 @@ python build_customer_eval_template.py --output examples\customer_ops_eval_templ
 Put customer `.md` or `.txt` files in a folder such as `data\customer_docs`, then run:
 
 ```bash
-python build_customer_eval_from_docs.py --inputs data\customer_docs --output data\customer_eval.jsonl --max-cases 50
+python tools/ops/build_customer_eval_from_docs.py --inputs data\customer_docs --output data\customer_eval.jsonl --max-cases 50
 ```
 
 Then manually review the generated file.
@@ -73,13 +73,13 @@ Then manually review the generated file.
 ### Lexical baseline
 
 ```bash
-python compare_ops_baseline.py --input data\customer_eval.jsonl --baseline lexical_rag
+python tools/eval/compare_ops_baseline.py --input data\customer_eval.jsonl --baseline lexical_rag
 ```
 
 ### Customer-config baseline
 
 ```bash
-python compare_ops_baseline.py --input data\customer_eval.jsonl --baseline configurable_keyword --baseline-config data\customer_baseline_config.json
+python tools/eval/compare_ops_baseline.py --input data\customer_eval.jsonl --baseline configurable_keyword --baseline-config data\customer_baseline_config.json
 ```
 
 ## What To Review Manually
@@ -91,3 +91,4 @@ Always review these fields before trusting the benchmark:
 - `expected_clarification`
 
 This repository can help generate stubs, but the final benchmark still depends on domain review.
+

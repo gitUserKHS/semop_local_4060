@@ -1,0 +1,41 @@
+{
+  "detections": [
+    {
+      "label": "bag",
+      "bbox": [
+        0,
+        0,
+        10,
+        10
+      ],
+      "parts": [
+        "zipper"
+      ]
+    },
+    {
+      "label": "zipper",
+      "bbox": [
+        2,
+        1,
+        8,
+        2
+      ],
+      "affordances": [
+        "OPENABLE"
+      ],
+      "state": "CLOSED"
+    },
+    {
+      "label": "book",
+      "bbox": [
+        12,
+        2,
+        18,
+        8
+      ]
+    }
+  ],
+  "constraints": [
+    "book_not_inserted_yet"
+  ]
+}

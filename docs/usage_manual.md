@@ -1,5 +1,10 @@
 ﻿# Usage Manual
 
+Code layout reference:
+- `docs/project_structure.md`
+- refresh with `.\.venv312\Scripts\python.exe tools\maintenance\update_code_structure_docs.py`
+
+
 ## 1. Decide Which Flow You Need
 
 Use one of these flows.
@@ -43,7 +48,7 @@ These are enough to test the full workflow.
 2. Generate evaluation case stubs from those docs:
 
 ```bash
-.\.venv312\Scripts\python.exe build_customer_eval_from_docs.py ^
+.\.venv312\Scripts\python.exe tools/ops/build_customer_eval_from_docs.py ^
   --inputs data\customer_docs ^
   --output data\customer_eval.jsonl ^
   --max-cases 50
@@ -62,7 +67,7 @@ You should especially review these fields:
 ### Default lexical baseline
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py ^
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py ^
   --input examples\ops_labeled_eval_ko.jsonl ^
   --baseline lexical_rag
 ```
@@ -70,7 +75,7 @@ You should especially review these fields:
 ### First-chunk baseline
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py ^
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py ^
   --input examples\ops_labeled_eval_ko.jsonl ^
   --baseline first_chunk
 ```
@@ -78,7 +83,7 @@ You should especially review these fields:
 ### Customer-config baseline
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py ^
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py ^
   --input data\customer_eval.jsonl ^
   --baseline configurable_keyword ^
   --baseline-config examples\customer_baseline_config.json
@@ -134,7 +139,7 @@ Add a resolution note describing what should change.
 ### Step 3: Learn feedback rules from reviewed items
 
 ```bash
-.\.venv312\Scripts\python.exe learn_feedback_rules.py ^
+.\.venv312\Scripts\python.exe tools/ops/learn_feedback_rules.py ^
   --review-queue data\ops_review_queue.db ^
   --output data\feedback_rules.json
 ```
@@ -157,13 +162,13 @@ If you want to test the broader research pipeline, use curated public datasets.
 ### Generate a curated manifest
 
 ```bash
-.\.venv312\Scripts\python.exe write_curated_manifest.py --preset reasoning_core --output data\reasoning_core_manifest.json
+.\.venv312\Scripts\python.exe tools/corpus/write_curated_manifest.py --preset reasoning_core --output data\reasoning_core_manifest.json
 ```
 
 ### Download, normalize, and ingest
 
 ```bash
-.\.venv312\Scripts\python.exe ingest_public_manifest.py ^
+.\.venv312\Scripts\python.exe tools/corpus/ingest_public_manifest.py ^
   --manifest data\reasoning_core_manifest.json ^
   --download-root data\reasoning_core_downloads_312 ^
   --normalized-root data\reasoning_core_normalized_312 ^
@@ -180,3 +185,436 @@ If you start with a real customer, edit these first:
 - `data\feedback_rules.json` after the first supervisor review cycle
 
 That is the minimum set needed to turn this repo from demo mode into a customer-specific PoC.
+
+## 8. Train Corpus-Level Logical Grammar Priors
+
+If you want the system to learn reusable logical connectors such as `has`, `if`, `before`, or `requires`, run a corpus learning pass and store the result.
+
+```bash
+.\.venv312\Scripts\python.exe tools/corpus/train_corpus.py ^
+  --input examples\reasoning_corpus_ko.jsonl ^
+  --mode heuristic ^
+  --output data\reasoning_learning.json ^
+  --store data\semop_memory.db ^
+  --source grammar_demo
+```
+
+The output JSON now contains `logical_patterns` in addition to operator families.
+When you later run the pipeline with the same memory store, those patterns can be used as inference priors.
+
+## 9. Use Learned Grammar Priors During Inference
+
+```bash
+.\.venv312\Scripts\python.exe app.py --mode heuristic --query "If the bag has no open access, check the zipper before inserting the book."
+```
+
+If a matching learning run exists in the memory store, the graph may include:
+- logical grammar prior warnings
+- grammar hypotheses from corpus learning
+- frame-style operator candidates
+- extra plan priors for condition, order, capability, or prerequisites
+
+## 10. Competitive Programming Flow
+
+Use this when you want the system to read a contest problem, recover hidden structure, choose an algorithm family, and emit C++17 code with a syntax check.
+
+### Knowledge file
+
+The CP engine reads:
+- `data\knowledge\cp_knowledge.json`
+
+This file already stores:
+- official online source URLs
+- logical problem frames
+- CP DSL operators
+- algorithm triggers and hidden concepts
+- complexity metadata
+- memory schema layers
+- compiler and hardware notes
+
+### Generate a solution sketch, validate it, and store the episode
+
+```bash
+.\.venv312\Scripts\python.exe solve_contest.py ^
+  --query "There are many range sum queries on an array and no updates. Output the sum from l to r each time." ^
+  --episode-store data\cp_episodes.db
+```
+
+What you get:
+- algorithm family
+- time and memory complexity
+- hidden concepts
+- matched logical frames
+- goal types and domain tags
+- matched DSL operators
+- semantic / structural / episodic / procedural memory projection
+- reasoning steps
+- compile-check status
+- generated C++17 code
+- optional episodic memory record in `data\cp_episodes.db`
+- episode-driven reranking priors for later similar statements
+
+### Prepare an expanded CP corpus, then build the labeled DSL and SFT datasets
+
+```bash
+.\.venv312\Scripts\python.exe tools/cp/prepare_cp_corpus.py ^
+  --inputs examples\cp_corpus_inputs examples\cp_statement_seeds.jsonl ^
+  --output examples\cp_statement_corpus_expanded.jsonl
+
+.\.venv312\Scripts\python.exe tools/cp/build_cp_dsl_dataset.py ^
+  --inputs examples\cp_corpus_inputs examples\cp_statement_seeds.jsonl ^
+  --output examples\cp_dsl_expanded_dataset.jsonl ^
+  --corpus-output examples\cp_statement_corpus_expanded.jsonl ^
+  --sft-output examples\cp_dsl_expanded_sft.jsonl
+```
+
+This produces:
+- a normalized CP statement corpus from mixed `.txt`, `.md`, `.jsonl`, `.json`, `.csv`, `.html`, and `.zip` inputs
+- labeled statement -> DSL / frame / algorithm records
+- prompt/completion records for future LoRA or small-model parser training
+
+Current built-in execution validators cover:
+- `prefix_sum_range_query`
+- `fenwick_tree`
+- `dijkstra_shortest_path`
+- `segment_tree`
+- `lazy_segment_tree`
+- `dsu_connectivity`
+- `grid_bfs`
+- `knapsack_dp`
+- `binary_search_answer`
+
+The CLI now reports:
+- sample check result
+- random/brute-force check result
+- overall validation status
+- repair-loop status when a compile or validation fix was attempted
+
+### Build a merged train/val bundle
+
+```bash
+.\.venv312\Scripts\python.exe tools/cp/build_cp_training_bundle.py ^
+  --inputs examples\cp_dsl_expanded_dataset.jsonl ^
+  --episode-store data\cp_episodes.db ^
+  --train-output data\cp_train.jsonl ^
+  --val-output data\cp_val.jsonl ^
+  --train-sft-output data\cp_train_sft.jsonl ^
+  --val-sft-output data\cp_val_sft.jsonl
+```
+
+### Train a small parser model for statement -> DSL / frame / sketch
+
+Use a dry run first. This prepares the training file and GPU-aware plan without loading the model.
+
+```bash
+.\.venv312\Scripts\python.exe tools/cp/train_cp_parser.py ^
+  --model Qwen/Qwen2.5-0.5B-Instruct ^
+  --train-jsonl examples\cp_dsl_expanded_dataset.jsonl ^
+  --output-dir data\cp_parser_dry_run ^
+  --dry-run ^
+  --use-lora
+```
+
+To train from stored contest episodes instead, point the trainer at the SQLite store:
+
+```bash
+.\.venv312\Scripts\python.exe tools/cp/train_cp_parser.py ^
+  --model Qwen/Qwen2.5-0.5B-Instruct ^
+  --episode-store data\cp_episodes.db ^
+  --output-dir data\cp_parser_from_episodes ^
+  --dry-run
+```
+
+On RTX 4060 8GB, keep the starting point small:
+- prefer `0.5B` to `1.5B` parser models first
+- start with `--dry-run` and local files if the model is already cached
+- turn on `--use-lora` before attempting full-model training
+- use the generated `training_plan.json` before attempting a real run
+
+### Evaluate the heuristic parser or a learned parser
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_cp_parser.py ^
+  --input data\cp_val.jsonl ^
+  --mode heuristic
+```
+
+For a learned parser:
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_cp_parser.py ^
+  --input data\cp_val.jsonl ^
+  --mode model ^
+  --model <local-model-or-adapter> ^
+  --local-files-only
+```
+
+### Current compiler constraint
+
+Local validation was done with:
+- `g++ = MinGW.org GCC 6.3.0-1`
+
+So generated code intentionally uses a conservative C++17 subset.
+
+### Recommended use on RTX 4060 8GB
+
+For CP, keep the pipeline mostly CPU-first. Use the GPU only for lightweight model assistance if you add one later.
+
+## 11. Run The Hard-Problem Solver
+
+Use this when the problem is harder than a normal QA case and you want:
+- structured reasoning output
+- verification checks
+- optional logical-pattern weight updates
+
+```bash
+.\.venv312\Scripts\python.exe solve_hard_problem.py ^
+  --query "If the bag has no open access, check the zipper before inserting the book." ^
+  --memory-store data\semop_memory.db ^
+  --memory-source grammar_demo
+```
+
+To update pattern weights automatically after the run:
+
+```bash
+.\.venv312\Scripts\python.exe solve_hard_problem.py ^
+  --query "Prove that 1+2+...+n = n(n+1)/2 for all positive integers n." ^
+  --memory-store data\semop_memory.db ^
+  --memory-source grammar_demo ^
+  --learn ^
+  --success auto
+```
+
+This writes weights to:
+- `data\logical_pattern_weights.json`
+
+
+
+## 11. CP Incident Memory, GUI, And Training
+
+### Ingest real WA/TLE/editorial cases into the episode store
+
+```bash
+.\.venv312\Scripts\python.exe tools/cp/ingest_cp_episodes.py ^
+  --inputs examples\cp_incident_cases.jsonl ^
+  --store data\cp_episodes.db
+```
+
+### Open the beginner-friendly CP GUI
+
+```bash
+.\.venv312\Scripts\python.exe cp_copilot_gui.py ^
+  --episode-store data\cp_episodes.db
+```
+
+Then open:
+- `http://127.0.0.1:8787`
+
+### Train later with the detailed guide
+
+See:
+- `docs\cp_training_manual.md`
+- `docs\cp_gui_manual.md`
+
+
+## 12. Vision-Language Semantic Operators (VLSO)
+
+Use this when you want language, detector output, and raw images to land in the same operator space.
+
+Default recommendation:
+- use `--mode deep`
+- keep the structural parser active as the fallback that converts raw images or detector output into operator graphs
+- place local vision checkpoints under `models\vision\dinov2\...` or `models\vision\openclip\...`
+
+### Structured observation input
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "How do I put a book into a bag?" ^
+  --visual-json examples\vlso\bag_closed_observation.json
+```
+
+### Detector output input
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --query "What geometric structure is visible here?" ^
+  --detector-json examples\vlso\detector_output_example.json
+```
+
+### Raw image input with the deep-first parser
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "What shapes are visible here?" ^
+  --image-path data\scene.png
+```
+
+### Raw image input with an explicit local vision backbone
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "What shapes are visible here?" ^
+  --image-path data\scene.png ^
+  --vision-backbone dinov2_adapter ^
+  --vision-model-path models\vision\dinov2\dinov2-small
+```
+
+Notes:
+- if `--image-path` is given without detector JSON, SemOp runs a local raw-image parser first and converts connected components into VLSO objects and shape hints
+- if a local DINOv2 or OpenCLIP checkpoint is available, the same image path is also embedded through that backbone for visual-memory retrieval
+- recommended local folders are `models\vision\dinov2\...` and `models\vision\openclip\...`
+- if the local checkpoint is missing or cannot load, SemOp falls back to `token_geometry_v1`
+- `--affordance-weights` loads learned weak-classifier weights from a JSON file such as `data\vlso_samples\trained_affordance_weights.json`
+- `--answer-mode structured` returns a deterministic grounded answer from the operator graph
+- `--answer-mode llm` uses the grounded world model as context for a local text model, and `--answer-model-id` overrides the default Qwen model id
+
+### Grounded VLSO QA with learned affordance weights
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "How can I access the bag opening?" ^
+  --image-path data\vlso_samples\backpack_public_domain.jpg ^
+  --affordance-weights data\vlso_samples\trained_affordance_weights.json ^
+  --answer-mode structured ^
+  --format json
+```
+
+### Grounded VLSO QA with a local Qwen-style answer model
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "What objects are visible here?" ^
+  --image-path data\scene.png ^
+  --answer-mode llm ^
+  --answer-model-id Qwen/Qwen2.5-3B-Instruct
+```
+
+
+### Convert Open Images boxes into detector JSONL
+
+```bash
+python tools\vlso\ingest_open_images_annotations.py ^
+  --boxes data\open_images\train-annotations-bbox.csv ^
+  --labels data\open_images\class-descriptions-boxable.csv ^
+  --output data\open_images_vlso.jsonl ^
+  --limit-images 100
+```
+
+The output rows can be fed into the existing `--detector-json` path after selecting or splitting per image.
+
+### Segmentation-style detector payloads
+
+`--detector-json` now accepts these payload families:
+- `detections` or `predictions` with `bbox`, `polygon`, `affordances`, and `state`
+- `annotations` plus `categories` in a COCO-like shape
+- `segments` with polygon-like segmentation data
+- `instances` with `boxes`, `labels`, `scores`, and `polygons` or `masks`
+
+
+### Plan automatic public-image collection with a dry-run manifest
+
+```bash
+python tools\vlso\collect_visual_data.py ^
+  --manifest examples\vlso_collection_manifest.json ^
+  --output data\vlso_collection_plan.jsonl ^
+  --summary-output data\vlso_collection_plan_summary.json
+```
+
+Use this to stage API-backed collection before downloading anything.
+Provider tradeoffs are documented in `docs\data_collection_api_research.md`.
+
+Then review and build a download manifest:
+
+```bash
+python tools\vlso\prepare_visual_downloads.py ^
+  --records data\vlso_collection_records.jsonl ^
+  --approved-output data\vlso_collection_approved.jsonl ^
+  --manifest-output data\vlso_download_manifest.jsonl ^
+  --download-root data\vlso_downloads ^
+  --allow-providers wikimedia_commons openverse ^
+  --allow-licenses cc0 by by-sa
+```
+
+### Build a few-shot visual concept memory
+
+This is the recommended low-data workflow: label a few diverse objects, compress them into prototypes, then ask the recommender which targets are most worth labeling next.
+
+### Train compact prototypes for sample-efficient learning
+
+```bash
+python tools\vlso\train_visual_concepts.py ^
+  --labels examples\vlso_visual_concepts_template.jsonl ^
+  --store data\vlso_visual_prototypes.db ^
+  --summary-output data\vlso_visual_prototypes_summary.json
+```
+
+### Recommend the next targets to label
+
+```bash
+python tools\vlso\recommend_visual_labels.py ^
+  --candidates data\vlso_samples\concept_candidates.jsonl ^
+  --concept-store data\vlso_visual_prototypes.db ^
+  --weights data\vlso_samples\trained_affordance_weights.json ^
+  --limit 10
+```
+
+
+1. Generate candidate rows for manual labeling:
+
+```bash
+python tools\vlso\build_visual_concept_candidates.py ^
+  --inputs data\vlso_samples\backpack_public_domain.jpg data\vlso_samples\military_backpack_cc0.jpg ^
+  --output data\vlso_samples\concept_candidates.jsonl
+```
+
+2. Fill labels using the same schema as `examples\vlso_visual_concepts_template.jsonl`.
+
+3. Index them into the few-shot concept store:
+
+```bash
+python tools\vlso\index_visual_concepts.py ^
+  --labels examples\vlso_visual_concepts_template.jsonl ^
+  --store data\vlso_visual_prototypes.db
+```
+
+4. Use that concept store during QA:
+
+```bash
+.\.venv312\Scripts\python.exe vlso_demo.py ^
+  --mode deep ^
+  --query "What objects are visible here?" ^
+  --image-path data\vlso_samples\backpack_public_domain.jpg ^
+  --concept-store data\vlso_visual_prototypes.db ^
+  --affordance-weights data\vlso_samples\trained_affordance_weights.json ^
+  --answer-mode structured ^
+  --format json
+```
+- the current robust path is `deep-first + structural fallback`, not `deep-only`
+- the raw-image parser now performs mask cleanup, dominant border-frame suppression, and lightweight container/part/affordance inference before building the operator graph
+- public sample images for local tuning are stored under `data\vlso_samples\` with source notes in `data\vlso_samples\SOURCES.md`
+- expand this set with the workflow in `docs\vlso_data_collection_guide.md` and optional labels in `examples\vlso_affordance_labels_template.jsonl`
+- build editable candidate labels with `tools\vlso\build_affordance_label_candidates.py` and retrain weights with `tools\vlso\train_affordance_classifier.py`
+
+### Index structured visual observations or raw images into the embedding store
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\index_vlso_visual_memory.py ^
+  --inputs examples\vlso\bag_closed_observation.json examples\vlso\geometry_scene.json ^
+  --store data\vlso_visual_memory.db
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\index_vlso_visual_memory.py ^
+  --image-inputs path\to\scene1.png path\to\scene2.png ^
+  --store data\vlso_visual_memory.db ^
+  --model-id openclip_adapter ^
+  --model-path path\to\local\openclip_checkpoint
+```
+
+

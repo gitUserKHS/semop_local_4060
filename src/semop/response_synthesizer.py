@@ -77,6 +77,10 @@ class ResponseSynthesizer:
         if arithmetic is not None:
             return arithmetic.answer
 
+        olympiad = next((result for result in graph.symbolic_results if result.domain == "olympiad_proof"), None)
+        if olympiad is not None:
+            return olympiad.answer
+
         document = next((result for result in graph.symbolic_results if result.domain == "document_grounding"), None)
         if document is not None:
             return document.answer

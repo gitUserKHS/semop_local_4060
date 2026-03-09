@@ -1,0 +1,2 @@
+{"image_path":"data/vlso_samples/backpack_public_domain.jpg","positive_labels":["BAG_LIKE_CONTAINER"],"negative_labels":[],"notes":"front-facing backpack photo"}
+{"image_path":"data/vlso_samples/military_backpack_cc0.jpg","positive_labels":["BAG_LIKE_CONTAINER","ACCESS_OPENING_CANDIDATE"],"negative_labels":[],"notes":"bag body is dominant and the top opening area is visible"}

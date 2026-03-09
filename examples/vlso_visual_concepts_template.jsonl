@@ -1,0 +1,2 @@
+{"image_path":"data/vlso_samples/backpack_public_domain.jpg","targets":[{"subject_id":"shape_1","positive_labels":["BAG_LIKE_CONTAINER"],"negative_labels":[],"notes":"main bag body"},{"subject_id":"shape_3","positive_labels":["ZIPPER_LIKE_PART"],"negative_labels":[],"notes":"opening strip near top"}]}
+{"image_path":"data/scene.png","targets":[{"subject_id":"shape_1","positive_labels":["RECTANGLE_LIKE_OBJECT"],"negative_labels":[],"notes":"main visible object"}]}

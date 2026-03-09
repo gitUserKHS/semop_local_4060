@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from typing import Any, Dict, List
 
 from .commonsense_kb import concept_label, kb_relations_for_concept, normalize_concept, scripts_for_concept
@@ -8,6 +9,7 @@ from .corpus_store import CorpusMemoryStore
 from .emergent_operators import EmergentOperatorInducer
 from .heuristic_extractors import HeuristicExtractor
 from .llm_client import LocalLLMConfig, LocalTransformersExtractor
+from .logical_grammar import LogicalPattern, LogicalPatternMatcher
 from .operator_registry import TypedOperatorRegistry
 from .semantic_operators import apply_many
 from .structures import Edge, Node, OperatorCandidate, PlanStep, StructuredMeaningGraph
@@ -16,7 +18,7 @@ from .validation import validate_graph
 
 
 class StructuredMeaningPipeline:
-    def __init__(self, mode: str = "heuristic", model_id: str = "Qwen/Qwen2.5-3B-Instruct", memory_store_path: str | None = None, memory_source: str | None = None):
+    def __init__(self, mode: str = "heuristic", model_id: str = "Qwen/Qwen2.5-3B-Instruct", memory_store_path: str | None = None, memory_source: str | None = None, logical_weight_path: str | None = None):
         self.mode = mode
         self.heuristic = HeuristicExtractor()
         self.inducer = EmergentOperatorInducer()
@@ -25,6 +27,10 @@ class StructuredMeaningPipeline:
         self.memory_source = memory_source
         self.llm = LocalTransformersExtractor(LocalLLMConfig(model_id=model_id)) if mode == "llm" else None
         self._registry_cache: TypedOperatorRegistry | None = None
+        self._logical_pattern_cache: List[LogicalPattern] | None = None
+        self._logical_matcher = LogicalPatternMatcher()
+        self.logical_weight_path = logical_weight_path
+        self._logical_weight_cache: Dict[str, float] | None = None
 
     def run(self, query: str) -> StructuredMeaningGraph:
         similar_graphs = self._retrieve_similar_graphs(query)
@@ -33,6 +39,7 @@ class StructuredMeaningPipeline:
     def run_with_memory_graphs(self, query: str, similar_graphs: List[StructuredMeaningGraph] | None = None) -> StructuredMeaningGraph:
         similar_graphs = similar_graphs or []
         graph = self._prepare_graph(query)
+        graph = self._apply_logical_grammar_priors(graph)
         graph = self._attach_memory_hints(graph, similar_graphs)
         graph = self.inducer.induce(graph)
         graph = self._annotate_with_registry(graph)
@@ -41,7 +48,9 @@ class StructuredMeaningPipeline:
 
     def _prepare_graph(self, query: str) -> StructuredMeaningGraph:
         if self.mode == "heuristic":
-            return validate_graph(self.heuristic.extract(query))
+            graph = self.heuristic.extract(query)
+            graph = self._apply_logical_relation_priors(graph)
+            return validate_graph(graph)
 
         try:
             raw = self.llm.extract(query) if self.llm is not None else None
@@ -51,6 +60,7 @@ class StructuredMeaningPipeline:
             return validate_graph(graph)
 
         graph = self._build_graph_from_llm(query, raw or {})
+        graph = self._apply_logical_relation_priors(graph)
         graph = self._ensure_plan(graph)
         return validate_graph(graph)
 
@@ -79,6 +89,132 @@ class StructuredMeaningPipeline:
         registry = TypedOperatorRegistry.from_summary(summary)
         self._registry_cache = None if registry.is_empty() else registry
         return self._registry_cache
+
+    def _load_logical_patterns(self) -> List[LogicalPattern]:
+        if self.memory_store is None:
+            return []
+        if self._logical_pattern_cache is not None:
+            return self._logical_pattern_cache
+
+        summary = None
+        if self.memory_source is not None:
+            summary = self.memory_store.fetch_latest_learning_summary(source=self.memory_source)
+        if summary is None:
+            summary = self.memory_store.fetch_latest_learning_summary()
+        raw_patterns = summary.get("logical_patterns", []) if summary else []
+        self._logical_pattern_cache = [LogicalPattern(**item) for item in raw_patterns]
+        return self._logical_pattern_cache
+
+    def _load_logical_weights(self) -> Dict[str, float]:
+        if self._logical_weight_cache is not None:
+            return self._logical_weight_cache
+        if not self.logical_weight_path:
+            self._logical_weight_cache = {}
+            return self._logical_weight_cache
+        try:
+            with open(self.logical_weight_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            self._logical_weight_cache = {}
+            return self._logical_weight_cache
+        except Exception:
+            self._logical_weight_cache = {}
+            return self._logical_weight_cache
+        weights = payload.get("weights", {}) if isinstance(payload, dict) else {}
+        self._logical_weight_cache = {str(key): float(value.get("weight", 1.0) if isinstance(value, dict) else value) for key, value in weights.items()}
+        return self._logical_weight_cache
+
+    def _pattern_weight(self, pattern: LogicalPattern) -> float:
+        weights = self._load_logical_weights()
+        key = f"{pattern.family}::{pattern.connector.lower()}"
+        return weights.get(key, 1.0)
+
+    def _apply_logical_relation_priors(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        patterns = self._load_logical_patterns()
+        if not patterns:
+            return graph
+        matches = self._logical_matcher.match(graph.query, graph, patterns)
+        if not matches:
+            return graph
+        for match in matches:
+            weighted_confidence = min(0.97, match.pattern.confidence * self._pattern_weight(match.pattern))
+            graph.add_edge(
+                Edge(
+                    source=match.source_id,
+                    relation=match.relation,
+                    target=match.target_id,
+                    confidence=round(weighted_confidence, 2),
+                    provenance=[f"grammar_prior_relation:{match.pattern.connector}", f"grammar_family:{match.pattern.family}"],
+                )
+            )
+            note = f"logical relation prior injected: {match.source_id} {match.relation} {match.target_id}"
+            if note not in graph.warnings:
+                graph.warnings.append(note)
+        if matches:
+            graph.audit_trace.append("logical relation priors injected before operator induction")
+        return graph
+
+    def _apply_logical_grammar_priors(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        patterns = self._load_logical_patterns()
+        if not patterns:
+            return graph
+
+        lowered = graph.query.lower()
+        matched: List[LogicalPattern] = []
+        existing_names = {candidate.name for candidate in graph.induced_operators}
+        for pattern in patterns:
+            connector = pattern.connector.lower().strip()
+            if not connector or connector not in lowered:
+                continue
+            matched.append(pattern)
+            if pattern.grammar_template not in graph.grammar_hypotheses:
+                graph.grammar_hypotheses.append(pattern.grammar_template)
+            note = f"logical grammar prior matched: {pattern.connector} -> {pattern.family}"
+            if note not in graph.warnings:
+                graph.warnings.append(note)
+            if pattern.induced_operator_name not in existing_names:
+                graph.induced_operators.append(
+                    OperatorCandidate(
+                        name=pattern.induced_operator_name,
+                        family=pattern.family,
+                        arity=2,
+                        input_types=pattern.concept_slots[:4] or [graph.intent],
+                        output_type="relation_frame",
+                        description=self._logical_pattern_description(pattern),
+                        examples=pattern.example_frames[:3] or pattern.example_queries[:2],
+                        confidence=round(min(0.92, (pattern.confidence + 0.03) * self._pattern_weight(pattern)), 2),
+                        provenance=[f"grammar_prior:{pattern.connector}", f"grammar_support:{pattern.support}"],
+                    )
+                )
+                existing_names.add(pattern.induced_operator_name)
+            self._inject_plan_prior(graph, pattern)
+
+        if matched:
+            summary = ", ".join(sorted({pattern.family for pattern in matched})[:4])
+            audit = f"logical grammar priors applied: {summary}"
+            if audit not in graph.audit_trace:
+                graph.audit_trace.append(audit)
+        return graph
+
+    @staticmethod
+    def _logical_pattern_description(pattern: LogicalPattern) -> str:
+        relation_text = ", ".join(pattern.relation_hints[:3]) if pattern.relation_hints else "structured relation"
+        return f"Corpus-induced logical grammar prior for connector '{pattern.connector}' with relation hints {relation_text}."
+
+    def _inject_plan_prior(self, graph: StructuredMeaningGraph, pattern: LogicalPattern) -> None:
+        step_id = f"grammar_{pattern.family.lower()}"
+        if any(step.id == step_id for step in graph.plan):
+            return
+        if pattern.family == "PRECONDITION_FRAME":
+            graph.plan.insert(0, PlanStep(id=step_id, action="Check prerequisites before executing the main action.", rationale="The query uses a precondition-style connector learned from corpus patterns."))
+        elif pattern.family == "CONDITIONAL_FRAME":
+            graph.plan.insert(0, PlanStep(id=step_id, action="Branch the reasoning by condition before choosing an action.", rationale="The query uses an if/when-style conditional connector."))
+        elif pattern.family == "TEMPORAL_ORDER_FRAME":
+            graph.plan.insert(0, PlanStep(id=step_id, action="Preserve the stated temporal order of sub-actions.", rationale="Before/after connectors imply order constraints."))
+        elif pattern.family == "CAPABILITY_FRAME":
+            graph.plan.insert(0, PlanStep(id=step_id, action="Verify that the object or agent actually affords the requested action.", rationale="Capability connectors usually map to affordance checks."))
+        elif pattern.family == "CONTAINMENT_FRAME":
+            graph.plan.insert(0, PlanStep(id=step_id, action="Interpret the problem as a containment or inside/outside relation first.", rationale="Containment connectors often hide structural constraints."))
 
     def _annotate_with_registry(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
         registry = self._load_registry()

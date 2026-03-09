@@ -1,0 +1,19 @@
+{
+  "weights": {
+    "TEMPORAL_ORDER_FRAME::before": {
+      "success": 1.0,
+      "failure": 0.0,
+      "weight": 1.5
+    },
+    "CONDITIONAL_FRAME::if": {
+      "success": 1.0,
+      "failure": 0.0,
+      "weight": 1.5
+    },
+    "POSSESSION_FRAME::has": {
+      "success": 1.0,
+      "failure": 0.0,
+      "weight": 1.5
+    }
+  }
+}

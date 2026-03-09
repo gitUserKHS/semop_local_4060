@@ -64,7 +64,7 @@ Open:
 If you want only KPI averages for a case set:
 
 ```bash
-.\.venv312\Scripts\python.exe evaluate_ops_kpis.py --input examples\ops_sop_cases_ko.jsonl
+.\.venv312\Scripts\python.exe tools/eval/evaluate_ops_kpis.py --input examples\ops_sop_cases_ko.jsonl
 ```
 
 ## Baseline Benchmark CLI
@@ -72,13 +72,13 @@ If you want only KPI averages for a case set:
 ### Lexical baseline
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py --input examples\ops_labeled_eval_ko.jsonl --baseline lexical_rag
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py --input examples\ops_labeled_eval_ko.jsonl --baseline lexical_rag
 ```
 
 ### Customer-config baseline
 
 ```bash
-.\.venv312\Scripts\python.exe compare_ops_baseline.py ^
+.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py ^
   --input data\customer_eval.jsonl ^
   --baseline configurable_keyword ^
   --baseline-config data\customer_baseline_config.json
@@ -101,3 +101,4 @@ This is enough to show whether the structured copilot understands operational co
 - benchmark labels still need manual review in real customer PoCs
 - baseline results are only as realistic as the baseline config you provide
 - GUI is for local PoC and internal testing, not production deployment
+
