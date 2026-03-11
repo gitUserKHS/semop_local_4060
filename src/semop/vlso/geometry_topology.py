@@ -52,6 +52,8 @@ class GeometryTopologyExtractor:
                 right_id = str(right.get("id") or right.get("label") or f"segment_{index + 1}")
                 if self._parallel(left_points, right_points):
                     relations.append({"source": left_id, "relation": "PARALLEL", "target": right_id})
+                if self._perpendicular(left_points, right_points):
+                    relations.append({"source": left_id, "relation": "PERPENDICULAR", "target": right_id})
                 if self._intersects(left_points, right_points):
                     relations.append({"source": left_id, "relation": "INTERSECTS", "target": right_id})
         if relations:
@@ -89,6 +91,14 @@ class GeometryTopologyExtractor:
         rx = right[1][0] - right[0][0]
         ry = right[1][1] - right[0][1]
         return abs(lx * ry - ly * rx) < 1e-6
+
+    @staticmethod
+    def _perpendicular(left, right) -> bool:
+        lx = left[1][0] - left[0][0]
+        ly = left[1][1] - left[0][1]
+        rx = right[1][0] - right[0][0]
+        ry = right[1][1] - right[0][1]
+        return abs(lx * rx + ly * ry) < 1e-6
 
     @staticmethod
     def _intersects(left, right) -> bool:

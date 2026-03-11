@@ -22,6 +22,7 @@ class VLSOReasoner:
         vision_model_path: str | None = None,
         affordance_weights_path: str | None = None,
         concept_store_path: str | None = None,
+        operator_store_path: str | None = None,
         answer_mode: str = 'structured',
         answer_model_id: str = 'Qwen/Qwen2.5-3B-Instruct',
     ) -> None:
@@ -30,6 +31,7 @@ class VLSOReasoner:
         self.visual_parser = VLSOVisualParser(
             affordance_weights_path=affordance_weights_path,
             concept_store_path=concept_store_path,
+            operator_store_path=operator_store_path,
         )
         self.aligner = VLSOAligner()
         resolved_model_id = self._resolve_model_id(mode, vision_model_id)

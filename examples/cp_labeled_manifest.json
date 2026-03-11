@@ -1,0 +1,14 @@
+{
+  "datasets": [
+    {
+      "name": "local_cp_sample",
+      "url": "examples/cp_labeled_public_sample.jsonl",
+      "statement_field": "statement",
+      "solution_field": "solution",
+      "id_field": "problem_id",
+      "tag_fields": [
+        "tags"
+      ]
+    }
+  ]
+}

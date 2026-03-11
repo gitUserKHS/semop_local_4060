@@ -11,6 +11,7 @@ class VLSOAligner:
             self._merge(world, visual_model)
             world.audit_trace.append("merged language and visual operator spaces")
         self._infer_cross_modal_steps(world)
+        self._align_hidden_premises(world)
         return world
 
     def _merge(self, destination: SharedWorldModel, source: SharedWorldModel) -> None:
@@ -25,6 +26,17 @@ class VLSOAligner:
         destination.warnings.extend(item for item in source.warnings if item not in destination.warnings)
         destination.audit_trace.extend(item for item in source.audit_trace if item not in destination.audit_trace)
         destination.inferred_steps.extend(item for item in source.inferred_steps if item not in destination.inferred_steps)
+        for key, value in source.metadata.items():
+            if key not in destination.metadata:
+                destination.metadata[key] = value
+            elif isinstance(destination.metadata[key], list) and isinstance(value, list):
+                for item in value:
+                    if item not in destination.metadata[key]:
+                        destination.metadata[key].append(item)
+            elif isinstance(destination.metadata[key], dict) and isinstance(value, dict):
+                merged = dict(destination.metadata[key])
+                merged.update(value)
+                destination.metadata[key] = merged
 
     def _infer_cross_modal_steps(self, world: SharedWorldModel) -> None:
         relations = world.relation_tuples()
@@ -41,3 +53,20 @@ class VLSOAligner:
         if any(relation == "PART_OF" and target == "bag" for _, relation, target in relations):
             world.add_relation(VLSORelation(source="bag", relation="HAS", target="interior", modality="shared", confidence=0.6))
             world.add_entity(VLSOEntity(id="interior", label="interior", modality="shared", entity_type="region"))
+
+    def _align_hidden_premises(self, world: SharedWorldModel) -> None:
+        hidden_premises = world.metadata.get('hidden_premises', []) if isinstance(world.metadata, dict) else []
+        goal_checks = world.metadata.get('goal_preservation_checks', []) if isinstance(world.metadata, dict) else []
+        functors = world.metadata.get('functor_hypotheses', []) if isinstance(world.metadata, dict) else []
+        operator_names = {item.name for item in world.operators}
+        if hidden_premises:
+            world.audit_trace.append('cross-modal alignment: hidden premises projected into shared world model')
+        if any(item.get('name') == 'VisualStructureToActionFunctor' for item in functors if isinstance(item, dict)):
+            if 'ACCESS_PORT_OPERATOR' in operator_names and 'ACCESS_CONTROL_OPERATOR' in operator_names:
+                world.inferred_steps.append('Visual structure and language preconditions both indicate an access-first action sequence.')
+                if 'cross_modal_access_alignment' not in world.constraints:
+                    world.constraints.append('cross_modal_access_alignment')
+        if any(item.get('action') == 'walk_without_car' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
+            world.warnings.append('Hidden-goal check: movement without the target object may fail the real service goal.')
+        if any(item.get('action') == 'insert_without_opening' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
+            world.warnings.append('Hidden-goal check: insertion without opening access may fail the containment goal.')

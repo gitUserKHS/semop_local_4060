@@ -1,0 +1,36 @@
+{
+  "label": "synthetic parallelogram scene",
+  "metadata": {
+    "image_path": "examples\\vlso\\generated_geometry\\parallelogram_scene.png"
+  },
+  "objects": [
+    {
+      "id": "parallelogram_panel",
+      "kind": "shape",
+      "bbox": [
+        1,
+        1,
+        10,
+        8
+      ],
+      "polygon": [
+        [
+          3,
+          1
+        ],
+        [
+          9,
+          1
+        ],
+        [
+          7,
+          7
+        ],
+        [
+          1,
+          7
+        ]
+      ]
+    }
+  ]
+}

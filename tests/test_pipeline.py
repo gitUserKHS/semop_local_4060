@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -7,6 +7,7 @@ import shutil
 import sys
 import unittest
 import zipfile
+from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -17,9 +18,13 @@ from semop import (
     CompetitiveProgrammingReasoner,
     CpCorpusBuilder,
     CpDslDatasetBuilder,
+    CpDslExample,
     CpEpisodeStore,
     CpKnowledgeLoader,
+    CpLabeledDatasetDownloader,
     CpParserEvaluator,
+    CpParserPrediction,
+    VlsoReviewImpactEvaluator,
     CpParserTrainConfig,
     CpParserTrainingScaffold,
     CpTrainingBundleBuilder,
@@ -35,29 +40,51 @@ from semop import (
     CURATED_PUBLIC_DATASETS,
     DomainCopilot,
     EmbeddingModelCache,
+    GeometryPrimitiveBackbone,
     GeometryTopologyExtractor,
     OpenImagesAnnotationAdapter,
     VisualCollectionSource,
     VisualDataCollector,
     VisualDownloadEntry,
     ImageMaskPreprocessor,
+    JepaStructuralPredictor,
     VisualConceptLabelRecommender,
     VisualConceptLearningSummary,
     VisualConceptMemory,
     VisualConceptPrototypeTrainer,
+    VisualConceptSelfTrainer,
+    VlsoGroundedEvaluator,
+    PseudoLabelAcceptanceConfig,
     VisualConceptRecord,
+    VisualClusterReviewDecision,
+    VisualClusterReviewStore,
+    VisualApprovedReviewRetrainer,
+    VisualOperatorMemory,
+    VisualOperatorPrototypeTrainer,
+    VisualHybridMemory,
+    VisualOperatorRecord,
+    VisualObservation,
+    VisualAffordanceCandidate,
     VisualAffordanceFeatureExtractor,
     VisualEmbeddingRecord,
     VisualEmbeddingStore,
     VisionEmbeddingExtractor,
     VisualGeometryReasoner,
+    VisualGeometryBootstrapPipeline,
+    SyntheticGeometrySceneBuilder,
+    CpGeometryEvalBuilder,
+    CpGeometryTemplateGenerator,
     WeakAffordanceClassifier,
     DetectorOutputAdapter,
     HardProblemEngine,
+    HiddenPremiseEvalCase,
+    HiddenPremiseEvaluator,
     PatternOutcomeTrainer,
     LabeledOpsEvaluator,
     LogicalGrammarInducer,
     MemoryPriorEvaluator,
+    OperatorAlgebraLearner,
+    OperatorAlgebraEvaluator,
     OperatorHierarchyLearner,
     OlympiadReasoner,
     PlainRagBaseline,
@@ -76,6 +103,7 @@ from semop import (
     preset_manifest,
     resolve_embedding_model_id,
     resolve_local_vision_model_path,
+    build_operator_intelligence_map,
 )
 from semop.llm_client import LocalLLMConfig, LocalTransformersExtractor
 
@@ -95,6 +123,76 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertIn(("car_wash", "REQUIRES", "vehicle_present"), relations)
         self.assertTrue(graph.invalid_advice)
 
+    def test_hidden_premise_explorer_recovers_carwash_goal_and_walk_risk(self) -> None:
+        pipeline = StructuredMeaningPipeline(mode="heuristic")
+        graph = pipeline.run("세차장에 가는데 차가 막혀, 걸어갈까?")
+        self.assertIn("clean_car_goal", graph.hidden_goals)
+        self.assertIn("vehicle_present", graph.required_premises)
+        self.assertTrue(graph.clarification_needed)
+        self.assertTrue(any(check.action == "walk_without_car" and check.status == "risk_high" for check in graph.goal_preservation_checks))
+        self.assertTrue(any("hidden premise:" in warning for warning in graph.warnings))
+
+    def test_hidden_premise_explorer_keeps_booking_interpretation_conditional(self) -> None:
+        pipeline = StructuredMeaningPipeline(mode="heuristic")
+        graph = pipeline.run("세차장 예약 취소하러 가는데 차가 막혀, 걸어갈까?")
+        self.assertIn("booking_or_inquiry_goal", graph.hidden_goals)
+        self.assertTrue(graph.clarification_needed)
+        self.assertTrue(any(check.action == "walk_without_car" and check.status == "conditionally_valid" for check in graph.goal_preservation_checks))
+        self.assertIn("clean_car_goal", graph.optional_interpretations)
+
+    def test_hidden_premise_evaluator_scores_goal_and_premise_recall(self) -> None:
+        evaluator = HiddenPremiseEvaluator(StructuredMeaningPipeline(mode="heuristic"))
+        summary = evaluator.evaluate([
+            HiddenPremiseEvalCase(
+                query="세차장에 가는데 차가 막혀, 걸어갈까?",
+                expected_hidden_goals=["clean_car_goal"],
+                expected_required_premises=["vehicle_present"],
+                expected_risky_actions=["walk_without_car"],
+            )
+        ])
+        self.assertEqual(summary.num_cases, 1)
+        self.assertEqual(summary.critical_premise_recall, 1.0)
+        self.assertEqual(summary.hidden_goal_recall, 1.0)
+        self.assertEqual(summary.goal_preservation_accuracy, 1.0)
+
+    def test_operator_algebra_decomposes_hidden_goal_reasoning(self) -> None:
+        graph = StructuredMeaningPipeline(mode="heuristic").run("세차장에 가는데 차가 막혀, 걸어갈까?")
+        names = {item.operator_name for item in graph.operator_decompositions}
+        self.assertIn("GOAL_PRESERVATION_OPERATOR", names)
+        self.assertIn("SERVICE_GOAL_OPERATOR", names)
+        self.assertTrue(any(item.name == "ServiceGoalToConstraintFunctor" for item in graph.functor_hypotheses))
+
+    def test_vlso_language_parser_projects_hidden_premises_into_world_model(self) -> None:
+        world, graph = VLSOReasoner().language_parser.parse("세차장에 가는데 차가 막혀, 걸어갈까?")
+        self.assertIn("clean_car_goal", world.goals)
+        self.assertIn("vehicle_present", world.constraints)
+        self.assertTrue(world.metadata.get('hidden_premises'))
+        self.assertTrue(world.metadata.get('functor_hypotheses'))
+
+    def test_operator_algebra_evaluator_scores_decomposition_and_functor_recall(self) -> None:
+        evaluator = OperatorAlgebraEvaluator(StructuredMeaningPipeline(mode="heuristic"))
+        summary = evaluator.evaluate([
+            __import__('semop').OperatorAlgebraEvalCase(
+                query="세차장에 가는데 차가 막혀, 걸어갈까?",
+                expected_decompositions=["GOAL_PRESERVATION_OPERATOR", "SERVICE_GOAL_OPERATOR"],
+                expected_functors=["ServiceGoalToConstraintFunctor"],
+            )
+        ])
+        self.assertEqual(summary.num_cases, 1)
+        self.assertEqual(summary.decomposition_recall, 1.0)
+        self.assertEqual(summary.functor_recall, 1.0)
+
+    def test_vlso_aligner_uses_hidden_goal_checks_for_cross_modal_warning(self) -> None:
+        visual_payload = {
+            'objects': [
+                {'id': 'container', 'label': 'polygon_10', 'kind': 'shape', 'bbox': [20, 20, 180, 180], 'polygon': [[20, 40], [30, 20], [170, 20], [180, 40], [180, 170], [170, 180], [30, 180], [20, 170]]},
+                {'id': 'opening_band', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [50, 24, 150, 44], 'polygon': [[50, 24], [150, 24], [150, 44], [50, 44]]},
+                {'id': 'handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]]},
+            ]
+        }
+        world = VLSOReasoner(mode='deep').run("닫힌 가방에 책을 바로 넣어도 될까?", visual_payload)
+        self.assertTrue(any('containment goal' in warning.lower() or 'access-first' in step.lower() for warning in world.warnings for step in world.inferred_steps[:1]) or any('Visual structure and language preconditions' in step for step in world.inferred_steps))
+
     def test_synthesizer_produces_human_readable_answer(self) -> None:
         pipeline = StructuredMeaningPipeline(mode="heuristic")
         graph = pipeline.run("The car wash is far away and traffic is heavy. What should I do?")
@@ -113,6 +211,15 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         )
         self.assertEqual(repaired["intent"], "test")
         self.assertEqual(repaired["entities"], [])
+
+    def test_operator_intelligence_map_exposes_four_axes(self) -> None:
+        architecture = build_operator_intelligence_map()
+        axis_names = {axis.name for axis in architecture.axes}
+        self.assertEqual(
+            axis_names,
+            {"operator_learning", "world_model", "memory", "verifier"},
+        )
+        self.assertTrue(any(subsystem.name == "vlso_hybrid_memory" for axis in architecture.axes for subsystem in axis.subsystems))
 
     def test_corpus_learning_builds_reusable_families(self) -> None:
         learner = CorpusReasoningLearner(mode="heuristic")
@@ -233,6 +340,14 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
 
 
 
+    def test_vlso_language_parser_filters_question_stopwords(self) -> None:
+        model, _ = VLSOReasoner().language_parser.parse("What objects or openings are visible here?")
+        entity_ids = {item.id for item in model.entities}
+        self.assertNotIn("what", entity_ids)
+        self.assertNotIn("or", entity_ids)
+        self.assertNotIn("are", entity_ids)
+        self.assertNotIn("here", entity_ids)
+
     def test_vlso_visual_parser_extracts_shape_from_raw_image(self) -> None:
         try:
             from PIL import Image, ImageDraw
@@ -265,6 +380,48 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(suppressed)
         self.assertTrue(audit)
 
+    def test_raw_image_parser_suppresses_small_edge_fragments(self) -> None:
+        parser = RawImageObservationParser()
+        main_object = [(x, y) for x in range(40, 100) for y in range(30, 90)]
+        edge_fragment = [(x, y) for x in range(0, 20) for y in range(0, 10)]
+        kept, suppressed, audit = parser._suppress_edge_fragments([main_object, edge_fragment], width=160, height=120)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(suppressed, 1)
+        self.assertTrue(audit)
+
+    def test_detector_adapter_preserves_structural_role_and_parent_hints(self) -> None:
+        observation = DetectorOutputAdapter().to_observation({
+            'annotations': [
+                {'id': 'drawer_body', 'label': 'drawer', 'bbox': [10, 10, 140, 90], 'bbox_mode': 'xyxy', 'kind': 'object'},
+                {'id': 'drawer_handle', 'label': 'handle', 'bbox': [112, 36, 132, 60], 'bbox_mode': 'xyxy', 'kind': 'object', 'part_of': 'drawer_body', 'part_of_confidence': 0.93, 'structural_role': 'handle', 'segmentation_confidence': 0.88},
+                {'id': 'drawer_front', 'label': 'front opening', 'bbox': [18, 26, 126, 42], 'bbox_mode': 'xyxy', 'kind': 'object', 'part_of': 'drawer_body', 'part_of_confidence': 0.9, 'structural_role': 'opening', 'segmentation_confidence': 0.91},
+            ]
+        })
+        handle = next(item for item in observation.objects if item['id'] == 'drawer_handle')
+        opening = next(item for item in observation.objects if item['id'] == 'drawer_front')
+        self.assertEqual(handle.get('parent_id'), 'drawer_body')
+        self.assertEqual(opening.get('structural_role'), 'opening')
+        self.assertTrue(any(item.get('value') == 'HANDLE_CANDIDATE' for item in observation.affordances))
+        self.assertTrue(any(item.get('value') == 'ACCESS_PORT_CANDIDATE' for item in observation.affordances))
+
+    def test_vlso_reasoner_recovers_structural_bindings_from_segmented_payload(self) -> None:
+        payload = {
+            'annotations': [
+                {'id': 'drawer_body', 'label': 'drawer', 'bbox': [10, 10, 160, 110], 'bbox_mode': 'xyxy', 'kind': 'object', 'mask_area': 11000, 'bbox_fill_ratio': 0.72, 'hull_fill_ratio': 0.84},
+                {'id': 'drawer_handle', 'label': 'handle', 'bbox': [124, 48, 148, 72], 'bbox_mode': 'xyxy', 'kind': 'object', 'part_of': 'drawer_body', 'part_of_confidence': 0.95, 'structural_role': 'handle', 'segmentation_confidence': 0.92},
+                {'id': 'drawer_opening', 'label': 'opening band', 'bbox': [24, 20, 138, 38], 'bbox_mode': 'xyxy', 'kind': 'object', 'part_of': 'drawer_body', 'part_of_confidence': 0.94, 'structural_role': 'opening', 'segmentation_confidence': 0.93},
+            ]
+        }
+        world = VLSOReasoner(mode='deep', answer_mode='structured').run('How can I open or access this drawer?', payload)
+        bindings = world.metadata.get('structural_operator_bindings', [])
+        binding_names = {row.get('operator_name') for row in bindings if isinstance(row, dict)}
+        self.assertIn('CONTAINER_BODY_OPERATOR', binding_names)
+        self.assertIn('ACCESS_PORT_OPERATOR', binding_names)
+        self.assertIn('ATTACHED_GRASP_OPERATOR', binding_names)
+        relations = {(item.source, item.relation, item.target) for item in world.relations}
+        self.assertIn(('drawer_handle', 'STRUCTURAL_PART_OF', 'drawer_body'), relations)
+        self.assertIn(('drawer_opening', 'STRUCTURAL_PART_OF', 'drawer_body'), relations)
+
     def test_visual_parser_infers_container_parts_and_affordances(self) -> None:
         parser = VLSOReasoner().visual_parser
         model, observation = parser.parse(
@@ -285,6 +442,37 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertIn("EDGE_OPENING", affordances)
         relations = {(item.source, item.relation, item.target) for item in model.relations}
         self.assertIn(("zipper", "PART_OF", "bag"), relations)
+
+    def test_visual_object_reasoner_derives_structural_operators_before_labels(self) -> None:
+        parser = VLSOReasoner(mode='deep').visual_parser
+        model, observation = parser.parse({
+            'objects': [
+                {'id': 'container', 'label': 'polygon_10', 'kind': 'shape', 'bbox': [20, 20, 180, 180], 'polygon': [[20, 40], [30, 20], [170, 20], [180, 40], [180, 170], [170, 180], [30, 180], [20, 170]]},
+                {'id': 'opening_band', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [50, 24, 150, 44], 'polygon': [[50, 24], [150, 24], [150, 44], [50, 44]]},
+                {'id': 'side_handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]]},
+            ]
+        })
+        bindings = model.metadata.get('structural_operator_bindings', [])
+        operator_names = {item.get('operator_name') for item in bindings if isinstance(item, dict)}
+        self.assertIn('CONTAINER_BODY_OPERATOR', operator_names)
+        self.assertIn('ACCESS_PORT_OPERATOR', operator_names)
+        self.assertIn('ATTACHED_GRASP_OPERATOR', operator_names)
+        self.assertTrue(any(item.get('value') == 'ACCESSIBLE_INTERIOR_PATH' for item in observation.affordances))
+
+    def test_vlso_question_answerer_uses_structural_access_route(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            'How can I access the opening?',
+            visual_input={
+                'objects': [
+                    {'id': 'container', 'label': 'polygon_10', 'kind': 'shape', 'bbox': [20, 20, 180, 180], 'polygon': [[20, 40], [30, 20], [170, 20], [180, 40], [180, 170], [170, 180], [30, 180], [20, 170]]},
+                    {'id': 'opening_band', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [50, 24, 150, 44], 'polygon': [[50, 24], [150, 24], [150, 44], [50, 44]]},
+                    {'id': 'side_handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]]},
+                ]
+            },
+        )
+        answer = VLSOQuestionAnswerer().answer('How can I access the opening?', world, answer_mode='structured')
+        self.assertIn('structural access path', answer.answer_text.lower())
+        self.assertIn('opening_band', answer.answer_text)
 
     def test_visual_object_reasoner_infers_bag_zipper_and_strap_hypotheses(self) -> None:
         parser = VLSOReasoner().visual_parser
@@ -422,6 +610,8 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         result = GeometryTopologyExtractor().extract(VLSOReasoner().visual_parser._coerce(observation))
         relations = {(item["source"], item["relation"], item["target"]) for item in result.derived_relations}
         self.assertIn(("outer", "CONTAINS", "inner"), relations)
+        self.assertIn(("line_a", "PARALLEL", "line_b"), relations)
+        self.assertIn(("line_a", "PERPENDICULAR", "line_c"), relations)
         self.assertIn(("outer", "LEFT_OF", "right"), relations)
         self.assertIn(("line_a", "PARALLEL", "line_b"), relations)
         self.assertIn(("line_a", "INTERSECTS", "line_c"), relations)
@@ -498,6 +688,16 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertEqual(summary["active_backend"], "token_geometry_v1")
         self.assertEqual(len(vector), 64)
         self.assertTrue(summary["load_error"])
+    def test_visual_geometry_reasoner_emits_parallel_and_perpendicular_edges(self) -> None:
+        observation = __import__("semop").VisualObservation(
+            objects=[{"id": "rect", "polygon": [[0, 0], [4, 0], [4, 2], [0, 2]]}]
+        )
+        world = __import__("semop").SharedWorldModel(query="geometry")
+        VisualGeometryReasoner().enrich_world(world, observation)
+        relations = {(item.source, item.relation, item.target) for item in world.relations}
+        self.assertTrue(any(rel == "PARALLEL" for _, rel, _ in relations))
+        self.assertTrue(any(rel == "PERPENDICULAR" for _, rel, _ in relations))
+
     def test_visual_geometry_reasoner_infers_shape_hypotheses(self) -> None:
         observation = VLSOReasoner().visual_parser._coerce({
             "objects": [
@@ -544,6 +744,21 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertIn("opening", answer.answer_text.lower())
         self.assertTrue(answer.evidence)
 
+    def test_vlso_question_answerer_prefers_opening_candidates_over_border_fragments(self) -> None:
+        world = VLSOReasoner(mode="deep").run(
+            "How can I access the bag opening?",
+            visual_input={
+                "objects": [
+                    {"id": "bag", "label": "bag", "kind": "container", "bbox": [20, 20, 180, 180]},
+                    {"id": "opening_main", "label": "opening_main", "kind": "part", "bbox": [60, 24, 150, 44], "concept_labels": ["ACCESS_OPENING_CANDIDATE", "ZIPPER_LIKE_PART"]},
+                    {"id": "edge_noise", "label": "edge_noise", "kind": "part", "bbox": [0, 0, 24, 10], "concept_labels": ["ACCESS_OPENING_CANDIDATE", "ZIPPER_LIKE_PART"]},
+                ]
+            },
+        )
+        answer = VLSOQuestionAnswerer().answer("How can I access the bag opening?", world, answer_mode="structured")
+        self.assertIn("opening_main", answer.answer_text)
+        self.assertNotIn("edge_noise", answer.answer_text)
+
     def test_vlso_reasoner_accepts_affordance_weights_path(self) -> None:
         weights_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'knowledge', 'vlso_affordance_classifier.json')
         model, answer = VLSOReasoner(mode="deep", affordance_weights_path=weights_path).answer(
@@ -578,6 +793,122 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertEqual(observation.objects[0]["bbox"], [10.0, 20.0, 40.0, 60.0])
         self.assertEqual(observation.objects[0]["polygon"][0], [10.0, 20.0])
         self.assertEqual(observation.states[0]["value"], "closed")
+
+    def test_detector_output_adapter_preserves_part_relations_and_hole_metadata(self) -> None:
+        adapter = DetectorOutputAdapter()
+        observation = adapter.to_observation(
+            {
+                "detections": [
+                    {
+                        "id": "cabinet",
+                        "label": "cabinet",
+                        "bbox": [0, 0, 100, 100],
+                        "mask_area": 6400,
+                        "bbox_fill_ratio": 0.64,
+                    },
+                    {
+                        "id": "handle",
+                        "label": "handle",
+                        "bbox": [10, 40, 20, 70],
+                        "part_of": "cabinet",
+                        "hole_count": 1,
+                        "affordances": ["GRASPABLE_PART"],
+                    },
+                ]
+            }
+        )
+        relations = {(item.get('source'), item.get('relation'), item.get('target')) for item in observation.relations}
+        self.assertIn(('handle', 'PART_OF', 'cabinet'), relations)
+        handle = next(item for item in observation.objects if item['id'] == 'handle')
+        self.assertEqual(handle.get('hole_count'), 1)
+        self.assertEqual(observation.affordances[0]['value'], 'GRASPABLE_PART')
+
+    def test_visual_affordance_feature_extractor_uses_hole_and_fill_features(self) -> None:
+        observation = VisualObservation(
+            objects=[
+                {
+                    'id': 'container',
+                    'label': 'polygon_10',
+                    'kind': 'shape',
+                    'bbox': [0, 0, 100, 100],
+                    'pixel_count': 5500,
+                    'hole_count': 1,
+                    'bbox_fill_ratio': 0.55,
+                    'hull_fill_ratio': 0.71,
+                    'polygon_perimeter': 180.0,
+                    'polygon': [[0, 10], [10, 0], [90, 0], [100, 10], [100, 90], [90, 100], [10, 100], [0, 90]],
+                }
+            ],
+            metadata={'image_size': [100, 100]},
+        )
+        candidate = VisualAffordanceFeatureExtractor().extract(observation)[0]
+        self.assertGreater(candidate.features.get('hole_count_norm', 0.0), 0.0)
+        self.assertGreater(candidate.features.get('bbox_fill_ratio', 0.0), 0.5)
+        self.assertGreater(candidate.features.get('hull_fill_ratio', 0.0), 0.6)
+
+    def test_geometry_primitive_backbone_derives_edge_and_angle_features(self) -> None:
+        observation = VisualObservation(
+            objects=[
+                {
+                    'id': 'panel',
+                    'label': 'rectangle',
+                    'kind': 'shape',
+                    'bbox': [0, 0, 40, 20],
+                    'polygon': [[0, 0], [40, 0], [40, 20], [0, 20]],
+                    'pixel_count': 800,
+                    'bbox_fill_ratio': 1.0,
+                    'hull_fill_ratio': 1.0,
+                }
+            ],
+            metadata={'image_size': [40, 20]},
+        )
+        result = GeometryPrimitiveBackbone().enrich_observation(observation)
+        self.assertEqual(result.enriched_objects, 1)
+        panel = observation.objects[0]
+        self.assertGreaterEqual(panel.get('right_angle_count', 0), 4)
+        self.assertGreaterEqual(panel.get('parallel_edge_pair_count', 0), 2)
+        self.assertTrue(any(item.get('kind') == 'edge_segment' for item in observation.geometry))
+
+    def test_vlso_visual_parser_runs_geometry_backbone_before_reasoning(self) -> None:
+        parser = VLSOReasoner(mode='deep').visual_parser
+        model, observation = parser.parse({
+            'objects': [
+                {'id': 'panel', 'label': 'rectangle', 'kind': 'shape', 'bbox': [0, 0, 40, 20], 'polygon': [[0, 0], [40, 0], [40, 20], [0, 20]], 'pixel_count': 800, 'bbox_fill_ratio': 1.0, 'hull_fill_ratio': 1.0},
+                {'id': 'opening_band', 'label': 'slot', 'kind': 'shape', 'bbox': [8, 0, 32, 5], 'polygon': [[8, 0], [32, 0], [32, 5], [8, 5]], 'pixel_count': 120, 'bbox_fill_ratio': 1.0, 'hull_fill_ratio': 1.0},
+            ]
+        })
+        self.assertIn('geometry primitive backbone derived edge and angle primitives', model.audit_trace)
+        self.assertTrue(any(item.get('operator_name') == 'ACCESS_PORT_OPERATOR' for item in model.metadata.get('structural_operator_bindings', [])))
+
+    def test_jepa_structural_predictor_uses_operator_memory_for_context_priors(self) -> None:
+        db_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_memory_test.db')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        try:
+            store = VisualOperatorMemory(db_path)
+            store.upsert(
+                VisualOperatorRecord(
+                    key='operator:CONTAINER_ACCESS_OPERATOR',
+                    operator_name='CONTAINER_ACCESS_OPERATOR',
+                    feature_vector={'child_count_norm': 0.4, 'has_parent_container': 1.0},
+                    signature=['HAS_PARENT_CONTAINER', 'TOP_ACCESS_PATTERN', 'SIDE_GRASP_PATTERN'],
+                    metadata={'record_type': 'operator_prototype'},
+                )
+            )
+            predictor = JepaStructuralPredictor(operator_memory=store)
+            observation = VisualObservation(objects=[], metadata={})
+            candidates = [
+                VisualAffordanceCandidate(subject='container', parent='', features={'is_dominant': 1.0, 'right_angle_count_norm': 0.5, 'parallel_edge_pair_norm': 0.5}, object_data={}),
+                VisualAffordanceCandidate(subject='opening_band', parent='container', features={'near_top_band': 1.0, 'boundary_attached': 1.0}, object_data={}),
+                VisualAffordanceCandidate(subject='side_handle', parent='container', features={'near_side_band': 1.0, 'vertical_elongation': 3.0}, object_data={}),
+            ]
+            result = predictor.predict(observation, candidates)
+            names = {item.operator_name for item in result.bindings}
+            self.assertIn('CONTAINER_ACCESS_OPERATOR', names)
+            self.assertIn('ACCESSIBLE_INTERIOR_PATH', {item['value'] for item in result.inferred_affordances})
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
 
     def test_visual_concept_memory_round_trip(self) -> None:
         db_path = os.path.join(os.path.dirname(__file__), "vlso_concept_memory_test.db")
@@ -664,6 +995,98 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             for target in (image_path, labels_path, store_path, summary_path):
                 if os.path.exists(target):
                     os.remove(target)
+
+    def test_visual_concept_self_trainer_clusters_and_accepts_pseudo_labels(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_self_training_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            candidates_path = base_dir / 'candidates.jsonl'
+            store_path = base_dir / 'pseudo.db'
+            summary_path = base_dir / 'summary.json'
+            rows = [
+                {
+                    'image_path': 'img_a.png',
+                    'targets': [
+                        {
+                            'subject_id': 'shape_1',
+                            'feature_vector': {
+                                'inside_parent': 1.0,
+                                'near_top_band': 1.0,
+                                'horizontal_elongation': 5.8,
+                                'boundary_attached': 1.0,
+                                'relative_area': 0.05,
+                                'vertical_elongation': 0.18,
+                                'near_side_band': 0.0,
+                                'shape_complexity': 0.2,
+                                'is_dominant': 0.0,
+                                'height_over_width': 0.18,
+                                'vertex_count_norm': 0.35,
+                                'overlap_children': 0.0,
+                                'area_ratio': 0.01,
+                                'touches_border': 0.0,
+                            },
+                            'prediction_details': [
+                                {'label': 'ZIPPER_LIKE_PART', 'confidence': 0.91, 'score': 4.2},
+                                {'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.87, 'score': 3.9},
+                            ],
+                            'suggested_labels': ['ZIPPER_LIKE_PART', 'ACCESS_OPENING_CANDIDATE'],
+                        }
+                    ],
+                },
+                {
+                    'image_path': 'img_b.png',
+                    'targets': [
+                        {
+                            'subject_id': 'shape_2',
+                            'feature_vector': {
+                                'inside_parent': 1.0,
+                                'near_top_band': 1.0,
+                                'horizontal_elongation': 5.6,
+                                'boundary_attached': 1.0,
+                                'relative_area': 0.052,
+                                'vertical_elongation': 0.19,
+                                'near_side_band': 0.0,
+                                'shape_complexity': 0.22,
+                                'is_dominant': 0.0,
+                                'height_over_width': 0.19,
+                                'vertex_count_norm': 0.34,
+                                'overlap_children': 0.0,
+                                'area_ratio': 0.011,
+                                'touches_border': 0.0,
+                            },
+                            'prediction_details': [
+                                {'label': 'ZIPPER_LIKE_PART', 'confidence': 0.9, 'score': 4.1},
+                                {'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.85, 'score': 3.8},
+                            ],
+                            'suggested_labels': ['ZIPPER_LIKE_PART', 'ACCESS_OPENING_CANDIDATE'],
+                        }
+                    ],
+                },
+            ]
+            with candidates_path.open('w', encoding='utf-8') as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + '\n')
+            summary = VisualConceptSelfTrainer().train_candidates_jsonl(
+                candidates_path,
+                store_path,
+                summary_output=summary_path,
+                config=PseudoLabelAcceptanceConfig(
+                    cluster_similarity_threshold=0.85,
+                    pseudo_confidence_threshold=0.7,
+                    cluster_consensus_threshold=0.5,
+                    min_cluster_size=2,
+                ),
+            )
+            self.assertEqual(summary.cluster_count, 1)
+            self.assertGreaterEqual(summary.accepted_prototypes, 1)
+            self.assertIn('ZIPPER_LIKE_PART', summary.accepted_labels)
+            matches = VisualConceptMemory(store_path).search(rows[0]['targets'][0]['feature_vector'], limit=3)
+            self.assertTrue(matches)
+            self.assertEqual(matches[0].metadata.get('record_type'), 'pseudo_prototype')
+        finally:
+            shutil.rmtree(base_dir, ignore_errors=True)
 
     def test_visual_concept_recommender_ranks_novel_uncertain_targets(self) -> None:
         db_path = os.path.join(os.path.dirname(__file__), 'vlso_recommend_store.db')
@@ -1084,6 +1507,15 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertEqual(result.time_complexity, "O(N+Q)")
         self.assertTrue(result.compile_ok)
 
+    def test_competitive_programming_reasoner_handles_geometry_structure(self) -> None:
+        result = CompetitiveProgrammingReasoner().solve(
+            "Given points of a polygon, determine whether two segments are perpendicular and compute the area."
+        )
+        self.assertIn("geometry", result.domain_tags)
+        self.assertIn("geometry_configuration", result.logical_frames)
+        self.assertEqual(result.category, "computational_geometry_analysis")
+        self.assertIn("cross", result.cpp_code.lower())
+
     def test_competitive_programming_reasoner_surfaces_logical_frames(self) -> None:
         result = CompetitiveProgrammingReasoner().solve(
             "There are many range sum queries on an array and no updates. Output the sum from l to r each time."
@@ -1290,6 +1722,35 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(0.0 <= summary.algorithm_exact_match <= 1.0)
         self.assertTrue(0.0 <= summary.frame_jaccard <= 1.0)
 
+    def test_cp_parser_evaluator_compare_examples_reports_deltas(self) -> None:
+        examples = [CpDslExample(
+            statement='Given three points of a triangle, compute its area.',
+            goal_types=['query'],
+            domain_tags=['geometry'],
+            logical_frames=['geometry_configuration'],
+            dsl_operators=['POINT', 'CROSS_PRODUCT'],
+            target_algorithm='computational_geometry_analysis',
+            reasoning_sketch='Use cross product.',
+        )]
+
+        class DummyModel:
+            def predict(self, statement: str) -> CpParserPrediction:
+                return CpParserPrediction(
+                    statement=statement,
+                    goal_types=['query'],
+                    domain_tags=['geometry'],
+                    logical_frames=['geometry_configuration'],
+                    dsl_operators=['POINT', 'CROSS_PRODUCT'],
+                    target_algorithm='computational_geometry_analysis',
+                    reasoning_sketch='Use cross product.',
+                )
+
+        summary = CpParserEvaluator().compare_examples(examples, model=DummyModel())
+        self.assertEqual(summary.num_examples, 1)
+        self.assertIn('heuristic_summary', summary.model_dump())
+        self.assertIn('model_summary', summary.model_dump())
+        self.assertIn('algorithm_exact_match_delta', summary.deltas)
+
     def test_cp_repair_engine_fixes_newline_literal(self) -> None:
         engine = CppRepairEngine()
         repaired, attempts = engine.repair(
@@ -1427,6 +1888,325 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertTrue(hasattr(module, "CpGuiApp"))
 
+    def test_easy_gui_module_imports(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertTrue(hasattr(module, "StarterApp"))
+
+    def test_easy_gui_exposes_vlso_progress_logger(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertTrue(hasattr(module, '_gui_vlso_progress'))
+
+    def test_easy_gui_checkbox_parser_prefers_last_checkbox_value(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertTrue(module._checked_form({"vlso_dry_run": ["0", "1"]}, "vlso_dry_run", default=True))
+        self.assertFalse(module._checked_form({"vlso_dry_run": ["0"]}, "vlso_dry_run", default=True))
+        self.assertTrue(module._checked_form({}, "vlso_dry_run", default=True))
+
+    def test_easy_gui_starter_page_renders_geometry_tools(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        app = module.StarterApp()
+        page = app.handle({})
+        self.assertIn("One-click VLSO geometry self-training", page)
+        self.assertIn("Run geometry self-training", page)
+        self.assertIn("Prepare VLSO downloads", page)
+        self.assertIn("VLSO download preparation", page)
+        self.assertIn("Load image preview cards", page)
+        self.assertIn("VLSO image preview and approval", page)
+        self.assertIn("Run learning on downloaded images", page)
+        self.assertIn("Downloaded image labeling", page)
+        self.assertIn("Load downloaded image cards", page)
+
+    def test_visual_review_retrainer_exports_approved_clusters(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'visual_review_retrain_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            image_path = base_dir / 'sample.png'
+            Image.new('RGB', (64, 64), (255, 255, 255)).save(image_path)
+            summary_path = base_dir / 'summary.json'
+            summary_path.write_text(json.dumps({
+                'clusters': [{
+                    'cluster_id': 'cluster_0001',
+                    'support': 2,
+                    'accepted_labels': [{'label': 'STRAP_LIKE_PART'}],
+                    'suggested_labels': [{'label': 'STRAP_LIKE_PART', 'accept': True}],
+                    'centroid': {'area_ratio': 0.2, 'vertical_elongation': 3.0},
+                    'members': [{'image_path': str(image_path), 'subject_id': 'shape_1'}],
+                }]
+            }), encoding='utf-8')
+            review_path = base_dir / 'reviews.json'
+            review_path.write_text(json.dumps({
+                'cluster_0001': {
+                    'cluster_id': 'cluster_0001',
+                    'status': 'approved',
+                    'note': 'keep strap',
+                    'approved_labels': ['STRAP_LIKE_PART'],
+                }
+            }), encoding='utf-8')
+            summary = VisualApprovedReviewRetrainer().export_and_retrain(
+                summary_path=summary_path,
+                review_path=review_path,
+                labels_path=base_dir / 'approved.jsonl',
+                concept_store_path=base_dir / 'concepts.db',
+                operator_store_path=base_dir / 'operators.db',
+            )
+            self.assertEqual(summary.approved_clusters, 1)
+            self.assertTrue((base_dir / 'approved.jsonl').exists())
+            self.assertTrue((base_dir / 'operators.db').exists())
+        finally:
+            shutil.rmtree(base_dir)
+
+
+    def test_visual_operator_family_generalizes_beyond_bags(self) -> None:
+        operators = VisualOperatorPrototypeTrainer._derive_operator_names(
+            ["DRAWER_LIKE_CONTAINER", "HAS_INTERIOR", "HANDLE_LIKE_PART", "ACCESS_OPENING_CANDIDATE"],
+            ["HAS_PARENT", "INSIDE_PARENT", "BOUNDARY_ATTACHED", "TOP_BAND"],
+        )
+        self.assertIn("CONTAINER_BODY_OPERATOR", operators)
+        self.assertIn("SLIDING_ACCESS_OPERATOR", operators)
+        self.assertIn("CARRIABLE_CONTAINER_OPERATOR", operators)
+
+    def test_vlso_grounded_evaluator_scores_structured_cases(self) -> None:
+        eval_path = os.path.join(os.path.dirname(__file__), 'vlso_eval_cases_test.jsonl')
+        visual_path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'vlso', 'bag_closed_observation.json')
+        Path(eval_path).write_text(json.dumps({
+            'case_id': 'bag_eval',
+            'query': 'What objects are visible here?',
+            'visual_json': visual_path,
+            'expected_entities': ['bag', 'zipper', 'book'],
+            'expected_relations': [{'source': 'zipper', 'relation': 'PART_OF', 'target': 'bag'}],
+            'required_terms': ['bag', 'zipper'],
+            'forbidden_terms': ['clearer image'],
+        }, ensure_ascii=False) + '\n', encoding='utf-8')
+        try:
+            evaluator = VlsoGroundedEvaluator(VLSOReasoner(mode='heuristic', answer_mode='structured'))
+            cases = evaluator.load_cases(eval_path)
+            summary = evaluator.evaluate_cases(cases)
+            self.assertEqual(summary.num_cases, 1)
+            self.assertGreaterEqual(summary.object_recall, 0.66)
+            self.assertEqual(summary.relation_recall, 1.0)
+            self.assertGreaterEqual(summary.answer_term_recall, 0.5)
+        finally:
+            if os.path.exists(eval_path):
+                os.remove(eval_path)
+
+    def test_vlso_grounded_evaluator_scores_structural_operator_recovery(self) -> None:
+        eval_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_eval_cases_test.jsonl')
+        Path(eval_path).write_text(json.dumps({
+            'case_id': 'structural_eval',
+            'query': 'How can I access the opening?',
+            'expected_operators': ['CONTAINER_BODY_OPERATOR', 'ACCESS_PORT_OPERATOR', 'ATTACHED_GRASP_OPERATOR'],
+            'expected_operator_bindings': [
+                {'operator_name': 'ACCESS_PORT_OPERATOR', 'subject': 'opening_band', 'parent': 'container'},
+                {'operator_name': 'ATTACHED_GRASP_OPERATOR', 'subject': 'side_handle', 'parent': 'container'},
+            ],
+            'required_terms': ['opening'],
+            'forbidden_terms': ['clearer image'],
+        }, ensure_ascii=False) + '\n', encoding='utf-8')
+        try:
+            evaluator = VlsoGroundedEvaluator(VLSOReasoner(mode='deep', answer_mode='structured'))
+            cases = evaluator.load_cases(eval_path)
+            # inject direct visual payload by monkeypatching helper pathless load pattern via query-time reasoner wrapper
+            original = evaluator._visual_input_from_case
+            evaluator._visual_input_from_case = staticmethod(lambda case: {
+                'objects': [
+                    {'id': 'container', 'label': 'polygon_10', 'kind': 'shape', 'bbox': [20, 20, 180, 180], 'polygon': [[20, 40], [30, 20], [170, 20], [180, 40], [180, 170], [170, 180], [30, 180], [20, 170]], 'pixel_count': 18000, 'bbox_fill_ratio': 0.69, 'hull_fill_ratio': 0.82},
+                    {'id': 'opening_band', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [50, 24, 150, 44], 'polygon': [[50, 24], [150, 24], [150, 44], [50, 44]], 'pixel_count': 1900, 'bbox_fill_ratio': 0.9},
+                    {'id': 'side_handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]], 'pixel_count': 1200, 'bbox_fill_ratio': 0.83},
+                ]
+            })
+            summary = evaluator.evaluate_cases(cases)
+            evaluator._visual_input_from_case = original
+            self.assertEqual(summary.operator_recall, 1.0)
+            self.assertEqual(summary.operator_binding_recall, 1.0)
+        finally:
+            if os.path.exists(eval_path):
+                os.remove(eval_path)
+
+    def test_vlso_review_impact_evaluator_compares_store_configs(self) -> None:
+        eval_path = os.path.join(os.path.dirname(__file__), 'vlso_review_compare_eval.jsonl')
+        visual_path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'vlso', 'bag_closed_observation.json')
+        Path(eval_path).write_text(json.dumps({
+            'case_id': 'bag_eval',
+            'query': 'What objects are visible here?',
+            'visual_json': visual_path,
+            'expected_entities': ['bag', 'zipper'],
+            'expected_relations': [{'source': 'zipper', 'relation': 'PART_OF', 'target': 'bag'}],
+            'required_terms': ['bag', 'zipper'],
+        }, ensure_ascii=False) + '\n', encoding='utf-8')
+        try:
+            summary = VlsoReviewImpactEvaluator(mode='heuristic', answer_mode='structured').compare_stores(
+                input_path=eval_path,
+                primary_concept_store=None,
+                primary_operator_store=None,
+                compare_concept_store=None,
+                compare_operator_store=None,
+            )
+            self.assertEqual(summary.primary_summary['num_cases'], 1)
+            self.assertEqual(summary.compare_summary['num_cases'], 1)
+            self.assertEqual(summary.deltas['grounded_answer_accuracy_delta'], 0.0)
+        finally:
+            if os.path.exists(eval_path):
+                os.remove(eval_path)
+
+    def test_visual_operator_prototype_trainer_builds_operator_store(self) -> None:
+        try:
+            from PIL import Image, ImageDraw
+        except Exception as exc:
+            self.skipTest(f'Pillow unavailable: {exc}')
+        image_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_train.png')
+        labels_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_labels.jsonl')
+        store_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_store.db')
+        for path_item in [image_path, labels_path, store_path]:
+            if os.path.exists(path_item):
+                os.remove(path_item)
+        image = Image.new('RGB', (160, 200), 'white')
+        drawer = ImageDraw.Draw(image)
+        drawer.polygon([(30, 30), (120, 24), (136, 54), (132, 172), (108, 190), (44, 188), (22, 160), (20, 54)], fill='black')
+        drawer.rectangle((42, 36, 114, 48), fill=(120, 120, 120))
+        image.save(image_path)
+        Path(labels_path).write_text(json.dumps({
+            'image_path': image_path,
+            'targets': [
+                {'positive_labels': ['BAG_LIKE_CONTAINER', 'HAS_INTERIOR']},
+                {'positive_labels': ['ZIPPER_LIKE_PART', 'ACCESS_OPENING_CANDIDATE']},
+            ],
+        }, ensure_ascii=False) + '\n', encoding='utf-8')
+        try:
+            summary = VisualOperatorPrototypeTrainer().train_jsonl(labels_path, store_path)
+            self.assertTrue(summary.prototype_count >= 2)
+            memory = VisualOperatorMemory(store_path)
+            matches = memory.search({'inside_parent': 1.0, 'boundary_attached': 1.0, 'near_top_band': 1.0, 'horizontal_elongation': 3.0}, ['HAS_PARENT', 'INSIDE_PARENT', 'BOUNDARY_ATTACHED', 'TOP_BAND', 'HORIZONTAL_ELONGATION'])
+            self.assertTrue(matches)
+            self.assertTrue(any(match.operator_name in {'OPENING_CONTROL_OPERATOR', 'CONTAINER_ACCESS_OPERATOR'} for match in matches))
+        finally:
+            for path_item in [image_path, labels_path, store_path]:
+                if os.path.exists(path_item):
+                    os.remove(path_item)
+
+    def test_visual_hybrid_memory_fuses_local_and_global_matches(self) -> None:
+        concept_store = os.path.join(os.path.dirname(__file__), 'vlso_hybrid_concepts_test.db')
+        operator_store = os.path.join(os.path.dirname(__file__), 'vlso_hybrid_operators_test.db')
+        for path_item in [concept_store, operator_store]:
+            if os.path.exists(path_item):
+                os.remove(path_item)
+        try:
+            VisualConceptMemory(concept_store).upsert(VisualConceptRecord(
+                key='concept:zip',
+                label='ZIPPER_LIKE_PART',
+                feature_vector={'inside_parent': 1.0, 'boundary_attached': 1.0, 'near_top_band': 1.0, 'horizontal_elongation': 3.0},
+                metadata={'co_labels': [{'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.8}]},
+            ))
+            VisualOperatorMemory(operator_store).upsert(VisualOperatorRecord(
+                key='operator:open',
+                operator_name='OPENING_CONTROL_OPERATOR',
+                feature_vector={'inside_parent': 1.0, 'boundary_attached': 1.0, 'near_top_band': 1.0, 'horizontal_elongation': 3.0},
+                signature=['HAS_PARENT', 'INSIDE_PARENT', 'BOUNDARY_ATTACHED', 'TOP_BAND', 'HORIZONTAL_ELONGATION'],
+                metadata={'record_type': 'operator_prototype', 'implied_labels': [{'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.9}]},
+            ))
+            hybrid = VisualHybridMemory(VisualConceptMemory(concept_store), VisualOperatorMemory(operator_store))
+            result = hybrid.retrieve(
+                {'inside_parent': 1.0, 'boundary_attached': 1.0, 'near_top_band': 1.0, 'horizontal_elongation': 3.0},
+                ['HAS_PARENT', 'INSIDE_PARENT', 'BOUNDARY_ATTACHED', 'TOP_BAND', 'HORIZONTAL_ELONGATION'],
+            )
+            labels = {row['label'] for row in result.fused_labels}
+            self.assertIn('ZIPPER_LIKE_PART', labels)
+            self.assertIn('ACCESS_OPENING_CANDIDATE', labels)
+            self.assertTrue(result.local_matches)
+            self.assertTrue(result.global_matches)
+        finally:
+            for path_item in [concept_store, operator_store]:
+                if os.path.exists(path_item):
+                    os.remove(path_item)
+
+    def test_visual_object_reasoner_uses_operator_memory(self) -> None:
+        store_path = os.path.join(os.path.dirname(__file__), 'vlso_operator_memory_test.db')
+        if os.path.exists(store_path):
+            os.remove(store_path)
+        try:
+            memory = VisualOperatorMemory(store_path)
+            memory.upsert(
+                __import__('semop').VisualOperatorRecord(
+                    key='operator:open',
+                    operator_name='OPENING_CONTROL_OPERATOR',
+                    feature_vector={'inside_parent': 1.0, 'boundary_attached': 1.0, 'near_top_band': 1.0, 'horizontal_elongation': 3.0},
+                    signature=['HAS_PARENT', 'INSIDE_PARENT', 'BOUNDARY_ATTACHED', 'TOP_BAND', 'HORIZONTAL_ELONGATION'],
+                    metadata={'record_type': 'operator_prototype', 'implied_labels': [{'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.9}, {'label': 'ZIPPER_LIKE_PART', 'confidence': 0.8}]},
+                )
+            )
+            parser = VLSOReasoner(operator_store_path=store_path).visual_parser
+            _, observation = parser.parse({'objects': [{'id': 'bag', 'label': 'bag', 'kind': 'object', 'bbox': [0, 0, 100, 100]}, {'id': 'zip', 'label': 'zip', 'kind': 'shape', 'bbox': [20, 0, 80, 12]}]})
+            zip_obj = next(item for item in observation.objects if item.get('id') == 'zip')
+            labels = set(zip_obj.get('concept_labels', []))
+            self.assertIn('ACCESS_OPENING_CANDIDATE', labels)
+            self.assertIn('ZIPPER_LIKE_PART', labels)
+            self.assertIn('operator_prototype_matched', observation.constraints)
+        finally:
+            if os.path.exists(store_path):
+                os.remove(store_path)
+
+    def test_visual_cluster_review_store_round_trip(self) -> None:
+        summary_path = os.path.join(os.path.dirname(__file__), "vlso_cluster_summary_test.json")
+        review_path = os.path.join(os.path.dirname(__file__), "vlso_cluster_reviews_test.json")
+        for path_item in [summary_path, review_path]:
+            if os.path.exists(path_item):
+                os.remove(path_item)
+        try:
+            Path(summary_path).write_text(json.dumps({
+                "summary": {"cluster_count": 1},
+                "clusters": [
+                    {
+                        "cluster_id": "cluster_0001",
+                        "support": 3,
+                        "accepted_labels": [{"label": "BAG_LIKE_CONTAINER", "accept": True}],
+                        "suggested_labels": [{"label": "BAG_LIKE_CONTAINER", "accept": True}],
+                        "centroid": {},
+                        "members": [],
+                    }
+                ],
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            store = VisualClusterReviewStore(review_path)
+            store.save_decision(VisualClusterReviewDecision(
+                cluster_id="cluster_0001",
+                status="approved",
+                note="Looks correct.",
+                approved_labels=["BAG_LIKE_CONTAINER"],
+            ))
+            stats = store.stats(summary_path)
+            clusters = store.list_clusters(summary_path)
+            self.assertEqual(stats["approved"], 1)
+            self.assertEqual(clusters[0]["review"]["status"], "approved")
+            self.assertEqual(clusters[0]["review"]["approved_labels"], ["BAG_LIKE_CONTAINER"])
+        finally:
+            for path_item in [summary_path, review_path]:
+                if os.path.exists(path_item):
+                    os.remove(path_item)
+
     def test_hard_problem_engine_verifies_and_learns_pattern_weights(self) -> None:
         db_path = os.path.join(os.path.dirname(__file__), "hard_problem_memory.db")
         weights_path = os.path.join(os.path.dirname(__file__), "logical_pattern_weights_test.json")
@@ -1545,8 +2325,415 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             shutil.rmtree(base_dir)
 
 
+    def test_cp_labeled_dataset_downloader_normalizes_manifest(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'cp_labeled_download_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            dataset_path = base_dir / 'sample.jsonl'
+            manifest_path = base_dir / 'manifest.json'
+            output_path = base_dir / 'normalized.jsonl'
+            dataset_path.write_text(json.dumps({'problem_id': 'p1', 'statement': 'Given an array, answer range sum queries.', 'solution': 'Use prefix sums.', 'tags': ['array', 'prefix_sum']}, ensure_ascii=False) + '\n', encoding='utf-8')
+            manifest_path.write_text(json.dumps({'datasets': [{'name': 'demo', 'url': str(dataset_path), 'statement_field': 'statement', 'solution_field': 'solution', 'id_field': 'problem_id', 'tag_fields': ['tags']}]}, ensure_ascii=False), encoding='utf-8')
+            summary = CpLabeledDatasetDownloader().download_and_normalize(manifest_path, base_dir / 'downloads', output_path)
+            self.assertEqual(summary.datasets, 1)
+            rows = [json.loads(line) for line in output_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertEqual(rows[0]['problem_id'], 'p1')
+            self.assertEqual(rows[0]['tags'], ['array', 'prefix_sum'])
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_visual_geometry_seed_manifest_contains_multiclass_queries(self) -> None:
+        from semop.vlso.data_collection import build_geometry_seed_manifest
+        manifest = build_geometry_seed_manifest()
+        queries = {item['query'] for item in manifest['sources']}
+        self.assertIn('triangle diagram', queries)
+        self.assertIn('open drawer handle', queries)
+        self.assertIn('door hinge open', queries)
+
+    def test_cp_labeled_dataset_downloader_filters_geometry_rows(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'cp_geometry_download_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            dataset_path = base_dir / 'sample.jsonl'
+            manifest_path = base_dir / 'manifest.json'
+            output_path = base_dir / 'normalized.jsonl'
+            dataset_path.write_text(
+                json.dumps({'problem_id': 'g1', 'statement': 'Given a graph, find shortest paths.', 'solution': 'Use Dijkstra.', 'tags': ['graph']}, ensure_ascii=False) + '\n' +
+                json.dumps({'problem_id': 'geo1', 'statement': 'Given three points of a triangle, compute its area.', 'solution': 'Use cross product.', 'tags': ['geometry', 'triangle']}, ensure_ascii=False) + '\n',
+                encoding='utf-8',
+            )
+            manifest_path.write_text(json.dumps({'datasets': [{'name': 'geo_demo', 'source_type': 'url', 'url': str(dataset_path), 'statement_fields': ['statement'], 'solution_fields': ['solution'], 'id_fields': ['problem_id'], 'tag_fields': ['tags'], 'include_any_tags': ['geometry'], 'include_text_terms': ['triangle', 'area']} ]}, ensure_ascii=False), encoding='utf-8')
+            summary = CpLabeledDatasetDownloader().download_and_normalize(manifest_path, base_dir / 'downloads', output_path)
+            self.assertEqual(summary.examples, 1)
+            rows = [json.loads(line) for line in output_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertEqual(rows[0]['problem_id'], 'geo1')
+            self.assertIn('geometry', rows[0]['tags'])
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_visual_geometry_bootstrap_pipeline_runs_end_to_end(self) -> None:
+        try:
+            from PIL import Image, ImageDraw
+        except Exception as exc:
+            self.skipTest(f'Pillow unavailable: {exc}')
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_geometry_pipeline_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        image_path = base_dir / 'rect.png'
+        image = Image.new('RGB', (80, 80), 'white')
+        drawer = ImageDraw.Draw(image)
+        drawer.rectangle((16, 20, 64, 56), fill='black')
+        image.save(image_path)
+        try:
+            summary = VisualGeometryBootstrapPipeline().run(
+                inputs=[str(image_path)],
+                candidates_path=base_dir / 'candidates.jsonl',
+                pseudo_labels_path=base_dir / 'pseudo_labels.jsonl',
+                concept_store_path=base_dir / 'concepts.db',
+                operator_store_path=base_dir / 'operators.db',
+                eval_input='examples/vlso_geometry_eval.jsonl',
+                eval_mode='heuristic',
+                answer_mode='structured',
+            )
+            self.assertEqual(summary.image_count, 1)
+            self.assertTrue((base_dir / 'candidates.jsonl').exists())
+            self.assertTrue((base_dir / 'pseudo_labels.jsonl').exists())
+            self.assertTrue((base_dir / 'concepts.db').exists())
+            self.assertTrue((base_dir / 'operators.db').exists())
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_synthetic_geometry_scene_builder_writes_eval_assets(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_synthetic_geometry_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            builder = SyntheticGeometrySceneBuilder()
+            scenes = builder.build(base_dir)
+            eval_path = base_dir / 'eval.jsonl'
+            builder.write_eval_jsonl(scenes, eval_path)
+            self.assertEqual(len(scenes), 5)
+            self.assertTrue((base_dir / 'parallel_perpendicular_scene.json').exists())
+            self.assertTrue(eval_path.exists())
+            rows = [json.loads(line) for line in eval_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertEqual(len(rows), 5)
+            self.assertIn('parallel', rows[0]['required_terms'])
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_visual_geometry_bootstrap_pipeline_accepts_json_scene_inputs(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_geometry_json_pipeline_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            scenes = SyntheticGeometrySceneBuilder().build(base_dir)
+            SyntheticGeometrySceneBuilder().write_eval_jsonl(scenes, base_dir / 'eval.jsonl')
+            summary = VisualGeometryBootstrapPipeline().run(
+                inputs=[scene.visual_json_path for scene in scenes],
+                candidates_path=base_dir / 'candidates.jsonl',
+                pseudo_labels_path=base_dir / 'pseudo_labels.jsonl',
+                concept_store_path=base_dir / 'concepts.db',
+                operator_store_path=base_dir / 'operators.db',
+                eval_input=str(base_dir / 'eval.jsonl'),
+                eval_mode='heuristic',
+                answer_mode='structured',
+            )
+            self.assertEqual(summary.image_count, 5)
+            self.assertIsNotNone(summary.eval_summary)
+            self.assertGreaterEqual(summary.eval_summary.get('grounded_answer_accuracy', 0.0), 0.66)
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_cp_geometry_template_generator_builds_eval_examples(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'cp_geometry_template_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            output_path = base_dir / 'geometry_eval.jsonl'
+            summary = CpGeometryTemplateGenerator().build_eval_set(output_path)
+            self.assertEqual(summary.num_examples, 10)
+            rows = [json.loads(line) for line in output_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertEqual(len(rows), 10)
+            self.assertTrue(all(row['target_algorithm'] == 'computational_geometry_analysis' for row in rows))
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_cp_geometry_template_generator_builds_train_val_split(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'cp_geometry_template_split_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            train_path = base_dir / 'train.jsonl'
+            val_path = base_dir / 'val.jsonl'
+            summary = CpGeometryTemplateGenerator().build_train_val_split(train_path, val_path, train_ratio=0.8)
+            self.assertEqual(summary.train_examples, 8)
+            self.assertEqual(summary.val_examples, 2)
+            self.assertTrue(train_path.exists())
+            self.assertTrue(val_path.exists())
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_cp_geometry_eval_builder_emits_geometry_examples(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'cp_geometry_eval_builder_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            input_path = base_dir / 'geometry.jsonl'
+            output_path = base_dir / 'eval.jsonl'
+            input_path.write_text(
+                json.dumps({'problem_id': 'geo1', 'statement': 'Given three points of a triangle, compute its area.', 'solution': 'Use cross product.', 'tags': ['geometry', 'triangle']}, ensure_ascii=False) + '\n' +
+                json.dumps({'problem_id': 'graph1', 'statement': 'Find the shortest path in a weighted graph.', 'solution': 'Use Dijkstra.', 'tags': ['graph']}, ensure_ascii=False) + '\n',
+                encoding='utf-8',
+            )
+            summary = CpGeometryEvalBuilder().build_from_normalized_jsonl(input_path, output_path)
+            self.assertEqual(summary.kept_examples, 1)
+            rows = [json.loads(line) for line in output_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertEqual(rows[0]['target_algorithm'], 'computational_geometry_analysis')
+            self.assertIn('geometry_configuration', rows[0]['logical_frames'])
+        finally:
+            shutil.rmtree(base_dir)
+
+
+    def test_visual_concept_self_trainer_assigns_review_priority_to_ambiguous_clusters(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_self_training_priority_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            candidates_path = base_dir / 'candidates.jsonl'
+            store_path = base_dir / 'concepts.db'
+            summary_path = base_dir / 'summary.json'
+            payload = {
+                'image_path': 'demo.png',
+                'targets': [
+                    {
+                        'subject_id': 'shape_1',
+                        'shape_hint': 'polygon_8',
+                        'feature_vector': {'f1': 0.92, 'f2': 0.11, 'f3': 0.41},
+                        'prediction_details': [
+                            {'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.78, 'score': 0.78},
+                            {'label': 'STRAP_LIKE_PART', 'confidence': 0.74, 'score': 0.74},
+                        ],
+                    },
+                    {
+                        'subject_id': 'shape_2',
+                        'shape_hint': 'polygon_8',
+                        'feature_vector': {'f1': 0.91, 'f2': 0.12, 'f3': 0.4},
+                        'prediction_details': [
+                            {'label': 'ACCESS_OPENING_CANDIDATE', 'confidence': 0.76, 'score': 0.76},
+                            {'label': 'STRAP_LIKE_PART', 'confidence': 0.73, 'score': 0.73},
+                        ],
+                    },
+                ],
+            }
+            candidates_path.write_text(json.dumps(payload, ensure_ascii=False) + '\n', encoding='utf-8')
+            summary = VisualConceptSelfTrainer().train_candidates_jsonl(candidates_path, store_path, summary_output=summary_path)
+            self.assertEqual(summary.cluster_count, 1)
+            cluster_rows = json.loads(summary_path.read_text(encoding='utf-8'))['clusters']
+            self.assertGreater(cluster_rows[0]['review_priority'], 0.0)
+            self.assertIn('low margin', cluster_rows[0]['review_reason'])
+        finally:
+            shutil.rmtree(base_dir)
+
+    def test_competitive_programming_reasoner_records_search_trace_for_geometry(self) -> None:
+        result = CompetitiveProgrammingReasoner().solve('Given coordinates of three points, compute the area of the triangle they form.')
+        self.assertIsNotNone(result)
+        self.assertEqual(result.category, 'computational_geometry_analysis')
+        self.assertEqual(result.selection_strategy, 'verifier_rerank_top3')
+        self.assertTrue(result.search_trace)
+        self.assertEqual(result.search_trace[0]['category'], 'computational_geometry_analysis')
+
+    def test_vlso_question_answerer_prioritizes_geometry_queries(self) -> None:
+        world = __import__('semop').SharedWorldModel(query='geometry')
+        world.add_relation(__import__('semop').VLSORelation(source='line_ab', relation='PARALLEL', target='line_cd', modality='vision', confidence=0.8))
+        world.add_relation(__import__('semop').VLSORelation(source='line_ab', relation='PERPENDICULAR', target='line_ef', modality='vision', confidence=0.8))
+        answer = VLSOQuestionAnswerer().answer('What geometric structure is visible here?', world, answer_mode='structured')
+        self.assertIn('parallel', answer.answer_text.lower())
+        self.assertIn('perpendicular', answer.answer_text.lower())
+
+
+    def test_vlso_question_answerer_summarizes_containers_and_parts(self) -> None:
+        world = __import__('semop').SharedWorldModel(query='inventory')
+        world.add_entity(__import__('semop').VLSOEntity(id='shape_1', label='main box', modality='vision', entity_type='container', attributes={'concept_labels': ['BOX_LIKE_CONTAINER', 'HAS_INTERIOR']}))
+        world.add_entity(__import__('semop').VLSOEntity(id='shape_2', label='front handle', modality='vision', entity_type='part', attributes={'concept_labels': ['HANDLE_LIKE_PART', 'GRASPABLE_PART']}))
+        answer = VLSOQuestionAnswerer().answer('What objects are visible here?', world, answer_mode='structured')
+        self.assertIn('containers:', answer.answer_text)
+        self.assertIn('parts/openings:', answer.answer_text)
+
+    def test_build_object_family_manifest_expands_multiple_families(self) -> None:
+        manifest = __import__('semop').build_object_family_manifest(['bag', 'door', 'tool'], limit_per_source=7)
+        self.assertIn('sources', manifest)
+        self.assertGreaterEqual(len(manifest['sources']), 6)
+        families = {row['metadata']['family'] for row in manifest['sources']}
+        self.assertEqual(families, {'bag', 'door', 'tool'})
+        self.assertTrue(all(int(row['limit']) == 7 for row in manifest['sources']))
+
+
+    def test_visual_data_collector_build_download_manifest_preserves_extension(self) -> None:
+        import importlib
+        data_collection = importlib.import_module('semop.vlso.data_collection')
+        records = [data_collection.VisualCollectionRecord(provider='openverse', query='bag', title='bag', page_url='', media_url='https://example.com/file.png', source_id='abc')]
+        manifest = VisualDataCollector().build_download_manifest(records, 'data/downloads')
+        self.assertEqual(len(manifest), 1)
+        self.assertTrue(manifest[0].target_path.endswith('.png'))
+
+    def test_visual_download_summary_reports_download_counts(self) -> None:
+        summary = VisualDataCollector().prepare_downloads(
+            records_path='examples/cp_labeled_public_sample.jsonl',
+            approved_output='tests/tmp_approved.jsonl',
+            manifest_output='tests/tmp_manifest.jsonl',
+            download_root='tests/tmp_downloads',
+            allow_providers=['openverse'],
+            accept_all=False,
+            execute=False,
+        )
+        self.assertTrue(hasattr(summary, 'downloaded_count'))
+        self.assertTrue(hasattr(summary, 'failed_downloads'))
+
+    def test_visual_data_collector_retries_http_429_once(self) -> None:
+        import importlib
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+        data_collection = importlib.import_module('semop.vlso.data_collection')
+
+        class _FakeResponse:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+            def read(self) -> bytes:
+                return self._payload
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        plan = VisualDataCollector().build_plan(VisualCollectionSource(provider='openverse', query='bag', limit=2))
+        throttled = HTTPError(plan.request_url, 429, 'Too many requests', hdrs={}, fp=None)
+        with patch.object(data_collection, 'urlopen', side_effect=[throttled, _FakeResponse(b'{"results": []}')]), patch.object(data_collection.time, 'sleep') as sleep_mock:
+            rows = VisualDataCollector().fetch_and_normalize(plan)
+        self.assertEqual(rows, [])
+        self.assertTrue(sleep_mock.called)
+
+    def test_visual_data_collector_family_batch_dry_run_builds_workspace_outputs(self) -> None:
+        base_dir = Path(os.path.dirname(__file__)) / 'vlso_family_batch_test'
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        base_dir.mkdir(parents=True)
+        try:
+            summary = VisualDataCollector().run_family_batch({'bag': 12, 'door': 8}, base_dir, execute_collect=False)
+            self.assertTrue(Path(summary.manifest_path).exists())
+            self.assertTrue(Path(summary.records_path).exists())
+            self.assertEqual(summary.families, {'bag': 12, 'door': 8})
+            self.assertGreaterEqual(summary.manifest_sources, 4)
+            self.assertEqual(summary.approved_count, 0)
+        finally:
+            shutil.rmtree(base_dir)
+
+
+    def test_easy_gui_render_result_uses_summary_and_raw_json_details(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        html_output = module.render_result("vision", {
+            "world": {
+                "entities": [{"id": "shape_1", "modality": "vision", "attributes": {"concept_labels": ["BAG_LIKE_CONTAINER", "HAS_INTERIOR"]}}],
+                "relations": [],
+                "metadata": {"vision_backend": {"active_backend": "dinov2_adapter"}},
+            },
+            "answer": {"answer_text": "Bag opening candidate detected.", "warnings": []},
+        })
+        self.assertIn("Likely objects", html_output)
+        self.assertIn("Raw JSON", html_output)
+
+    def test_easy_gui_can_render_visual_record_preview_cards(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        html_output = module.render_visual_record_preview(
+            records_path="data/vlso_collection_records.jsonl",
+            payload={
+                "summary": {"loaded_records": 1},
+                "records": [{
+                    "provider": "wikimedia_commons",
+                    "title": "backpack",
+                    "media_url": "https://example.com/backpack.jpg",
+                    "license": "cc0",
+                    "source_id": "abc123",
+                }],
+            },
+            selected_ids=["abc123"],
+            allow_providers="wikimedia_commons",
+            allow_licenses="cc0",
+            approved_output="data/approved.jsonl",
+            manifest_output="data/manifest.jsonl",
+            download_root="data/vlso_downloads",
+            accept_all=False,
+            execute_downloads=False,
+        )
+        self.assertIn("Prepare selected downloads", html_output)
+        self.assertIn("backpack", html_output)
+        self.assertIn("Select all previewed records", html_output)
+
+    def test_easy_gui_can_render_downloaded_label_editor(self) -> None:
+        import importlib.util
+        gui_path = Path(os.path.dirname(__file__)).parent / "semop_easy_gui.py"
+        spec = importlib.util.spec_from_file_location("semop_easy_gui", gui_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        html_output = module.render_downloaded_label_editor(
+            download_root="data/vlso_downloads",
+            payload={
+                "summary": {"loaded_records": 1},
+                "records": [{
+                    "source_id": "bag/item.jpg",
+                    "title": "item",
+                    "provider": "wikimedia_commons",
+                    "local_path": "E:/tmp/item.jpg",
+                }],
+            },
+            labels_output="data/manual_labels.jsonl",
+            concept_store="data/manual_concepts.db",
+            operator_store="data/manual_operators.db",
+            review_path="data/manual_label_reviews.json",
+            review_rows={
+                "bag/item.jpg": {
+                    "positive_labels": ["BAG_LIKE_CONTAINER", "HAS_INTERIOR"],
+                    "notes": "looks like a bag",
+                    "status": "approved",
+                }
+            },
+            review_filter="approved",
+        )
+        self.assertIn("Positive labels", html_output)
+        self.assertIn("Save review queue", html_output)
+        self.assertIn("Retrain approved labels only", html_output)
+        self.assertIn("status: approved", html_output)
+        self.assertIn("Review filter", html_output)
+        self.assertIn("vlso-label-suggestions", html_output)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

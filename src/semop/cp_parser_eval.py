@@ -38,6 +38,17 @@ class CpParserEvalSummary:
         return asdict(self)
 
 
+@dataclass
+class CpParserComparisonSummary:
+    num_examples: int
+    heuristic_summary: dict
+    model_summary: dict
+    deltas: dict
+
+    def model_dump(self) -> dict:
+        return asdict(self)
+
+
 class CpLearnedParser:
     def __init__(self, model_name_or_path: str, local_files_only: bool = False, max_new_tokens: int = 256) -> None:
         self.model_name_or_path = model_name_or_path
@@ -161,6 +172,21 @@ class CpParserEvaluator:
             frame_jaccard=round(sum(frame_scores) / total, 4),
             operator_jaccard=round(sum(operator_scores) / total, 4),
             reasoning_nonempty_rate=round(reasoning_hits / total, 4),
+        )
+
+    def compare_examples(self, examples: Iterable[CpDslExample], model: CpLearnedParser | None = None) -> CpParserComparisonSummary:
+        examples = list(examples)
+        heuristic_summary = self.evaluate_examples(examples, predictor='heuristic').model_dump()
+        model_summary = self.evaluate_examples(examples, predictor='model', model=model).model_dump() if model is not None else {}
+        deltas = {}
+        if model_summary:
+            for key in ['algorithm_exact_match', 'goal_jaccard', 'domain_jaccard', 'frame_jaccard', 'operator_jaccard', 'reasoning_nonempty_rate']:
+                deltas[key + '_delta'] = round(float(model_summary.get(key, 0.0)) - float(heuristic_summary.get(key, 0.0)), 4)
+        return CpParserComparisonSummary(
+            num_examples=len(examples),
+            heuristic_summary=heuristic_summary,
+            model_summary=model_summary,
+            deltas=deltas,
         )
 
     @staticmethod

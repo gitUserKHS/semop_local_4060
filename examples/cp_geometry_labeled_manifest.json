@@ -1,0 +1,29 @@
+{
+  "datasets": [
+    {
+      "name": "cp_geometry_local_sample",
+      "source_type": "url",
+      "url": "examples/cp_labeled_public_sample.jsonl",
+      "statement_fields": ["statement"],
+      "solution_fields": ["solution"],
+      "id_fields": ["problem_id"],
+      "tag_fields": ["tags"],
+      "include_any_tags": ["geometry"],
+      "include_text_terms": ["triangle", "polygon", "point", "segment", "parallel", "perpendicular", "distance", "area"]
+    },
+    {
+      "name": "cp_geometry_hf_template",
+      "enabled": false,
+      "source_type": "huggingface",
+      "hf_dataset": "qijimrc/CoMDataset",
+      "hf_splits": ["com_math", "train"],
+      "statement_fields": ["question", "statement", "problem", "prompt"],
+      "solution_fields": ["solution", "answer", "cot", "analysis", "reasoning"],
+      "id_fields": ["pid", "problem_id", "id"],
+      "tag_fields": ["question_type", "tags", "category"],
+      "include_any_tags": ["geometry", "math"],
+      "include_text_terms": ["triangle", "polygon", "point", "segment", "parallel", "perpendicular", "distance", "area", "circle", "angle"],
+      "exclude_text_terms": ["algebra only", "calculus"]
+    }
+  ]
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -34,7 +35,29 @@ def main() -> None:
     parser.add_argument('--approved-ids', help='optional text file of source ids or media URLs to accept explicitly')
     parser.add_argument('--accept-all', action='store_true', help='approve every record with a media URL')
     parser.add_argument('--execute', action='store_true', help='perform actual downloads from the built manifest')
+    parser.add_argument('--request-delay-seconds', type=float, default=None, help='override delay between download requests')
+    parser.add_argument('--max-retries', type=int, default=None, help='override retry count for transient download failures')
+    parser.add_argument('--progress', action='store_true', help='print per-download progress to stderr')
     args = parser.parse_args()
+
+    if args.request_delay_seconds is not None:
+        os.environ['SEMOP_VLSO_REQUEST_DELAY_SECONDS'] = str(args.request_delay_seconds)
+    if args.max_retries is not None:
+        os.environ['SEMOP_VLSO_MAX_RETRIES'] = str(args.max_retries)
+
+    def _progress(event: str, payload: dict[str, object]) -> None:
+        if not args.progress:
+            return
+        idx = payload.get('index', '?')
+        total = payload.get('total', '?')
+        provider = payload.get('provider', '')
+        title = payload.get('title', '')
+        if event == 'download_start':
+            print(f'[download {idx}/{total}] {provider} :: {title}', file=sys.stderr)
+        elif event == 'download_succeeded':
+            print(f'[ok       {idx}/{total}] {provider} :: {title}', file=sys.stderr)
+        elif event == 'download_failed':
+            print(f'[fail     {idx}/{total}] {provider} :: {title} -> {payload.get("error", "error")}', file=sys.stderr)
 
     summary = VisualDataCollector().prepare_downloads(
         records_path=args.records,
@@ -46,6 +69,7 @@ def main() -> None:
         approved_ids=_load_ids(args.approved_ids),
         accept_all=args.accept_all,
         execute=args.execute,
+        progress_callback=_progress if args.progress else None,
     )
     print(json.dumps(summary.model_dump(), ensure_ascii=False, indent=2))
 

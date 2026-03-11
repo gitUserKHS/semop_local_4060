@@ -29,7 +29,8 @@ class VisualAffordanceFeatureExtractor:
             if not subject:
                 continue
             box = self._bbox(item)
-            parent = dominant_id if dominant_id and subject != dominant_id and dominant_box and self._overlaps(dominant_box, box) else ""
+            explicit_parent = str(item.get('parent_id') or '')
+            parent = explicit_parent or (dominant_id if dominant_id and subject != dominant_id and dominant_box and self._overlaps(dominant_box, box) else '')
             rows.append(
                 VisualAffordanceCandidate(
                     subject=subject,
@@ -83,12 +84,24 @@ class VisualAffordanceFeatureExtractor:
         relative_area = 0.0
         near_top_band = 0.0
         near_side_band = 0.0
+        explicit_parent = 1.0 if item.get('parent_id') else 0.0
+        explicit_opening_hint = 1.0 if str(item.get('structural_role') or '').lower() in {'opening', 'access_port', 'opening_band'} else 0.0
+        explicit_control_hint = 1.0 if str(item.get('structural_role') or '').lower() in {'access_control', 'control', 'zipper', 'lid', 'door', 'cap'} else 0.0
+        explicit_grasp_hint = 1.0 if str(item.get('structural_role') or '').lower() in {'handle', 'grasp', 'strap', 'grip', 'knob'} else 0.0
         if dominant_box is not None and dominant_id != str(item.get("id") or item.get("label") or item.get("name") or ""):
-            inside_parent = 1.0 if self._contains(dominant_box, box) else 0.0
+            inside_parent = 1.0 if self._contains(dominant_box, box) or explicit_parent >= 1.0 else 0.0
             boundary_attached = 1.0 if self._is_boundary_attached(dominant_box, box) else 0.0
             relative_area = area / max(1.0, self._area(dominant_box))
             near_top_band = 1.0 if box[1] <= dominant_box[1] + (dominant_box[3] - dominant_box[1]) * 0.28 else 0.0
             near_side_band = 1.0 if (box[0] <= dominant_box[0] + (dominant_box[2] - dominant_box[0]) * 0.2 or box[2] >= dominant_box[2] - (dominant_box[2] - dominant_box[0]) * 0.2) else 0.0
+        hole_count = float(item.get("hole_count") or 0.0)
+        bbox_fill_ratio = float(item.get("bbox_fill_ratio") or min(1.0, area / max(1.0, frame_area)))
+        hull_fill_ratio = float(item.get("hull_fill_ratio") or bbox_fill_ratio)
+        polygon_perimeter = float(item.get("polygon_perimeter") or (2.0 * (width + height)))
+        compactness = (4.0 * 3.141592653589793 * area) / max(1.0, polygon_perimeter * polygon_perimeter)
+        right_angle_count = float(item.get("right_angle_count") or 0.0)
+        parallel_edge_pair_count = float(item.get("parallel_edge_pair_count") or 0.0)
+        equal_length_pair_count = float(item.get("equal_length_pair_count") or 0.0)
         return {
             "is_dominant": 1.0 if dominant_id == str(item.get("id") or item.get("label") or item.get("name") or "") else 0.0,
             "height_over_width": height / width,
@@ -104,6 +117,14 @@ class VisualAffordanceFeatureExtractor:
             "relative_area": relative_area,
             "near_top_band": near_top_band,
             "near_side_band": near_side_band,
+            "hole_count_norm": min(1.0, hole_count / 3.0),
+            "bbox_fill_ratio": max(0.0, min(1.0, bbox_fill_ratio)),
+            "hull_fill_ratio": max(0.0, min(1.2, hull_fill_ratio)),
+            "compactness": max(0.0, min(1.2, compactness)),
+            "segmentation_confidence": float(item.get("score") or 0.0),
+            "right_angle_count_norm": min(1.0, right_angle_count / 4.0),
+            "parallel_edge_pair_norm": min(1.0, parallel_edge_pair_count / 4.0),
+            "equal_length_pair_norm": min(1.0, equal_length_pair_count / 4.0),
         }
 
     def _frame_area(self, observation: VisualObservation) -> float:

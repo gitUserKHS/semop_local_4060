@@ -36,8 +36,13 @@ corpus ingest, manifests, memory refresh, and hierarchy rebuild.
 
 competitive-programming corpus, episode ingest, and parser training.
 
+- `tools/cp/bootstrap_geometry_corpus.py`
 - `tools/cp/build_cp_dsl_dataset.py`
 - `tools/cp/build_cp_training_bundle.py`
+- `tools/cp/build_geometry_parser_eval.py`
+- `tools/cp/download_cp_labeled_datasets.py`
+- `tools/cp/generate_geometry_eval_templates.py`
+- `tools/cp/generate_geometry_training_bundle.py`
 - `tools/cp/ingest_cp_episodes.py`
 - `tools/cp/prepare_cp_corpus.py`
 - `tools/cp/train_cp_parser.py`
@@ -52,6 +57,8 @@ evaluation and benchmark CLIs.
 - `tools/eval/evaluate_memory_prior.py`
 - `tools/eval/evaluate_ops_kpis.py`
 - `tools/eval/evaluate_transfer.py`
+- `tools/eval/evaluate_vlso_grounded_qa.py`
+- `tools/eval/evaluate_vlso_review_impact.py`
 
 ### `tools/ops`
 
@@ -65,16 +72,22 @@ operations-copilot labeling and feedback utilities.
 
 vision-language semantic operator memory utilities.
 
+- `tools/vlso/bootstrap_geometry_visual_data.py`
 - `tools/vlso/build_affordance_label_candidates.py`
 - `tools/vlso/build_visual_concept_candidates.py`
 - `tools/vlso/collect_visual_data.py`
+- `tools/vlso/generate_geometry_dataset.py`
 - `tools/vlso/index_visual_concepts.py`
 - `tools/vlso/index_vlso_visual_memory.py`
 - `tools/vlso/ingest_open_images_annotations.py`
 - `tools/vlso/prepare_visual_downloads.py`
 - `tools/vlso/recommend_visual_labels.py`
+- `tools/vlso/retrain_from_cluster_reviews.py`
+- `tools/vlso/run_geometry_reasoning_pipeline.py`
+- `tools/vlso/self_train_visual_concepts.py`
 - `tools/vlso/train_affordance_classifier.py`
 - `tools/vlso/train_visual_concepts.py`
+- `tools/vlso/train_visual_operators.py`
 
 ### `tools/maintenance`
 
@@ -95,22 +108,34 @@ shared visual-language operator space, geometry/topology, and visual memory.
 - `src/semop/vlso/affordance_features.py`
 - `src/semop/vlso/affordance_training.py`
 - `src/semop/vlso/aligner.py`
+- `src/semop/vlso/cluster_review.py`
 - `src/semop/vlso/concept_dataset.py`
 - `src/semop/vlso/concept_learning.py`
 - `src/semop/vlso/concept_memory.py`
 - `src/semop/vlso/data_collection.py`
 - `src/semop/vlso/detector_adapters.py`
 - `src/semop/vlso/embedding_store.py`
+- `src/semop/vlso/eval.py`
+- `src/semop/vlso/geometry_backbones.py`
+- `src/semop/vlso/geometry_dataset.py`
+- `src/semop/vlso/geometry_pipeline.py`
 - `src/semop/vlso/geometry_reasoner.py`
 - `src/semop/vlso/geometry_topology.py`
+- `src/semop/vlso/hybrid_memory.py`
 - `src/semop/vlso/image_parser.py`
 - `src/semop/vlso/image_preprocess.py`
 - `src/semop/vlso/language_parser.py`
 - `src/semop/vlso/object_reasoner.py`
 - `src/semop/vlso/open_images.py`
+- `src/semop/vlso/operator_learning.py`
 - `src/semop/vlso/operator_registry.py`
+- `src/semop/vlso/predictive_priors.py`
 - `src/semop/vlso/qa.py`
 - `src/semop/vlso/reasoner.py`
+- `src/semop/vlso/review_eval.py`
+- `src/semop/vlso/review_retrain.py`
+- `src/semop/vlso/self_training.py`
+- `src/semop/vlso/structural_operators.py`
 - `src/semop/vlso/types.py`
 - `src/semop/vlso/vision_backbones.py`
 - `src/semop/vlso/visual_parser.py`
@@ -131,8 +156,11 @@ reasoning core, CP engine, ops copilot, symbolic solvers, and corpus learning.
 - `src/semop/cp_dataset.py`
 - `src/semop/cp_episode_ingest.py`
 - `src/semop/cp_episode_store.py`
+- `src/semop/cp_geometry_eval.py`
+- `src/semop/cp_geometry_templates.py`
 - `src/semop/cp_knowledge.py`
 - `src/semop/cp_parser_eval.py`
+- `src/semop/cp_public_datasets.py`
 - `src/semop/cp_repair.py`
 - `src/semop/cp_training.py`
 - `src/semop/cp_validation.py`
@@ -145,6 +173,7 @@ reasoning core, CP engine, ops copilot, symbolic solvers, and corpus learning.
 - `src/semop/feedback_rules.py`
 - `src/semop/hard_problem_engine.py`
 - `src/semop/heuristic_extractors.py`
+- `src/semop/intelligence_map.py`
 - `src/semop/labeled_eval.py`
 - `src/semop/latent_abstraction.py`
 - `src/semop/llm_client.py`
@@ -179,4 +208,5 @@ reasoning core, CP engine, ops copilot, symbolic solvers, and corpus learning.
 - `examples/`
 - `src/`
 - `tests/`
+- `tmp_pdf_extract2/`
 - `tools/`

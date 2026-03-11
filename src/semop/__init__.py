@@ -5,7 +5,10 @@ from .cp_corpus import CpCorpusBuilder, CpCorpusRecord
 from .cp_dataset import CpDslExample, load_cp_dsl_examples, save_cp_dsl_examples
 from .cp_episode_ingest import CpIncidentCase, CpIncidentDataset, CpIncidentIngestor
 from .cp_episode_store import CpEpisodeMatch, CpEpisodeRecord, CpEpisodeStore
-from .cp_parser_eval import CpLearnedParser, CpParserEvaluator, CpParserEvalSummary, CpParserPrediction
+from .cp_parser_eval import CpLearnedParser, CpParserEvaluator, CpParserEvalSummary, CpParserPrediction, CpParserComparisonSummary
+from .cp_geometry_eval import CpGeometryEvalBuildSummary, CpGeometryEvalBuilder
+from .cp_geometry_templates import CpGeometryTemplateGenerator, CpGeometryTemplateSplitSummary, CpGeometryTemplateSummary
+from .cp_public_datasets import CpLabeledDatasetDownloader, CpLabeledDatasetEntry, CpLabeledDatasetSummary
 from .cp_training import CpDslDatasetBuilder, CpParserTrainConfig, CpParserTrainingScaffold, CpSftRecord, CpTrainingBundle, CpTrainingBundleBuilder, CpTrainingPlanner, load_cp_sft_records
 from .cp_validation import CpSampleCase, CpSolutionValidator, CpValidationReport, CppBuildResult, CppRunResult, CppProgramRunner
 from .cp_repair import CpRepairAttempt, CppRepairEngine
@@ -21,13 +24,18 @@ from .domain_templates import DOMAIN_TEMPLATES
 from .emergent_operators import EmergentOperatorInducer
 from .feedback_rules import FeedbackRule, FeedbackRuleSet
 from .hard_problem_engine import HardProblemCandidate, HardProblemEngine, HardProblemReport, PatternOutcomeTrainer, VerificationCheck
+from .intelligence_map import IntelligenceAxis, IntelligenceSubsystem, OperatorIntelligenceMap, build_operator_intelligence_map
 from .labeled_eval import LabeledOpsCase, LabeledOpsCaseResult, LabeledOpsEvaluator, load_labeled_ops_cases
 from .logical_grammar import GrammarInductionResult, LogicalGrammarInducer, LogicalPattern, LogicalPatternMatch, LogicalPatternMatcher
 from .memory_prior_eval import MemoryPriorEvaluationResult, MemoryPriorEvaluator, QueryPriorEffect
 from .model_cache import DEFAULT_EMBEDDING_MODEL_ID, EmbeddingModelCache, resolve_embedding_model_id
 from .olympiad_reasoner import OlympiadReasoner
 from .operator_hierarchy import OperatorCompositionPattern, OperatorHierarchyLearner, OperatorHierarchyNode, OperatorHierarchyResult
+from .operator_algebra import FunctorHypothesis, OperatorAlgebraLearner, OperatorAlgebraSummary, OperatorDecomposition
+from .operator_algebra_eval import OperatorAlgebraEvalCase, OperatorAlgebraEvaluator, OperatorAlgebraEvalSummary
 from .operator_registry import RegistryNode, TypedOperatorRegistry
+from .premise_eval import HiddenPremiseEvalCase, HiddenPremiseEvaluator, HiddenPremiseEvalSummary
+from .premise_explorer import HiddenPremiseExplorer, HiddenPremiseResult
 from .ops_kpi import OpsKpiEvaluator, OpsKpiReport
 from .pipeline import StructuredMeaningPipeline
 from .product_profiles import DOMAIN_PROFILES, DomainProfile, resolve_domain_profile
@@ -39,9 +47,9 @@ from .review_queue import ReviewQueueItem, ReviewQueueStore, review_reasons_from
 from .symbolic_arithmetic import ArithmeticReasoner
 from .symbolic_document import DocumentEvidenceReasoner
 from .symbolic_reasoners import SymbolicReasoner
-from .structures import SymbolicResult
+from .structures import FunctorHypothesis as GraphFunctorHypothesis, GoalPreservationCheck, OperatorDecomposition as GraphOperatorDecomposition, SymbolicResult
 from .transfer_eval import TransferEvaluator
-from .vlso import AffordanceLabelDataset, AffordanceLabelExample, AffordanceLabelTarget, AffordancePrediction, AffordanceTrainingSummary, AffordanceWeightTrainer, DEFAULT_VISION_MODEL_ROOT, DetectorOutputAdapter, GeometryReasoningResult, GeometryTopologyExtractor, GeometryTopologyResult, ImageMaskPreprocessor, ImageParseResult, ImagePreprocessResult, LocalTextGenerator, OpenImagesAnnotationAdapter, OpenImagesPayloadSummary, OperatorType, RawImageObservationParser, SharedWorldModel, VisualAffordanceCandidate, VisualAffordanceFeatureExtractor, VisualCollectionPlanItem, VisualCollectionRecord, VisualCollectionRunSummary, VisualCollectionSource, VisualConceptDataset, VisualConceptExample, VisualConceptLabelRecommender, VisualConceptLearningSummary, VisualConceptMatch, VisualConceptMemory, VisualConceptPrototypeTrainer, VisualConceptRecord, VisualConceptTarget, VisualDataCollector, VisualDownloadEntry, VisualDownloadSummary, VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore, VisualGeometryReasoner, VisualObjectReasoner, VisualObjectReasoningResult, VisualObservation, VISION_BACKBONE_SPECS, VLSOAligner, VLSOAnswer, VLSOEntity, VLSOLanguageParser, VLSOOperator, VLSOQuestionAnswerer, VLSOReasoner, VLSORelation, VLSOVisualParser, VLSO_OPERATOR_TYPES, VisionBackboneSpec, VisionEmbeddingExtractor, WeakAffordanceClassifier, resolve_local_vision_model_path
+from .vlso import AffordanceLabelDataset, AffordanceLabelExample, AffordanceLabelTarget, AffordancePrediction, AffordanceTrainingSummary, AffordanceWeightTrainer, DEFAULT_VISION_MODEL_ROOT, DetectorOutputAdapter, GeometryPrimitiveBackbone, GeometryPrimitiveResult, GeometryReasoningResult, GeometryTopologyExtractor, GeometryTopologyResult, HybridMemoryMatch, ImageMaskPreprocessor, ImageParseResult, ImagePreprocessResult, JepaStructuralPredictor, PredictivePriorResult, LocalTextGenerator, OpenImagesAnnotationAdapter, OpenImagesPayloadSummary, OperatorType, RawImageObservationParser, SharedWorldModel, StructuralOperatorBinding, SyntheticGeometryScene, SyntheticGeometrySceneBuilder, VisualAffordanceCandidate, VisualAffordanceFeatureExtractor, VisualClusterReviewDecision, VisualClusterReviewStore, VisualApprovedReviewRetrainer, VisualReviewRetrainSummary, VisualCollectionPlanItem, VisualCollectionRecord, VisualCollectionRunSummary, VisualCollectionSource, VisualConceptDataset, VisualConceptExample, VisualConceptLabelRecommender, VisualConceptLearningSummary, VisualConceptMatch, VisualConceptMemory, VisualConceptPrototypeTrainer, VisualConceptRecord, VisualConceptSelfTrainer, VisualConceptTarget, VisualDataCollector, VisualDownloadEntry, VisualDownloadSummary, VisualFamilyBatchSummary, VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore, VisualGeometryReasoner, VisualHybridMemory, VisualHybridMemoryResult, VisualObjectReasoner, VisualObjectReasoningResult, VisualObservation, VisualOperatorLearningSummary, VisualOperatorMatch, VisualOperatorMemory, VisualOperatorPrototypeTrainer, VisualOperatorRecord, VisualPseudoCluster, VisualSelfTrainingSummary, VisualStructuralOperatorInducer, VisualStructuralReasoningResult, VISION_BACKBONE_SPECS, VLSOAligner, VLSOAnswer, VLSOEntity, VLSOLanguageParser, VLSOOperator, VLSOQuestionAnswerer, VLSOReasoner, VLSORelation, VLSOVisualParser, VLSO_OPERATOR_TYPES, VisionBackboneSpec, VisionEmbeddingExtractor, WeakAffordanceClassifier, PseudoLabelAcceptanceConfig, GeometryPipelineSummary, VisualGeometryBootstrapPipeline, VlsoEvalCase, VlsoEvalResult, VlsoEvalSummary, VlsoGroundedEvaluator, VlsoReviewImpactEvaluator, VlsoStoreComparisonSummary, build_object_family_manifest, build_geometry_seed_manifest, resolve_local_vision_model_path
 
 __all__ = [
     "AffordanceLabelDataset",
@@ -71,6 +79,7 @@ __all__ = [
     "CpEpisodeRecord",
     "CpEpisodeStore",
     "CpParserEvalSummary",
+    "CpParserComparisonSummary",
     "CpParserEvaluator",
     "CpParserPrediction",
     "CpParserTrainConfig",
@@ -90,6 +99,11 @@ __all__ = [
     "CpDslOperator",
     "CpLogicalFrame",
     "CpKnowledgeLoader",
+    "CpLabeledDatasetDownloader",
+    "CpLabeledDatasetEntry",
+    "CpLabeledDatasetSummary",
+    "CpGeometryEvalBuildSummary",
+    "CpGeometryEvalBuilder",
     "CppCompileResult",
     "CppSyntaxChecker",
     "CopilotRequest",
@@ -108,13 +122,33 @@ __all__ = [
     "EmergentOperatorInducer",
     "FeedbackRule",
     "FeedbackRuleSet",
+    "GeometryPrimitiveBackbone",
+    "FunctorHypothesis",
+    "OperatorAlgebraLearner",
+    "OperatorAlgebraSummary",
+    "OperatorAlgebraEvalCase",
+    "OperatorAlgebraEvaluator",
+    "OperatorAlgebraEvalSummary",
+    "OperatorDecomposition",
+    "GeometryPrimitiveResult",
     "LocalTextGenerator",
     "LogicalPatternMatcher",
     "LogicalPatternMatch",
     "VerificationCheck",
     "PatternOutcomeTrainer",
     "HardProblemReport",
+    "JepaStructuralPredictor",
+    "PredictivePriorResult",
+    "IntelligenceAxis",
+    "IntelligenceSubsystem",
+    "OperatorIntelligenceMap",
+    "build_operator_intelligence_map",
     "HardProblemEngine",
+    "HiddenPremiseEvalCase",
+    "HiddenPremiseEvaluator",
+    "HiddenPremiseEvalSummary",
+    "HiddenPremiseExplorer",
+    "HiddenPremiseResult",
     "HardProblemCandidate",
     "LabeledOpsCase",
     "LabeledOpsCaseResult",
@@ -134,6 +168,22 @@ __all__ = [
     "OpsKpiEvaluator",
     "OpsKpiReport",
     "PlainRagBaseline",
+    "VisualSelfTrainingSummary",
+    "VisualOperatorLearningSummary",
+    "VisualOperatorMatch",
+    "VisualOperatorMemory",
+    "VisualOperatorPrototypeTrainer",
+    "VisualOperatorRecord",
+    "VisualPseudoCluster",
+    "VisualStructuralOperatorInducer",
+    "VisualStructuralReasoningResult",
+    "VisualConceptSelfTrainer",
+    "VisualClusterReviewDecision",
+    "VisualClusterReviewStore",
+    "VisualApprovedReviewRetrainer",
+    "VisualReviewRetrainSummary",
+    "StructuralOperatorBinding",
+    "PseudoLabelAcceptanceConfig",
     "PublicCorpusIngestor",
     "PublicDatasetAdapter",
     "QueryPriorEffect",
@@ -144,6 +194,9 @@ __all__ = [
     "ReviewQueueItem",
     "ReviewQueueStore",
     "StructuredMeaningPipeline",
+    "GoalPreservationCheck",
+    "GraphFunctorHypothesis",
+    "GraphOperatorDecomposition",
     "SymbolicReasoner",
     "SymbolicResult",
     "SynthesizedResponse",
@@ -173,7 +226,18 @@ __all__ = [
     "VisualCollectionRunSummary",
     "VisualDownloadEntry",
     "VisualDownloadSummary",
+    "VisualFamilyBatchSummary",
+    "build_object_family_manifest",
+    "build_geometry_seed_manifest",
+    "VlsoEvalCase",
+    "VlsoEvalResult",
+    "VlsoEvalSummary",
+    "VlsoGroundedEvaluator",
+    "VlsoReviewImpactEvaluator",
+    "VlsoStoreComparisonSummary",
     "VisualCollectionSource",
+    "GeometryPipelineSummary",
+    "VisualGeometryBootstrapPipeline",
     "VisualConceptDataset",
     "VisualConceptExample",
     "VisualConceptMatch",
@@ -192,9 +256,12 @@ __all__ = [
     "ImagePreprocessResult",
     "GeometryTopologyExtractor",
     "VisualGeometryReasoner",
+    "VisualHybridMemory",
+    "VisualHybridMemoryResult",
     "VisualObjectReasoner",
     "VisualObjectReasoningResult",
     "GeometryReasoningResult",
+    "HybridMemoryMatch",
     "DetectorOutputAdapter",
     "SharedWorldModel",
     "OpenImagesAnnotationAdapter",

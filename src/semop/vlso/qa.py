@@ -119,6 +119,10 @@ class VLSOQuestionAnswerer:
     def _structured_answer(self, query: str, world: SharedWorldModel, evidence: list[str]) -> str:
         lowered = query.lower()
         operator_names = {item.name for item in world.operators}
+        structural_bindings = world.metadata.get('structural_operator_bindings', []) if isinstance(world.metadata, dict) else []
+        hidden_premises = world.metadata.get('hidden_premises', []) if isinstance(world.metadata, dict) else []
+        goal_checks = world.metadata.get('goal_preservation_checks', []) if isinstance(world.metadata, dict) else []
+        functors = world.metadata.get('functor_hypotheses', []) if isinstance(world.metadata, dict) else []
         constraint_set = set(world.constraints)
         entity_labels = [item.label for item in world.entities if item.modality == "vision"]
         entity_ids = [item.id for item in world.entities if item.modality == "vision"]
@@ -130,14 +134,50 @@ class VLSOQuestionAnswerer:
             if item.relation in {"LEFT_OF", "RIGHT_OF", "ABOVE", "BELOW", "CONTAINS", "PART_OF", "INTERSECTS", "PARALLEL"}
         ]
 
-        if self._looks_like_object_inventory_question(lowered):
-            if entity_labels:
-                return "Visible entities in the current world model: " + ", ".join(entity_labels[:8])
-            return self._weak_evidence_answer()
-
-        if "shape" in lowered:
+        if any(token in lowered for token in ["geometric", "geometry", "parallel", "perpendicular", "equal length", "shape", "triangle", "rectangle", "square", "quadrilateral", "parallelogram"]):
+            geometry_lines = [
+                f"{item.source} {item.relation.lower()} {item.target}"
+                for item in world.relations
+                if item.relation in {"PARALLEL", "PERPENDICULAR", "EQUAL_LENGTH"}
+            ]
+            explicit_shape_query = any(token in lowered for token in ["what shape", "which shape", "triangle", "rectangle", "square", "quadrilateral", "parallelogram"])
+            if explicit_shape_query and shape_mentions:
+                return "Visible shape hypotheses: " + ", ".join(shape_mentions[:8])
+            if geometry_lines:
+                return "Key geometry relations: " + " | ".join(geometry_lines[:6])
             if shape_mentions:
                 return "Visible shape hypotheses: " + ", ".join(shape_mentions[:8])
+            return self._weak_evidence_answer()
+
+        if self._looks_like_object_inventory_question(lowered):
+            container_entities = []
+            part_entities = []
+            structural_containers = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') in {'CONTAINER_BODY_OPERATOR', 'MANIPULABLE_CONTAINER_OPERATOR'}]
+            structural_access = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') in {'ACCESS_PORT_OPERATOR', 'ACCESS_CONTROL_OPERATOR', 'ATTACHED_GRASP_OPERATOR'}]
+            for entity in world.entities:
+                if entity.modality != "vision":
+                    continue
+                labels = entity.attributes.get("concept_labels") or []
+                text_label = entity.label or entity.id
+                upper_labels = {str(item).upper() for item in labels} if isinstance(labels, list) else set()
+                is_container = any(any(token in label for token in ["CONTAINER", "BOX", "DRAWER", "CABINET", "BOTTLE", "JAR", "BIN", "POUCH", "SUITCASE"]) for label in upper_labels)
+                if is_container:
+                    container_entities.append(text_label)
+                elif upper_labels:
+                    part_entities.append(text_label)
+            if structural_containers or structural_access or container_entities or part_entities:
+                parts = []
+                if structural_containers:
+                    parts.append('structural containers: ' + ', '.join(structural_containers[:5]))
+                if structural_access:
+                    parts.append('structural access/grasp parts: ' + ', '.join(structural_access[:6]))
+                if container_entities:
+                    parts.append("containers: " + ", ".join(container_entities[:5]))
+                if part_entities:
+                    parts.append("parts/openings: " + ", ".join(part_entities[:6]))
+                return "Visible entities in the current world model: " + " | ".join(parts)
+            if entity_labels:
+                return "Visible entities in the current world model: " + ", ".join(entity_labels[:8])
             return self._weak_evidence_answer()
 
         if "state" in lowered or lowered.startswith("is ") or lowered.startswith("are "):
@@ -152,10 +192,25 @@ class VLSOQuestionAnswerer:
                 return "Key grounded relations: " + " | ".join(spatial_lines[:5])
 
         if any(token in lowered for token in ["open", "access", "inside", "interior"]):
+            opening_candidates = self._opening_candidates(world)
+            handle_candidates = self._handle_candidates(world)
+            structural_openings = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') == 'ACCESS_PORT_OPERATOR']
+            structural_controls = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') in {'ACCESS_CONTROL_OPERATOR', 'ATTACHED_GRASP_OPERATOR'}]
+            structural_containers = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') == 'CONTAINER_BODY_OPERATOR']
+            if structural_openings and structural_controls:
+                container_text = structural_containers[0] if structural_containers else 'the container body'
+                chosen_control = next((item for item in structural_controls if item not in structural_openings), structural_controls[0])
+                return 'Structural access path: use ' + chosen_control + ' to reach opening region ' + structural_openings[0] + ' on ' + container_text + '.'
+            if structural_openings:
+                return 'Most likely structural opening region: ' + ', '.join(structural_openings[:2])
+            if opening_candidates and handle_candidates:
+                return "Most likely access route: interact with " + handle_candidates[0] + " to reach " + opening_candidates[0] + "."
+            if opening_candidates:
+                return "Most likely opening-related part: " + ", ".join(opening_candidates[:2])
             if "ACCESS_OPENING_CANDIDATE" in operator_names or "EDGE_OPENING" in operator_names or "opening_candidate_detected" in constraint_set:
                 return "Likely access path: use the opening candidate near the boundary or top band before inserting or reaching inside."
-            if "HAS_INTERIOR" in operator_names or "bag_like_container_detected" in constraint_set:
-                return "The object appears to behave like a container. Look for a top or edge opening before interacting with the interior."
+            if "HAS_INTERIOR" in operator_names or "container_like_object_detected" in constraint_set:
+                return "The object appears to behave like a container. Look for a lid, zipper, hinge, cap, or edge opening before interacting with the interior."
 
         if any(token in lowered for token in ["strap", "carry", "grasp", "handle"]):
             if "STRAP_LIKE_PART" in operator_names or "GRASPABLE_PART" in operator_names:
@@ -165,6 +220,17 @@ class VLSOQuestionAnswerer:
             matched_entities = self._query_entity_matches(query, entity_ids, entity_labels)
             if matched_entities:
                 return "Grounded evidence mentions: " + ", ".join(matched_entities[:4])
+
+        if goal_checks and any(item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
+            top = next(item for item in goal_checks if isinstance(item, dict) and item.get('status') == 'risk_high')
+            return 'Hidden-goal risk detected: ' + top.get('rationale', 'The proposed action may fail the real goal.')
+
+        if hidden_premises and any(token in lowered for token in ['why', 'should', 'walk', 'go', 'insert', 'open']):
+            return 'Relevant hidden premises: ' + ' | '.join(str(item) for item in hidden_premises[:3])
+
+        if functors and any(token in lowered for token in ['why', 'relation', 'structure']):
+            names = [str(item.get('name')) for item in functors if isinstance(item, dict)]
+            return 'Cross-modal operator alignments: ' + ', '.join(names[:4])
 
         if evidence:
             return "Best grounded answer from the current world model: " + evidence[0]
@@ -181,6 +247,11 @@ class VLSOQuestionAnswerer:
         return lines
 
     def _llm_user_prompt(self, query: str, world: SharedWorldModel, evidence: list[str]) -> str:
+        focus_hints: dict[str, Any] = {}
+        lowered = query.lower()
+        if any(token in lowered for token in ["open", "access", "inside", "interior"]):
+            focus_hints["preferred_opening_candidates"] = self._opening_candidates(world)
+            focus_hints["instruction"] = "Prioritize actual opening or zipper candidates. Ignore weak border fragments and avoid listing unrelated parts unless evidence is strong."
         payload = {
             "query": query,
             "entities": [item.model_dump() for item in world.entities[:32]],
@@ -190,6 +261,7 @@ class VLSOQuestionAnswerer:
             "inferred_steps": list(world.inferred_steps),
             "warnings": list(world.warnings),
             "evidence": evidence,
+            "focus_hints": focus_hints,
         }
         return (
             "Answer the user question from this structured world model.\n"
@@ -228,3 +300,77 @@ class VLSOQuestionAnswerer:
     @staticmethod
     def _weak_evidence_answer() -> str:
         return "The current visual evidence is weak. I need a clearer image, detector output, or a more specific question."
+
+    @staticmethod
+    def _handle_candidates(world: SharedWorldModel) -> list[str]:
+        ranked: list[tuple[int, str]] = []
+        for entity in world.entities:
+            if entity.modality != "vision":
+                continue
+            labels = entity.attributes.get("concept_labels") or []
+            if not isinstance(labels, list):
+                continue
+            upper_labels = {str(item).upper() for item in labels}
+            if not ({"HANDLE_LIKE_PART", "GRASPABLE_PART", "STRAP_LIKE_PART", "KNOB_LIKE_PART", "TOOL_GRIP_PART"} & upper_labels):
+                continue
+            score = 0
+            if "HANDLE_LIKE_PART" in upper_labels:
+                score += 3
+            if "TOOL_GRIP_PART" in upper_labels:
+                score += 2
+            if "KNOB_LIKE_PART" in upper_labels:
+                score += 2
+            if "GRASPABLE_PART" in upper_labels:
+                score += 1
+            ranked.append((score, entity.id))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        seen: set[str] = set()
+        output: list[str] = []
+        for score, entity_id in ranked:
+            if score <= 0 or entity_id in seen:
+                continue
+            output.append(entity_id)
+            seen.add(entity_id)
+        return output
+
+    @staticmethod
+    def _opening_candidates(world: SharedWorldModel) -> list[str]:
+        ranked: list[tuple[int, str]] = []
+        for entity in world.entities:
+            if entity.modality != "vision":
+                continue
+            labels = entity.attributes.get("concept_labels") or []
+            if not isinstance(labels, list):
+                continue
+            upper_labels = {str(item).upper() for item in labels}
+            if "ACCESS_OPENING_CANDIDATE" not in upper_labels and "ZIPPER_LIKE_PART" not in upper_labels and "EDGE_OPENING" not in upper_labels:
+                continue
+            score = 0
+            if "ACCESS_OPENING_CANDIDATE" in upper_labels:
+                score += 3
+            if "ZIPPER_LIKE_PART" in upper_labels:
+                score += 2
+            if "EDGE_OPENING" in upper_labels:
+                score += 2
+            if "STRAP_LIKE_PART" in upper_labels and "ACCESS_OPENING_CANDIDATE" not in upper_labels:
+                score -= 2
+            bbox = entity.attributes.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                area = max(1, (x2 - x1) * (y2 - y1))
+                if (x1 <= 2 or y1 <= 2) and area <= 600:
+                    continue
+                if x1 <= 2 or y1 <= 2:
+                    score -= 4
+                if area <= 600:
+                    score -= 2
+            ranked.append((score, entity.id))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        output: list[str] = []
+        seen: set[str] = set()
+        for score, entity_id in ranked:
+            if score <= 0 or entity_id in seen:
+                continue
+            output.append(entity_id)
+            seen.add(entity_id)
+        return output

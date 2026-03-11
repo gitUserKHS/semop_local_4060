@@ -1,0 +1,2 @@
+{"problem_id": "sample-1", "statement": "Given a graph, find the shortest path from node 1 to every node.", "solution": "Use Dijkstra.", "tags": ["graph", "shortest_path"]}
+{"problem_id": "sample-geometry-1", "statement": "Given three points of a triangle, compute its area.", "solution": "Use the cross product / shoelace formula.", "tags": ["geometry", "triangle", "area"]}

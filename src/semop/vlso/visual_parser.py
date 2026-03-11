@@ -7,25 +7,31 @@ from typing import Any
 from .affordance_classifier import WeakAffordanceClassifier
 from .concept_memory import VisualConceptMemory
 from .detector_adapters import DetectorOutputAdapter
+from .geometry_backbones import GeometryPrimitiveBackbone
 from .geometry_reasoner import VisualGeometryReasoner
 from .geometry_topology import GeometryTopologyExtractor
 from .image_parser import RawImageObservationParser
 from .object_reasoner import VisualObjectReasoner
+from .operator_learning import VisualOperatorMemory
 from .types import SharedWorldModel, VisualObservation, VLSOEntity, VLSOOperator, VLSORelation
 
 
 class VLSOVisualParser:
-    def __init__(self, affordance_weights_path: str | None = None, concept_store_path: str | None = None) -> None:
+    def __init__(self, affordance_weights_path: str | None = None, concept_store_path: str | None = None, operator_store_path: str | None = None) -> None:
         self.detector_adapter = DetectorOutputAdapter()
         self.geometry_extractor = GeometryTopologyExtractor()
         self.geometry_reasoner = VisualGeometryReasoner()
+        self.geometry_backbone = GeometryPrimitiveBackbone()
         self.image_parser = RawImageObservationParser()
         classifier = WeakAffordanceClassifier(affordance_weights_path) if affordance_weights_path else None
         concept_memory = VisualConceptMemory(concept_store_path) if concept_store_path else None
-        self.object_reasoner = VisualObjectReasoner(classifier=classifier, concept_memory=concept_memory)
+        operator_memory = VisualOperatorMemory(operator_store_path) if operator_store_path else None
+        self.object_reasoner = VisualObjectReasoner(classifier=classifier, concept_memory=concept_memory, operator_memory=operator_memory)
 
     def parse(self, payload: str | dict[str, Any] | VisualObservation) -> tuple[SharedWorldModel, VisualObservation]:
-        observation = self.object_reasoner.enrich_observation(self._coerce(payload))
+        observation = self._coerce(payload)
+        self.geometry_backbone.enrich_observation(observation)
+        observation = self.object_reasoner.enrich_observation(observation)
         model = SharedWorldModel(query='visual_input')
         for item in observation.objects:
             entity_id = item.get('id') or item.get('label') or item.get('name')
@@ -55,7 +61,7 @@ class VLSOVisualParser:
             relation = item.get('relation')
             target = item.get('target')
             if source and relation and target:
-                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision'))
+                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision', confidence=float(item.get('confidence', 1.0) or 1.0), attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}}))
         for item in observation.affordances:
             subject = item.get('subject') or item.get('source')
             value = item.get('value') or item.get('affordance')
@@ -69,12 +75,28 @@ class VLSOVisualParser:
                 state_id = f"state:{subject}:{value}".lower()
                 model.add_entity(VLSOEntity(id=state_id, label=str(value), modality='vision', entity_type='state'))
                 model.add_relation(VLSORelation(source=str(subject), relation='STATE', target=state_id, modality='vision'))
+        structural_bindings = observation.metadata.get('structural_operators', [])
+        if isinstance(structural_bindings, list):
+            model.metadata['structural_operator_bindings'] = []
+            for row in structural_bindings:
+                if not isinstance(row, dict):
+                    continue
+                operator_name = str(row.get('operator_name', ''))
+                subject = str(row.get('subject', ''))
+                parent = str(row.get('parent', ''))
+                confidence = float(row.get('confidence', 0.72) or 0.72)
+                if not operator_name or not subject:
+                    continue
+                model.add_operator(VLSOOperator(name=operator_name, axis='structural', description=f'structural operator for {subject}', source_modality='vision', confidence=confidence))
+                model.metadata['structural_operator_bindings'].append(row)
+                if parent:
+                    model.add_relation(VLSORelation(source=subject, relation='STRUCTURAL_PART_OF', target=parent, modality='vision', confidence=confidence))
         for item in observation.geometry:
             source = item.get('source')
             relation = item.get('relation')
             target = item.get('target')
             if source and relation and target:
-                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision'))
+                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision', confidence=float(item.get('confidence', 1.0) or 1.0), attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}}))
         derived = self.geometry_extractor.extract(observation)
         for item in derived.derived_relations:
             model.add_relation(VLSORelation(source=str(item['source']), relation=str(item['relation']), target=str(item['target']), modality='vision', confidence=0.7))
@@ -87,6 +109,9 @@ class VLSOVisualParser:
         if observation.constraints:
             model.audit_trace.append('visual constraints observed')
         for item in observation.metadata.get('image_preprocess_audit', []):
+            if item not in model.audit_trace:
+                model.audit_trace.append(item)
+        for item in observation.metadata.get('geometry_backbone_audit', []):
             if item not in model.audit_trace:
                 model.audit_trace.append(item)
         for item in observation.metadata.get('object_reasoner_audit', []):

@@ -261,6 +261,35 @@
         "gcc_cpp17"
       ],
       "template_kind": "knapsack"
+    },
+    {
+      "id": "computational_geometry_analysis",
+      "family": "geometry",
+      "triggers": [
+        "point",
+        "points",
+        "line",
+        "segment",
+        "triangle",
+        "polygon",
+        "parallel",
+        "perpendicular",
+        "distance",
+        "area"
+      ],
+      "hidden_concepts": [
+        "orientation test",
+        "cross product",
+        "dot product",
+        "segment intersection",
+        "geometric invariants"
+      ],
+      "time_complexity": "Problem-specific",
+      "memory_complexity": "Problem-specific",
+      "source_ids": [
+        "gcc_cpp17"
+      ],
+      "template_kind": "geometry"
     }
   ],
   "logical_frames": [
@@ -378,6 +407,28 @@
       ],
       "reduction_goal": "compress the problem into dynamic-programming state transitions",
       "reasoning_operator": "STATE_TRANSITION + OPTIMAL_SUBSTRUCTURE"
+    },
+    {
+      "id": "geometry_configuration",
+      "triggers": [
+        "point",
+        "points",
+        "line",
+        "segment",
+        "triangle",
+        "polygon",
+        "parallel",
+        "perpendicular",
+        "distance",
+        "area"
+      ],
+      "inferred_concepts": [
+        "coordinate geometry",
+        "orientation reasoning",
+        "line or segment relations"
+      ],
+      "reduction_goal": "reduce the statement into a geometric configuration with explicit point, segment, and orientation relations",
+      "reasoning_operator": "POINT + SEGMENT + ORIENTATION_TEST + CROSS_PRODUCT"
     }
   ],
   "coding_rules": [
@@ -744,6 +795,54 @@
         "binary search",
         "minimum possible",
         "maximum possible"
+      ]
+    },
+    {
+      "id": "POINT",
+      "category": "geometry",
+      "description": "Introduce a geometric point state.",
+      "trigger_hints": [
+        "point",
+        "coordinate"
+      ]
+    },
+    {
+      "id": "SEGMENT",
+      "category": "geometry",
+      "description": "Introduce a line segment relation.",
+      "trigger_hints": [
+        "segment",
+        "line"
+      ]
+    },
+    {
+      "id": "ORIENTATION_TEST",
+      "category": "geometry",
+      "description": "Use orientation or ccw test for geometric predicates.",
+      "trigger_hints": [
+        "counterclockwise",
+        "clockwise",
+        "orientation"
+      ]
+    },
+    {
+      "id": "CROSS_PRODUCT",
+      "category": "geometry",
+      "description": "Use cross products for area, turn, or parallel reasoning.",
+      "trigger_hints": [
+        "area",
+        "parallel",
+        "cross product"
+      ]
+    },
+    {
+      "id": "DOT_PRODUCT",
+      "category": "geometry",
+      "description": "Use dot products for angle or perpendicular reasoning.",
+      "trigger_hints": [
+        "perpendicular",
+        "angle",
+        "dot product"
       ]
     }
   ],

@@ -61,6 +61,33 @@ class SymbolicResult:
 
 
 @dataclass
+class GoalPreservationCheck:
+    action: str
+    hidden_goal: str
+    status: str
+    rationale: str
+    confidence: float = 0.6
+
+
+@dataclass
+class OperatorDecomposition:
+    operator_name: str
+    basis_operators: List[str] = field(default_factory=list)
+    rationale: str = ""
+    confidence: float = 0.6
+
+
+@dataclass
+class FunctorHypothesis:
+    name: str
+    source_category: str
+    target_category: str
+    object_map: Dict[str, str] = field(default_factory=dict)
+    morphism_map: Dict[str, str] = field(default_factory=dict)
+    confidence: float = 0.6
+
+
+@dataclass
 class StructuredMeaningGraph:
     query: str
     intent: str
@@ -73,6 +100,14 @@ class StructuredMeaningGraph:
     induced_operators: List[OperatorCandidate] = field(default_factory=list)
     grammar_hypotheses: List[str] = field(default_factory=list)
     symbolic_results: List[SymbolicResult] = field(default_factory=list)
+    hidden_goals: List[str] = field(default_factory=list)
+    hidden_assumptions: List[str] = field(default_factory=list)
+    required_premises: List[str] = field(default_factory=list)
+    optional_interpretations: List[str] = field(default_factory=list)
+    goal_preservation_checks: List[GoalPreservationCheck] = field(default_factory=list)
+    operator_decompositions: List[OperatorDecomposition] = field(default_factory=list)
+    functor_hypotheses: List[FunctorHypothesis] = field(default_factory=list)
+    clarification_needed: bool = False
     plan: List[PlanStep] = field(default_factory=list)
     candidate_actions: List[str] = field(default_factory=list)
     creative_alternatives: List[str] = field(default_factory=list)
@@ -128,6 +163,14 @@ class StructuredMeaningGraph:
         graph.induced_operators = [OperatorCandidate(**item) for item in data.get("induced_operators", [])]
         graph.grammar_hypotheses = list(data.get("grammar_hypotheses", []))
         graph.symbolic_results = [SymbolicResult(**item) for item in data.get("symbolic_results", [])]
+        graph.hidden_goals = list(data.get("hidden_goals", []))
+        graph.hidden_assumptions = list(data.get("hidden_assumptions", []))
+        graph.required_premises = list(data.get("required_premises", []))
+        graph.optional_interpretations = list(data.get("optional_interpretations", []))
+        graph.goal_preservation_checks = [GoalPreservationCheck(**item) for item in data.get("goal_preservation_checks", [])]
+        graph.operator_decompositions = [OperatorDecomposition(**item) for item in data.get("operator_decompositions", [])]
+        graph.functor_hypotheses = [FunctorHypothesis(**item) for item in data.get("functor_hypotheses", [])]
+        graph.clarification_needed = bool(data.get("clarification_needed", False))
         graph.plan = [PlanStep(**item) for item in data.get("plan", [])]
         graph.candidate_actions = list(data.get("candidate_actions", []))
         graph.creative_alternatives = list(data.get("creative_alternatives", []))

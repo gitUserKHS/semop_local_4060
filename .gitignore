@@ -123,3 +123,34 @@ tests/open_images_adapter_test/
 
 # Project-local reference documents
 semantic_operator_plan_2026_v3_structured_meaning.pdf
+
+
+# Additional local research/reference PDFs
+/*.pdf
+
+# Local scratch and extraction workspaces
+tmp_pdf_extract2/
+
+# VLSO batch/download workspaces
+data/vlso_family_batch/
+data/vlso_geometry_bootstrap/
+data/vlso_geometry_bootstrap*/
+data/vlso_geometry_pipeline*/
+data/**/downloads/
+data/cp_labeled_normalized.jsonl
+data/vlso_samples/candidate_labels.jsonl
+data/vlso_samples/train_labels_demo.jsonl
+data/vlso_samples/trained_affordance_weights.json
+
+# Test databases and generated smoke assets
+tests/**/*.db
+tests/**/*.sqlite
+tests/**/*.sqlite3
+tests/tmp_*.jsonl
+tests/tmp_*.json
+tests/tmp_*.db
+tests/cp_geometry_downloads_smoke/
+tests/cp_labeled_download_smoke/
+tests/vlso_geometry_bootstrap_smoke/
+tests/vlso_geometry_gui_smoke/
+tests/vlso_geometry_pipeline_smoke/

@@ -11,12 +11,18 @@ The current product direction is not a general chatbot. It is a Korean warehouse
 
 At the research level, the longer-term target is broader: learn how logical words such as `has`, `is`, `requires`, `if`, `before`, and `can` bind to concept frames, then reuse those learned grammar priors during reasoning across domain QA, math, olympiad proof search, competitive programming, and VLSO world-model reasoning.
 
+The architectural target is a logical-operator-based intelligence system organized around four axes: operator learning, world-model construction, reusable memory, and verifier loops.
+A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
+An operator-algebra layer now also records how higher operators decompose into simpler basis operators and stores category-style functor hypotheses for cross-modal alignment.
+
 ## What You Can Run Today
 
 - `app.py`
   - research-oriented structured reasoning CLI
 - `ops_copilot.py`
   - product-style warehouse/operations copilot CLI
+- `semop_easy_gui.py`
+  - one-page beginner GUI for ops, CP, image QA, concept-store comparison, cluster review, approved-cluster retraining, VLSO impact evaluation, CP parser comparison, labeled dataset download, and VLSO image download staging
 - `ops_copilot_gui.py`
   - local browser GUI for testing queries, baselines, and review queue items
 - `solve_olympiad.py`
@@ -37,12 +43,31 @@ At the research level, the longer-term target is broader: learn how logical word
   - build multi-object concept-label candidates for manual few-shot labeling
 - `tools/vlso/train_visual_concepts.py`
   - compress labeled concept examples into prototype memory for sample-efficient VLSO learning
+- `tools/vlso/train_visual_operators.py`
+  - learn higher-level visual operator prototypes such as container-body, opening-control, and attached-grasp from a few labeled images
+- `tools/vlso/run_geometry_reasoning_pipeline.py`
+  - end-to-end geometry visual pipeline for candidates, pseudo labels, concept store, operator store, and grounded QA eval and structural operator recovery eval
+- `tools/vlso/generate_geometry_dataset.py`
+  - generate synthetic geometry images, paired detector-style JSON payloads, and a starter geometry QA eval set
+  - retrain approved VLSO clusters into fresh concept/operator stores
 - `tools/vlso/recommend_visual_labels.py`
   - rank the next most informative targets to label based on novelty and uncertainty
 - `tools/eval/compare_ops_baseline.py`
   - SemOp vs baseline benchmark on labeled cases
 - `tools/eval/evaluate_ops_kpis.py`
   - KPI averages on operations case sets
+- `tools/eval/evaluate_vlso_grounded_qa.py`
+  - grounded VLSO QA evaluator on image-or-observation jsonl cases
+- `tools/eval/evaluate_vlso_review_impact.py`
+  - compare grounded QA before and after approved-cluster retraining
+- `tools/eval/evaluate_cp_parser.py`
+  - evaluate heuristic, learned, or side-by-side CP parsers on DSL/frame labels
+- `tools/eval/evaluate_hidden_premises.py`
+  - evaluate hidden-goal recovery, critical premise recall, and goal-preservation checks
+- `tools/eval/evaluate_operator_algebra.py`
+  - evaluate operator decomposition recovery and functor-hypothesis recovery
+- `docs/operator_algebra_and_functors.md`
+  - explain operator decomposition and functor-hypothesis alignment
 - `tools/ops/learn_feedback_rules.py`
   - converts resolved review items into reusable feedback rules
 
@@ -65,6 +90,9 @@ Run commands with the script path shown in the docs, for example:
 
 Current code layout is documented in:
 - `docs/project_structure.md`
+- `docs/pdf_direction_and_plan_2026_03_10.md`
+- `docs/operator_intelligence_system.md`
+- `docs/operator_intelligence_roadmap.md` and `docs/operator_intelligence_execution_steps.md` and `docs/jepa_relevance_and_integration.md`
 
 Refresh it after structural changes with:
 
@@ -74,7 +102,27 @@ Refresh it after structural changes with:
 
 ## Quick Start
 
-### 1. Run the operations copilot on a single SOP question
+### 1. Open the easiest GUI
+
+```bash
+.\.venv312\Scripts\python.exe semop_easy_gui.py
+```
+
+Then open `http://127.0.0.1:8770`.
+
+From the easy GUI you can click through:
+- download labeled CP datasets
+- build a VLSO image-collection plan
+- generate an object-family manifest for bag, box, drawer, door, bottle, tool, cabinet, suitcase, jar, bin, and pouch
+- run a family-target batch collector that writes manifest, records, approved, and download-manifest files automatically
+- preview public-image cards and approve downloads
+- run downloaded-image learning
+- label downloaded images with a review queue
+- retrain concept and operator stores from approved labels only
+- generate synthetic geometry images
+- generate CP geometry eval/train starter sets
+
+### 2. Run the operations copilot on a single SOP question
 
 ```bash
 .\.venv312\Scripts\python.exe ops_copilot.py ^
@@ -84,7 +132,7 @@ Refresh it after structural changes with:
   --context-file examples\customer_sop_sample.md
 ```
 
-### 2. Open the GUI
+### 3. Open the full operations GUI
 
 ```bash
 .\.venv312\Scripts\python.exe ops_copilot_gui.py ^
@@ -94,14 +142,14 @@ Refresh it after structural changes with:
 
 Then open `http://127.0.0.1:8765`.
 
-### 3. Try the olympiad proof-search prototype
+### 4. Try the olympiad proof-search prototype
 
 ```bash
 .\.venv312\Scripts\python.exe solve_olympiad.py ^
   --query "Prove that the sum of two odd integers is even."
 ```
 
-### 3B. Try the VLSO prototype with structured observations
+### 4B. Try the VLSO prototype with structured observations
 
 ```bash
 .\.venv312\Scripts\python.exe vlso_demo.py ^
@@ -109,7 +157,7 @@ Then open `http://127.0.0.1:8765`.
   --visual-json examples\vlso\bag_closed_observation.json
 ```
 
-### 3C. Try the VLSO prototype in deep mode on a raw image
+### 4C. Try the VLSO prototype in deep mode on a raw image
 
 ```bash
 .\.venv312\Scripts\python.exe vlso_demo.py ^
@@ -163,7 +211,7 @@ For sample-efficient learning, build candidate rows, train compact concept proto
 The raw-image path now adds mask refinement, dominant border-frame suppression, and lightweight object/part/affordance inference before graph construction.
 Small public tuning samples are stored under `data\vlso_samples\` and listed in `data\vlso_samples\SOURCES.md`.
 A collection guide for growing this set to 10-20 images is in `docs\vlso_data_collection_guide.md`.
-Label-candidate generation and weight re-estimation CLIs are `tools\vlso\build_affordance_label_candidates.py` and `tools\vlso\train_affordance_classifier.py`. Manifest-driven API collection planning is available through `tools\vlso\collect_visual_data.py`, and whitelist/download staging is available through `tools\vlso\prepare_visual_downloads.py`.
+Label-candidate generation and weight re-estimation CLIs are `tools\vlso\build_affordance_label_candidates.py` and `tools\vlso\train_affordance_classifier.py`. Unsupervised or weakly supervised prototype bootstrapping is available through `tools\vlso\self_train_visual_concepts.py`. You can compare a hand-labeled concept store against a pseudo-labeled store with `vlso_demo.py --compare-concept-store ...`, and review cluster summaries in `semop_easy_gui.py`. Manifest-driven API collection planning is available through `tools\vlso\collect_visual_data.py`, and whitelist/download staging is available through `tools\vlso\prepare_visual_downloads.py`.
 
 ### 3D. Try the VLSO prototype with detector output or an explicit local backbone
 
@@ -198,6 +246,49 @@ Solved contest episodes are stored in:
 - `data\cp_episodes.db`
 
 Those episodes are later reused as episodic retrieval and reranking priors for new contest statements.
+You can also download and normalize labeled CP datasets with `tools\cp\download_cp_labeled_datasets.py`.
+
+Geometry data bootstrap shortcuts:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\bootstrap_geometry_visual_data.py ^
+  --workspace data\vlso_geometry_bootstrap
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\bootstrap_geometry_corpus.py ^
+  --manifest examples\cp_geometry_labeled_manifest.json ^
+  --download-root data\cp_geometry_downloads ^
+  --output data\cp_geometry_labeled.jsonl
+```
+
+The VLSO bootstrap writes a geometry/access preset manifest automatically and can later be re-run with `--execute-collect` or `--execute-downloads`.
+The CP bootstrap can consume normal URLs or Hugging Face datasets through the manifest. You can also generate synthetic geometry scenes and eval assets locally with `tools\vlso\generate_geometry_dataset.py`.
+
+Full geometry reasoning bootstrap:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\run_geometry_reasoning_pipeline.py ^
+  --inputs data\vlso_samples ^
+  --workspace data\vlso_geometry_pipeline ^
+  --eval-mode heuristic ^
+  --answer-mode structured
+```
+
+Build a geometry-only CP parser eval set from normalized labeled corpus rows:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\build_geometry_parser_eval.py ^
+  --input data\cp_geometry_labeled.jsonl ^
+  --output examples\cp_geometry_parser_eval.jsonl
+```
+
+Generate a starter geometry-only CP eval set directly from built-in templates:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\generate_geometry_eval_templates.py ^
+  --output examples\cp_geometry_parser_eval.jsonl
+```
 
 ### 4B. Open the CP GUI
 
@@ -257,6 +348,26 @@ You can score the heuristic parser or a learned parser with:
 .\.venv312\Scripts\python.exe tools/eval/evaluate_cp_parser.py ^
   --input data\cp_val.jsonl ^
   --mode heuristic
+```
+
+Or compare heuristic vs learned parser side by side:
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_cp_parser.py ^
+  --input examples\cp_parser_eval.jsonl ^
+  --mode compare ^
+  --model path\to\your_cp_parser_model
+```
+
+Compare VLSO grounded QA before and after approved-cluster retraining:
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_vlso_review_impact.py ^
+  --input examples\vlso_eval.jsonl ^
+  --primary-concept-store data\vlso_visual_prototypes.db ^
+  --primary-operator-store data\vlso_visual_operators.db ^
+  --compare-concept-store data\vlso_geometry_pipeline_gui\approved_review_concepts.db ^
+  --compare-operator-store data\vlso_geometry_pipeline_gui\approved_review_operators.db
 ```
 
 ### 7. Run a hard-problem analysis
@@ -402,7 +513,7 @@ Latest verified commands:
 - `.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py --input examples\ops_labeled_eval_ko.jsonl --baseline configurable_keyword --baseline-config examples\customer_baseline_config.json`
 
 At the time of the last validation:
-- all tests passed: `99`
+- all tests passed: `129`
 - SemOp on labeled ops eval achieved:
   - `avg_relation_recall = 1.0`
   - `avg_answer_term_recall = 0.89`
@@ -424,10 +535,22 @@ For the detailed CP-specific workflow, see:
 - `docs/cp_training_manual.md`
 
 VLSO examples:
+- `examples/vlso_eval.jsonl`
+  - starter grounded QA eval and structural operator recovery eval set for VLSO
+- `examples/vlso_geometry_eval.jsonl`
+  - starter geometry-grounded QA eval and structural operator recovery eval set for VLSO
+- `examples/cp_parser_eval.jsonl`
+  - starter held-out statement-to-DSL eval set for CP parser comparison
+- `examples/cp_geometry_parser_eval.jsonl`
+  - geometry-only CP parser eval set generated from normalized labeled corpus rows
 - `examples/vlso/bag_closed_observation.json`
 - `examples/vlso/geometry_scene.json`
 - `examples/vlso/detector_output_example.json`
 
-
+Recent geometry upgrades:
+- VLSO now derives polygon edge entities and grounded geometry relations such as `PARALLEL`, `PERPENDICULAR`, and `EQUAL_LENGTH`
+- VLSO can infer shape hypotheses including `triangle`, `right_triangle`, `isosceles_triangle`, `rectangle`, `square`, `parallelogram`, and `quadrilateral`
+- CP parsing now recognizes geometry-heavy statements and routes them into `computational_geometry_analysis`
+- CP code generation now includes a geometry template with `Point`, `cross`, `dot`, and orientation-style predicates
 
 

@@ -85,6 +85,7 @@ class RawImageObservationParser:
         dynamic_min_pixels = max(self.min_component_pixels, int(width * height * 0.0009))
         components = [item for item in components if len(item) >= dynamic_min_pixels]
         components, suppressed_components, preprocess_audit = self.preprocessor.suppress_border_components(components, width, height)
+        components, edge_fragment_count, edge_fragment_audit = self._suppress_edge_fragments(components, width, height)
         observation = VisualObservation(
             metadata={
                 "image_path": str(path),
@@ -94,11 +95,12 @@ class RawImageObservationParser:
                 "dynamic_min_pixels": dynamic_min_pixels,
                 "effective_background_threshold": effective_threshold,
                 "suppressed_components": suppressed_components,
+                "suppressed_edge_fragments": edge_fragment_count,
             }
         )
         observation.metadata.update(resize_metadata)
         warnings: list[str] = []
-        for item in preprocess_result.audit_trace + preprocess_audit:
+        for item in preprocess_result.audit_trace + preprocess_audit + edge_fragment_audit:
             observation.metadata.setdefault("image_preprocess_audit", [])
             if item not in observation.metadata["image_preprocess_audit"]:
                 observation.metadata["image_preprocess_audit"].append(item)
@@ -108,6 +110,10 @@ class RawImageObservationParser:
             hull = self._convex_hull(boundary)
             polygon = self._simplify_polygon(hull)
             shape = self._shape_name(polygon, bbox, len(component))
+            hole_count = self._hole_count(component, bbox)
+            hull_area = self._polygon_area(hull)
+            bbox_area = max(1.0, float((bbox[2] - bbox[0] + 1) * (bbox[3] - bbox[1] + 1)))
+            perimeter = self._polygon_perimeter(polygon)
             obj = {
                 "id": f"shape_{index}",
                 "label": shape,
@@ -116,14 +122,22 @@ class RawImageObservationParser:
                 "polygon": [[int(x), int(y)] for x, y in polygon],
                 "pixel_count": len(component),
                 "shape_hint": shape,
+                "hole_count": hole_count,
+                "bbox_fill_ratio": round(len(component) / bbox_area, 6),
+                "hull_fill_ratio": round(len(component) / max(1.0, hull_area), 6),
+                "polygon_perimeter": round(perimeter, 4),
             }
             observation.objects.append(obj)
             if shape in {"rectangle", "square", "triangle", "circle"}:
                 observation.affordances.append({"subject": obj["id"], "value": f"SHAPE_{shape.upper()}"})
+            if hole_count > 0:
+                observation.affordances.append({"subject": obj["id"], "value": "HAS_HOLE_STRUCTURE"})
         if len(components) > self.max_components:
             warnings.append("raw image parser truncated connected components")
         if suppressed_components:
             warnings.append("raw image parser suppressed dominant border components")
+        if edge_fragment_count:
+            warnings.append("raw image parser suppressed edge fragments")
         if resize_metadata.get("resized"):
             warnings.append("raw image parser resized the source image for normalized analysis")
         if not observation.objects:
@@ -266,6 +280,42 @@ class RawImageObservationParser:
         area = abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
         return area <= 2
 
+    def _suppress_edge_fragments(
+        self,
+        components: list[list[tuple[int, int]]],
+        width: int,
+        height: int,
+    ) -> tuple[list[list[tuple[int, int]]], int, list[str]]:
+        if not components:
+            return components, 0, []
+        frame_area = max(1, width * height)
+        edge_margin = max(2, int(min(width, height) * 0.02))
+        kept: list[list[tuple[int, int]]] = []
+        suppressed = 0
+        for component in components:
+            x1, y1, x2, y2 = self._bbox(component)
+            bbox_width = max(1, x2 - x1 + 1)
+            bbox_height = max(1, y2 - y1 + 1)
+            bbox_area = bbox_width * bbox_height
+            touches_edge = (
+                x1 <= edge_margin
+                or y1 <= edge_margin
+                or x2 >= width - 1 - edge_margin
+                or y2 >= height - 1 - edge_margin
+            )
+            is_small_fragment = (
+                len(component) <= int(frame_area * 0.02)
+                and bbox_area <= int(frame_area * 0.08)
+            )
+            if touches_edge and is_small_fragment:
+                suppressed += 1
+                continue
+            kept.append(component)
+        audit = []
+        if suppressed:
+            audit.append("image preprocessor suppressed small edge-attached fragments")
+        return kept, suppressed, audit
+
     def _shape_name(self, polygon: Sequence[tuple[int, int]], bbox: tuple[int, int, int, int], pixel_count: int) -> str:
         width = max(1, bbox[2] - bbox[0] + 1)
         height = max(1, bbox[3] - bbox[1] + 1)
@@ -283,3 +333,53 @@ class RawImageObservationParser:
         if vertex_count > 4:
             return f"polygon_{vertex_count}"
         return "shape"
+
+    def _hole_count(self, component: Sequence[tuple[int, int]], bbox: tuple[int, int, int, int]) -> int:
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        if width <= 2 or height <= 2:
+            return 0
+        filled = {(x - x1, y - y1) for x, y in component}
+        seen: set[tuple[int, int]] = set()
+        holes = 0
+        for y in range(height):
+            for x in range(width):
+                if (x, y) in filled or (x, y) in seen:
+                    continue
+                queue = deque([(x, y)])
+                seen.add((x, y))
+                touches_border = False
+                region_size = 0
+                while queue:
+                    cx, cy = queue.popleft()
+                    region_size += 1
+                    if cx == 0 or cy == 0 or cx == width - 1 or cy == height - 1:
+                        touches_border = True
+                    for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                        if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in filled and (nx, ny) not in seen:
+                            seen.add((nx, ny))
+                            queue.append((nx, ny))
+                if not touches_border and region_size >= 4:
+                    holes += 1
+        return holes
+
+    @staticmethod
+    def _polygon_area(points: Sequence[tuple[int, int]]) -> float:
+        if len(points) < 3:
+            return 0.0
+        area = 0.0
+        for index, point in enumerate(points):
+            next_point = points[(index + 1) % len(points)]
+            area += point[0] * next_point[1] - next_point[0] * point[1]
+        return abs(area) / 2.0
+
+    @staticmethod
+    def _polygon_perimeter(points: Sequence[tuple[int, int]]) -> float:
+        if len(points) < 2:
+            return 0.0
+        total = 0.0
+        for index, point in enumerate(points):
+            next_point = points[(index + 1) % len(points)]
+            total += math.dist(point, next_point)
+        return total

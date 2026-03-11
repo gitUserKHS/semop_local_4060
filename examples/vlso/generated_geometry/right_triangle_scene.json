@@ -1,0 +1,32 @@
+{
+  "label": "synthetic right triangle scene",
+  "metadata": {
+    "image_path": "examples\\vlso\\generated_geometry\\right_triangle_scene.png"
+  },
+  "objects": [
+    {
+      "id": "right_triangle_panel",
+      "kind": "shape",
+      "bbox": [
+        1,
+        1,
+        9,
+        9
+      ],
+      "polygon": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          9,
+          9
+        ]
+      ]
+    }
+  ]
+}

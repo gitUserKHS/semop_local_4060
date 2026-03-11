@@ -1,0 +1,52 @@
+{
+  "sources": [
+    {
+      "provider": "wikimedia_commons",
+      "query": "triangle diagram",
+      "limit": 12,
+      "categories": ["Triangles"],
+      "output_tags": ["geometry", "triangle", "diagram"],
+      "metadata": {"purpose": "vlso_geometry_seed"}
+    },
+    {
+      "provider": "wikimedia_commons",
+      "query": "rectangle diagram parallel lines",
+      "limit": 12,
+      "categories": ["Rectangles"],
+      "output_tags": ["geometry", "rectangle", "parallel"],
+      "metadata": {"purpose": "vlso_geometry_seed"}
+    },
+    {
+      "provider": "openverse",
+      "query": "open drawer handle",
+      "limit": 10,
+      "license_filters": ["by", "cc0"],
+      "output_tags": ["drawer", "handle", "opening"],
+      "metadata": {"purpose": "vlso_access_seed"}
+    },
+    {
+      "provider": "openverse",
+      "query": "door hinge open",
+      "limit": 10,
+      "license_filters": ["by", "cc0"],
+      "output_tags": ["door", "hinge", "opening"],
+      "metadata": {"purpose": "vlso_access_seed"}
+    },
+    {
+      "provider": "openverse",
+      "query": "bottle cap close up",
+      "limit": 10,
+      "license_filters": ["by", "cc0"],
+      "output_tags": ["bottle", "cap", "opening"],
+      "metadata": {"purpose": "vlso_access_seed"}
+    },
+    {
+      "provider": "openverse",
+      "query": "tool box handle",
+      "limit": 10,
+      "license_filters": ["by", "cc0"],
+      "output_tags": ["tool", "box", "handle"],
+      "metadata": {"purpose": "vlso_tool_seed"}
+    }
+  ]
+}

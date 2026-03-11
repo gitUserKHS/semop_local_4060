@@ -51,6 +51,8 @@ class ContestSolution:
     knowledge_sources: List[str] = field(default_factory=list)
     repaired: bool = False
     repair_attempts: List[dict] = field(default_factory=list)
+    search_trace: List[dict] = field(default_factory=list)
+    selection_strategy: str = 'single_best'
 
     def model_dump(self) -> dict:
         return {
@@ -76,6 +78,8 @@ class ContestSolution:
             "knowledge_sources": self.knowledge_sources,
             "repaired": self.repaired,
             "repair_attempts": self.repair_attempts,
+            "search_trace": self.search_trace,
+            "selection_strategy": self.selection_strategy,
         }
 
     def model_dump_json(self, indent: int = 2, ensure_ascii: bool = False) -> str:
@@ -127,28 +131,52 @@ class CompetitiveProgrammingReasoner:
             self._record_episode(query, normalized, structure, solution)
             return solution
 
-        cpp_code = self._template_for(chosen.template_kind)
-        approach = self._approach_for(chosen, structure)
-        solution = self._finalize_solution(
-            category=chosen.id,
-            approach=approach,
-            cpp_code=cpp_code,
-            time_complexity=chosen.time_complexity,
-            memory_complexity=chosen.memory_complexity,
-            cues=chosen.triggers[:4],
-            confidence=self._confidence(chosen, structure),
-            reasoning_steps=self._reasoning_steps(structure, chosen),
-            hidden_concepts=list(dict.fromkeys(structure.hidden_concepts + chosen.hidden_concepts))[:10],
-            logical_frames=structure.logical_frames,
-            goal_types=structure.goal_types,
-            domain_tags=structure.domain_tags,
-            dsl_operators=structure.dsl_operators,
-            memory_projection=memory_projection,
-            extracted_constraints=structure.extracted_constraints,
-            source_ids=chosen.source_ids,
-        )
-        self._record_episode(query, normalized, structure, solution)
-        return solution
+        search_trace: list[dict] = []
+        best_solution = None
+        best_score = -1.0
+        for rank_index, candidate in enumerate(ranked[:3], start=1):
+            candidate_projection = self._memory_projection(structure, candidate)
+            candidate_projection['procedural']['candidate_rank'] = rank_index
+            candidate_projection['procedural']['search_mode'] = 'verifier_rerank'
+            cpp_code = self._template_for(candidate.template_kind)
+            approach = self._approach_for(candidate, structure)
+            trial = self._finalize_solution(
+                category=candidate.id,
+                approach=approach,
+                cpp_code=cpp_code,
+                time_complexity=candidate.time_complexity,
+                memory_complexity=candidate.memory_complexity,
+                cues=candidate.triggers[:4],
+                confidence=self._confidence(candidate, structure),
+                reasoning_steps=self._reasoning_steps(structure, candidate),
+                hidden_concepts=list(dict.fromkeys(structure.hidden_concepts + candidate.hidden_concepts))[:10],
+                logical_frames=structure.logical_frames,
+                goal_types=structure.goal_types,
+                domain_tags=structure.domain_tags,
+                dsl_operators=structure.dsl_operators,
+                memory_projection=candidate_projection,
+                extracted_constraints=structure.extracted_constraints,
+                source_ids=candidate.source_ids,
+            )
+            selection_score = self._selection_score(trial, candidate, structure, rank_index)
+            search_trace.append({
+                'rank': rank_index,
+                'category': trial.category,
+                'selection_score': round(selection_score, 4),
+                'compile_ok': trial.compile_ok,
+                'overall_ok': bool(trial.validation_report.get('overall_ok')) if isinstance(trial.validation_report, dict) else False,
+                'failure_type': str(trial.validation_report.get('failure_type', '')) if isinstance(trial.validation_report, dict) else '',
+            })
+            if selection_score > best_score:
+                best_solution = trial
+                best_score = selection_score
+
+        assert best_solution is not None
+        best_solution.search_trace = search_trace
+        best_solution.selection_strategy = 'verifier_rerank_top3'
+        best_solution.memory_projection.setdefault('procedural', {})['search_trace'] = search_trace
+        self._record_episode(query, normalized, structure, best_solution)
+        return best_solution
 
     def _finalize_solution(
         self,
@@ -298,6 +326,23 @@ class CompetitiveProgrammingReasoner:
             return trigger in normalized
         return re.search(r"\b" + re.escape(trigger) + r"\b", normalized) is not None
 
+    def _has_geometry_context(self, normalized: str) -> bool:
+        strong_terms = [
+            'line', 'segment', 'triangle', 'polygon', 'parallel', 'perpendicular', 'distance',
+            'area', 'rectangle', 'circle', 'angle', 'coordinate', 'coordinates', 'vector', 'quadrilateral', 'parallelogram',
+            'convex', 'intersect', 'intersection', 'bounding rectangle',
+        ]
+        if any(self._contains_trigger(normalized, term) for term in strong_terms):
+            return True
+        if any(term in normalized for term in ['point update', 'point updates']):
+            return False
+        point_patterns = [
+            'given a point', 'given points', 'three points', 'set of points', 'point lies',
+            'point inside', 'coordinates of three points', 'point and an axis-aligned rectangle',
+            'point and a rectangle',
+        ]
+        return any(pattern in normalized for pattern in point_patterns)
+
     def _rank_algorithms(self, structure: ContestProblemStructure) -> List[CpAlgorithmKnowledge]:
         base_scores = {
             item.id: score
@@ -345,6 +390,8 @@ class CompetitiveProgrammingReasoner:
         for tag, triggers in mapping.items():
             if any(self._contains_trigger(normalized, trigger) for trigger in triggers):
                 tags.append(tag)
+        if self._has_geometry_context(normalized):
+            tags.append("geometry")
         for frame in frames:
             if "graph" in frame.id and "graph" not in tags:
                 tags.append("graph")
@@ -352,7 +399,10 @@ class CompetitiveProgrammingReasoner:
 
     def _matched_frames(self, normalized: str) -> List[CpLogicalFrame]:
         matched: List[CpLogicalFrame] = []
+        geometry_context = self._has_geometry_context(normalized)
         for frame in self.knowledge.logical_frames:
+            if frame.id == 'geometry_configuration' and not geometry_context:
+                continue
             if any(self._contains_trigger(normalized, trigger) for trigger in frame.triggers):
                 matched.append(frame)
         return matched
@@ -378,6 +428,7 @@ class CompetitiveProgrammingReasoner:
             "grid": ["GRID_TO_GRAPH", "NEIGHBOR_EXPAND"],
             "dp": ["STATE", "DP_TRANSITION"],
             "math": ["CONSTRAINT", "INVARIANT"],
+            "geometry": ["POINT", "SEGMENT", "ORIENTATION_TEST", "CROSS_PRODUCT"],
         }
         for operator in self.knowledge.dsl_operators:
             if any(self._contains_trigger(normalized, trigger) for trigger in operator.trigger_hints):
@@ -394,11 +445,18 @@ class CompetitiveProgrammingReasoner:
     def _score_algorithms_from_text(self, normalized: str, frames: Sequence[CpLogicalFrame] | None = None) -> List[tuple[float, CpAlgorithmKnowledge]]:
         frames = frames or []
         scored: List[tuple[float, CpAlgorithmKnowledge]] = []
+        geometry_context = self._has_geometry_context(normalized)
         for item in self.knowledge.algorithms:
             score = 0.0
             for trigger in item.triggers:
+                if item.id == 'computational_geometry_analysis' and trigger in {'point', 'points'} and not geometry_context:
+                    continue
                 if self._contains_trigger(normalized, trigger):
                     score += 1.2 if len(trigger.split()) > 1 else 0.6
+            if item.id == 'computational_geometry_analysis' and any(
+                term in normalized for term in ['quadrilateral', 'parallelogram', 'bounding rectangle']
+            ):
+                score += 1.0
             for concept in item.hidden_concepts:
                 for token in re.findall(r"[a-z]+", concept.lower()):
                     if len(token) > 3 and token in normalized:
@@ -463,6 +521,12 @@ class CompetitiveProgrammingReasoner:
             "maximize value",
             "minimum possible",
             "maximum possible",
+            "triangle",
+            "polygon",
+            "parallel",
+            "perpendicular",
+            "distance",
+            "area",
         ]
         for phrase in phrase_bank:
             if phrase in normalized and phrase not in phrases:
@@ -494,6 +558,10 @@ class CompetitiveProgrammingReasoner:
             "minimum possible": "binary search on answer",
             "grid": "implicit graph traversal",
             "connectivity": "component maintenance",
+            "triangle": "coordinate or Euclidean geometry structure",
+            "polygon": "geometric boundary reasoning",
+            "parallel": "slope or cross-product invariant",
+            "perpendicular": "dot-product or right-angle reasoning",
         }
         for trigger, concept in mapping.items():
             if trigger in normalized and concept not in concepts:
@@ -540,6 +608,47 @@ class CompetitiveProgrammingReasoner:
             "procedural": procedural,
         }
 
+    def _selection_score(
+        self,
+        solution: ContestSolution,
+        item: CpAlgorithmKnowledge,
+        structure: ContestProblemStructure,
+        rank_index: int,
+    ) -> float:
+        score = float(solution.confidence)
+        score += self._structural_alignment_score(item, structure)
+        if solution.compile_ok:
+            score += 0.2
+        if isinstance(solution.validation_report, dict) and solution.validation_report.get('overall_ok'):
+            score += 0.35
+        elif item.family in structure.domain_tags:
+            score += 0.1
+        failure = str(solution.validation_report.get('failure_type', '')) if isinstance(solution.validation_report, dict) else ''
+        if failure in {'output_mismatch', 'time_limit'}:
+            score -= 0.25
+        if not solution.compile_ok:
+            score -= 0.35
+        score -= 0.08 * max(0, rank_index - 1)
+        return score
+
+    @staticmethod
+    def _structural_alignment_score(item: CpAlgorithmKnowledge, structure: ContestProblemStructure) -> float:
+        score = 0.0
+        if item.family in structure.domain_tags:
+            score += 0.7
+        if item.family == 'geometry' and 'geometry_configuration' in structure.logical_frames:
+            score += 0.35
+        if item.id == 'computational_geometry_analysis' and any(
+            operator in structure.dsl_operators
+            for operator in ['POINT', 'SEGMENT', 'ORIENTATION_TEST', 'CROSS_PRODUCT', 'DOT_PRODUCT']
+        ):
+            score += 0.2
+        if item.family == 'range_data_structure' and 'geometry' in structure.domain_tags:
+            score -= 0.25
+        if item.family == 'graph' and 'geometry' in structure.domain_tags:
+            score -= 0.2
+        return score
+
     @staticmethod
     def _confidence(item: CpAlgorithmKnowledge, structure: ContestProblemStructure) -> float:
         base = 0.58
@@ -559,7 +668,7 @@ class CompetitiveProgrammingReasoner:
     def _reasoning_steps(structure: ContestProblemStructure, item: CpAlgorithmKnowledge | None) -> List[str]:
         steps = [
             "Extract constraints, objects, and query types from the statement.",
-            "Map phrases into logical problem frames such as shortest-path, offline-range-query, or dynamic-connectivity.",
+            "Map phrases into logical problem frames such as shortest-path, offline-range-query, dynamic-connectivity, or geometric-configuration.",
             "Project the statement into CP DSL operators and memory layers.",
             "Identify hidden concepts such as monotonicity, dynamic updates, or graph-state modeling.",
         ]
@@ -604,6 +713,7 @@ class CompetitiveProgrammingReasoner:
             "grid_bfs": self._grid_bfs_template(),
             "binary_search": self._binary_search_template(),
             "knapsack": self._knapsack_template(),
+            "geometry": self._geometry_template(),
         }
         return templates.get(kind, self._generic_template())
 
@@ -1028,6 +1138,47 @@ int main() {
         }
     }
     cout << *max_element(dp.begin(), dp.end()) << '\\n';
+    return 0;
+}
+'''
+
+    @staticmethod
+    def _geometry_template() -> str:
+        return '''#include <bits/stdc++.h>
+using namespace std;
+
+struct Point {
+    long double x, y;
+};
+
+Point operator-(const Point& a, const Point& b) {
+    return {a.x - b.x, a.y - b.y};
+}
+
+long double cross(const Point& a, const Point& b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+long double dot(const Point& a, const Point& b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+int sgn(long double value) {
+    const long double EPS = 1e-12L;
+    if (value > EPS) return 1;
+    if (value < -EPS) return -1;
+    return 0;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Geometry skeleton:
+    // 1. Read points, segments, or polygons.
+    // 2. Convert the problem into orientation / cross-product / dot-product predicates.
+    // 3. Derive intersections, parallelism, perpendicularity, area, or containment from those predicates.
+
     return 0;
 }
 '''

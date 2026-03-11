@@ -1,0 +1,36 @@
+{
+  "label": "synthetic square scene",
+  "metadata": {
+    "image_path": "examples\\vlso\\generated_geometry\\square_scene.png"
+  },
+  "objects": [
+    {
+      "id": "square_panel",
+      "kind": "shape",
+      "bbox": [
+        2,
+        2,
+        8,
+        8
+      ],
+      "polygon": [
+        [
+          2,
+          2
+        ],
+        [
+          8,
+          2
+        ],
+        [
+          8,
+          8
+        ],
+        [
+          2,
+          8
+        ]
+      ]
+    }
+  ]
+}

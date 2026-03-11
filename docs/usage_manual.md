@@ -1,9 +1,44 @@
-﻿# Usage Manual
+# Usage Manual
 
 Code layout reference:
 - `docs/project_structure.md`
 - refresh with `.\.venv312\Scripts\python.exe tools\maintenance\update_code_structure_docs.py`
 
+
+## 0. Fastest Start
+
+If you just want to test the project without learning commands first, run:
+
+```bash
+.\.venv312\Scripts\python.exe semop_easy_gui.py
+```
+
+Then open:
+- `http://127.0.0.1:8770`
+
+This single GUI lets you:
+- test warehouse and SOP reasoning
+- test competitive-programming analysis
+- ask image-grounded questions on `data\scene.png` or your own image
+- compare a primary VLSO concept store against a pseudo-labeled store
+- review self-training clusters and save approve/reject decisions
+- download or normalize labeled CP datasets
+- build a VLSO public-image collection plan
+- generate an object-family manifest for bag, box, drawer, door, bottle, tool, cabinet, suitcase, jar, bin, and pouch
+- run a family-target batch collector that writes manifest, records, approved, and download-manifest files automatically
+- preview public-image cards and approve downloads
+- run learning on downloaded images
+- edit downloaded-image labels with review status and notes
+- retrain concept and operator stores from approved labels only
+- download or stage labeled CP data with one click
+- generate synthetic geometry images and eval files
+- run one-click VLSO geometry self-training and operator learning
+- retrain approved clusters into new concept/operator stores
+- compare approved VLSO stores on grounded QA eval sets
+- compare CP heuristic parser against a learned parser model
+- generate CP geometry eval and train starter files
+- compare hand-labeled and pseudo-labeled concept stores
+- approve or reject self-training clusters from the easy GUI
 
 ## 1. Decide Which Flow You Need
 
@@ -94,7 +129,16 @@ If you want a customer-specific baseline, copy and edit:
 
 ## 4. Use the GUI
 
-Start the GUI:
+### Easiest all-in-one GUI
+
+```bash
+.\.venv312\Scripts\python.exe semop_easy_gui.py
+```
+
+Then open:
+- `http://127.0.0.1:8770`
+
+### Full operations GUI
 
 ```bash
 .\.venv312\Scripts\python.exe ops_copilot_gui.py ^
@@ -254,6 +298,18 @@ What you get:
 - optional episodic memory record in `data\cp_episodes.db`
 - episode-driven reranking priors for later similar statements
 
+
+### Download labeled public CP datasets into normalized JSONL
+
+```bash
+python tools\cp\download_cp_labeled_datasets.py ^
+  --manifest examples\cp_labeled_manifest.json ^
+  --download-root data\cp_labeled_downloads ^
+  --output data\cp_labeled_normalized.jsonl
+```
+
+This is the easiest way to bootstrap statement + solution + tag style public datasets before converting them into SemOp-specific labels.
+
 ### Prepare an expanded CP corpus, then build the labeled DSL and SFT datasets
 
 ```bash
@@ -347,6 +403,26 @@ For a learned parser:
   --mode model ^
   --model <local-model-or-adapter> ^
   --local-files-only
+```
+
+For a direct heuristic-vs-model comparison:
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_cp_parser.py ^
+  --input examples\cp_parser_eval.jsonl ^
+  --mode compare ^
+  --model <local-model-or-adapter>
+```
+
+For VLSO approved-store impact evaluation:
+
+```bash
+.\.venv312\Scripts\python.exe tools/eval/evaluate_vlso_review_impact.py ^
+  --input examples\vlso_eval.jsonl ^
+  --primary-concept-store data\vlso_visual_prototypes.db ^
+  --primary-operator-store data\vlso_visual_operators.db ^
+  --compare-concept-store data\vlso_geometry_pipeline_gui\approved_review_concepts.db ^
+  --compare-operator-store data\vlso_geometry_pipeline_gui\approved_review_operators.db
 ```
 
 ### Current compiler constraint
@@ -618,3 +694,93 @@ python tools\vlso\index_visual_concepts.py ^
 ```
 
 
+
+
+## Architecture References
+
+Use these docs when you want the high-level system direction instead of command-by-command usage.
+
+- `operator_intelligence_system.md`: the long-term intelligence-core definition
+- `operator_intelligence_roadmap.md`: the staged roadmap for operator learning, world models, memory, and verifiers
+
+
+## Quick Eval Commands
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_vlso_grounded_qa.py --input examples\vlso_eval.jsonl --mode heuristic --answer-mode structured
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_vlso_grounded_qa.py --input examples\vlso_geometry_eval.jsonl --mode heuristic --answer-mode structured
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_cp_parser.py --input examples\cp_parser_eval.jsonl --mode heuristic
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_cp_parser.py --input examples\cp_geometry_parser_eval.jsonl --mode heuristic
+```
+
+
+## Geometry Data Bootstrap
+
+### VLSO geometry and access images
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\bootstrap_geometry_visual_data.py ^
+  --workspace data\vlso_geometry_bootstrap
+```
+
+Add `--execute-collect` to call the public APIs and add `--execute-downloads` to fetch approved media files.
+The preset manifest is also available at `examples\vlso_geometry_collection_manifest.json`.
+
+### Generate synthetic geometry scenes locally
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\generate_geometry_dataset.py ^
+  --output-dir examples\vlso\generated_geometry ^
+  --eval-output examples\vlso_geometry_eval.jsonl
+```
+
+This creates paired PNG and JSON scene assets for parallel/perpendicular, square, and triangle cases, then writes a ready-to-run VLSO eval set.
+
+### CP geometry labeled corpus
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\bootstrap_geometry_corpus.py ^
+  --manifest examples\cp_geometry_labeled_manifest.json ^
+  --download-root data\cp_geometry_downloads ^
+  --output data\cp_geometry_labeled.jsonl
+```
+
+`examples\cp_geometry_labeled_manifest.json` supports both normal URLs and Hugging Face datasets. Geometry rows are filtered by tags and text terms before normalization.
+
+## Operator Algebra Benchmark
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_operator_algebra.py ^
+  --input examples\operator_algebra_eval.jsonl ^
+  --mode heuristic
+```
+
+This measures:
+- operator decomposition recovery
+- functor-hypothesis recovery
+
+## Segmentation-Aware Structural Grounding
+
+Detector payloads can now carry explicit fields such as:
+- `part_of`
+- `part_of_confidence`
+- `structural_role`
+- `segmentation_confidence`
+
+Useful `structural_role` values include:
+- `opening`
+- `access_control`
+- `handle`
+- `grasp`
+- `strap`
+
+These are converted into stronger structural bindings such as `ACCESS_PORT_OPERATOR`, `ACCESS_CONTROL_OPERATOR`, and `ATTACHED_GRASP_OPERATOR`.

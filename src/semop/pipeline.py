@@ -11,6 +11,8 @@ from .heuristic_extractors import HeuristicExtractor
 from .llm_client import LocalLLMConfig, LocalTransformersExtractor
 from .logical_grammar import LogicalPattern, LogicalPatternMatcher
 from .operator_registry import TypedOperatorRegistry
+from .operator_algebra import OperatorAlgebraLearner
+from .premise_explorer import HiddenPremiseExplorer
 from .semantic_operators import apply_many
 from .structures import Edge, Node, OperatorCandidate, PlanStep, StructuredMeaningGraph
 from .symbolic_reasoners import SymbolicReasoner
@@ -29,6 +31,8 @@ class StructuredMeaningPipeline:
         self._registry_cache: TypedOperatorRegistry | None = None
         self._logical_pattern_cache: List[LogicalPattern] | None = None
         self._logical_matcher = LogicalPatternMatcher()
+        self.premise_explorer = HiddenPremiseExplorer()
+        self.operator_algebra = OperatorAlgebraLearner()
         self.logical_weight_path = logical_weight_path
         self._logical_weight_cache: Dict[str, float] | None = None
 
@@ -39,6 +43,7 @@ class StructuredMeaningPipeline:
     def run_with_memory_graphs(self, query: str, similar_graphs: List[StructuredMeaningGraph] | None = None) -> StructuredMeaningGraph:
         similar_graphs = similar_graphs or []
         graph = self._prepare_graph(query)
+        graph = self.premise_explorer.enrich(graph)
         graph = self._apply_logical_grammar_priors(graph)
         graph = self._attach_memory_hints(graph, similar_graphs)
         graph = self.inducer.induce(graph)
@@ -66,9 +71,10 @@ class StructuredMeaningPipeline:
 
     def _finalize_graph(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
         graph = self.symbolic.apply(graph)
+        graph = self.operator_algebra.enrich(graph)
         graph = self._annotate_with_registry(graph)
         graph.induced_operators.sort(key=lambda candidate: (-candidate.confidence, candidate.name))
-        return graph
+        return validate_graph(graph)
 
     def _retrieve_similar_graphs(self, query: str) -> List[StructuredMeaningGraph]:
         if self.memory_store is None:

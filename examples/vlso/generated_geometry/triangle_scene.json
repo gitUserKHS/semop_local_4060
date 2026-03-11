@@ -1,0 +1,32 @@
+{
+  "label": "synthetic triangle scene",
+  "metadata": {
+    "image_path": "examples\\vlso\\generated_geometry\\triangle_scene.png"
+  },
+  "objects": [
+    {
+      "id": "triangle_panel",
+      "kind": "shape",
+      "bbox": [
+        1,
+        1,
+        9,
+        9
+      ],
+      "polygon": [
+        [
+          5,
+          1
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          9,
+          9
+        ]
+      ]
+    }
+  ]
+}
