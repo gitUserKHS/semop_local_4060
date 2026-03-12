@@ -51,6 +51,7 @@ The explorer enriches `StructuredMeaningGraph` with:
 The starter evaluator uses three metrics:
 - `critical_premise_recall`
 - `hidden_goal_recall`
+- `clarification_score_mae`
 - `goal_preservation_accuracy`
 
 This is intentionally different from plain answer accuracy. The target is not only to answer well, but to recover the hidden assumptions that justify the answer.

@@ -1,4 +1,4 @@
-# Docs Index
+﻿# Docs Index
 
 This folder contains the active documentation for SemOp Local 4060.
 
@@ -28,9 +28,16 @@ This folder contains the active documentation for SemOp Local 4060.
 
 - `operator_intelligence_system.md`
   - high-level definition of the logic-operator intelligence architecture
-- `operator_intelligence_roadmap.md
-- `operator_intelligence_execution_steps.md
-- `jepa_relevance_and_integration.md`: why JEPA helps and how it is integrated as latent structural prediction`: staged execution plan from geometry primitives to cross-modal reasoning`
+- `operator_intelligence_roadmap.md`
+  - roadmap grouped by operator learning, world model, memory, and verifier quality
+- `operator_intelligence_execution_steps.md`
+  - staged execution plan from geometry primitives to cross-modal reasoning
+- `premise_first_refactor_status.md`
+  - current premise-first architecture changes and remaining limits
+- `premise_engine_next_steps.md`
+  - current hidden-premise metrics and recommended next implementation order
+- `jepa_relevance_and_integration.md`
+  - why JEPA helps and how it is integrated as latent structural prediction
 - `research_strengthening_plan_2026_03_10.md`
   - 3, 6, and 12 month roadmap along operator, world-model, memory, and verifier axes
 - `logical_grammar_goal_and_implementation.md`
@@ -41,6 +48,16 @@ This folder contains the active documentation for SemOp Local 4060.
   - operator hierarchy roadmap and status
 - `pdf_alignment_notes.md`
   - alignment notes against the original research PDF
+- `vlso_structural_first_rearchitecture.md`
+  - why VLSO now uses geometry/topology-first operator induction before semantic labels
+- `operator_algebra_and_functors.md`
+  - hidden-premise alignment, operator decomposition, and functor-hypothesis notes
+- `operator_intelligence_to_100_plan.md`
+  - staged path from current prototype toward stronger operator-centered intelligence
+- `operator_learning_plan.md`
+  - teacher-trace curriculum, QLoRA workflow, and generic operator-student training
+- `analogical_memory_plan.md`
+  - multi-analogy retrieval, structural similarity explanation, and rollout plan
 
 ## Competitive Programming
 
@@ -82,7 +99,11 @@ This folder contains the active documentation for SemOp Local 4060.
 - `../examples/cp_geometry_parser_eval.jsonl`
   - geometry-only CP parser evaluation set target
 
-- `docs/vlso_structural_first_rearchitecture.md`: why VLSO now uses geometry/topology-first operator induction before semantic labels.
+- `operator_intelligence_to_100_plan.md`: research-backed staged plan toward a full operator-intelligence stack
 
-- `operator_algebra_and_functors.md`
-  - hidden-premise alignment, operator decomposition, and functor-hypothesis notes
+- `qlora_distillation_roadmap.md`
+  - QLoRA and distillation roadmap for small local models
+- `multi_agent_operator_doctrine.md`
+  - mandatory shared rule for all agents: basis operators first, verifier-retained operator algebra second
+
+

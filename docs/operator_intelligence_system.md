@@ -55,11 +55,15 @@ Goal:
 
 Current implementation:
 - corpus/query/operator memory in `src/semop/corpus_store.py` and `src/semop/memory_retrieval.py`
+- multi-analogy structural memory selection in `src/semop/memory_analogies.py`
+- learned analogy-policy scoring in `src/semop/analogy_policy.py`
 - CP episodic memory in `src/semop/cp_episode_store.py`
 - VLSO concept memory, embedding memory, and hybrid memory in `src/semop/vlso/concept_memory.py`, `src/semop/vlso/embedding_store.py`, and `src/semop/vlso/hybrid_memory.py`
 
 Target capability:
 - a small reasoning core should query a large external memory instead of storing everything inside model weights
+- the system should be able to recall several structurally similar cases at once, not only a single nearest neighbor
+- memory retrieval should be re-ranked by hidden goals, premises, and operator structure rather than surface wording alone
 
 ### 4. Verifier
 
@@ -71,6 +75,8 @@ Current implementation:
 - CP compile/sample/random/counterexample loop in `src/semop/cp_validation.py` and `src/semop/cp_repair.py`
 - hard-problem verification in `src/semop/hard_problem_engine.py`
 - grounded visual QA in `src/semop/vlso/qa.py`
+- analogy-conditioned premise and runtime verification in `src/semop/pipeline.py` and `src/semop/operator_runtime.py`
+- operator composition compiler findings in `src/semop/operator_runtime.py`
 
 Target capability:
 - every answer path should be auditable, rejectable, and repairable
@@ -107,3 +113,28 @@ New features should be justified by at least one of these questions:
 - does this improve verification?
 
 If not, it is probably not part of the long-term intelligence core.
+
+## Shared Multi-Agent Rule
+
+All future work should follow the doctrine in `docs/multi_agent_operator_doctrine.md`: every domain must reduce to shared basis operators, higher operators must be normalized through composition, and retention is decided by verifier and transfer benches rather than ad hoc naming.
+
+
+
+
+## 2026-03-13 Integration Update
+- learned unified parser priors now live in `src/semop/unified_parser.py` and are applied inside `src/semop/pipeline.py` before induction.
+- multimodal graph fusion now happens in `src/semop/pipeline.py`: `visual_input` is parsed through `src/semop/vlso/visual_parser.py`, merged into the main graph, and then sent through the same premise/analogy/compiler/context loop as language.
+- document/PDF-text grounding is now structural rather than only textual: `source_context` is chunked into evidence nodes in `src/semop/pipeline.py`, and `src/semop/symbolic_reasoners.py` links grounded answers back to evidence nodes with `GROUNDED_BY` edges.
+- retained higher-order operator algebra is trained in `src/semop/retained_operator_algebra.py` and injected back into runtime as reusable retained operators/functors.
+- the compiler in `src/semop/operator_runtime.py` now performs typed verification, functor applicability checks, operator-composition legality checks, and emits counterexample-style repair hints.
+- unified training/evaluation harness now exists in `src/semop/unified_benchmark.py`, combining artifact training with a single scoreboard over transfer, analogy, compiler, grounding, and repair metrics.
+- `src/semop/operator_repair.py` now closes the loop after compiler findings: it can inject missing goal-preservation decompositions, bind missing prerequisite edges, reattach document context nodes, and recompile the graph.
+- retained repair-program memory now lives in `src/semop/retained_repair_programs.py`: successful compiler-guided repairs are retained as reusable programs, and `src/semop/operator_repair.py` can synthesize action sequences from retained traces plus live counterexample hints.
+- `src/semop/pipeline.py` now attaches explicit `question -> GROUNDED_BY -> evidence` edges for both document chunks and visual evidence nodes, so grounding is represented in the shared graph instead of staying implicit.
+- `src/semop/operator_runtime.py` now runs a grounding-fidelity compiler pass that warns when document or visual reasoning lacks explicit evidence links.
+- `src/semop/response_synthesizer.py` now surfaces grounded evidence lines directly in the compiled execution summary.
+- `src/semop/graph_supervision.py` now exports runtime graphs into supervision JSONL, so parser learning can train on reviewed operator graphs instead of only token priors.
+- `src/semop/unified_parser.py` now predicts hidden goals, required premises, and decompositions with a calibrated confidence score, and `src/semop/pipeline.py` can activate a parser-first bootstrap route when that confidence is high enough.
+- `src/semop/multimodal_alignment_memory.py` now retains visual-language alignment traces and can project hidden goals, required premises, and functors back into new visual queries.
+- `src/semop/retained_operator_algebra.py` now tracks activation success and can retire low-utility retained operators instead of reusing them forever.
+- `src/semop/continuous_learning.py` now exports runtime traces, graph supervision, and SFT rows into a continuous-learning bundle for later retraining.

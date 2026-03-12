@@ -33,6 +33,9 @@ def main() -> None:
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--lora-target-modules", nargs="+", help="optional LoRA target modules such as q_proj k_proj v_proj o_proj")
+    parser.add_argument("--resume-from-checkpoint", help="resume training from a checkpoint directory")
+    parser.add_argument("--save-steps", type=int, default=25)
+    parser.add_argument("--save-total-limit", type=int, default=2)
     args = parser.parse_args()
 
     if not args.train_jsonl and not args.episode_store:
@@ -58,6 +61,9 @@ def main() -> None:
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         lora_target_modules=args.lora_target_modules,
+        resume_from_checkpoint=args.resume_from_checkpoint,
+        save_steps=args.save_steps,
+        save_total_limit=args.save_total_limit,
     )
     summary = CpParserTrainingScaffold().run(config)
     print(json.dumps(summary, ensure_ascii=False, indent=2))

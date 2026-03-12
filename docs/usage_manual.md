@@ -36,9 +36,161 @@ This single GUI lets you:
 - retrain approved clusters into new concept/operator stores
 - compare approved VLSO stores on grounded QA eval sets
 - compare CP heuristic parser against a learned parser model
+- run or resume CP LoRA training from the easy GUI with checkpoint saving
 - generate CP geometry eval and train starter files
 - compare hand-labeled and pseudo-labeled concept stores
 - approve or reject self-training clusters from the easy GUI
+
+## Progress Snapshot
+
+If you want a benchmark-backed estimate of how close the project is to the operator-intelligence target, run:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_operator_intelligence_progress.py ^
+  --hidden-premises examples\hidden_premise_eval.jsonl ^
+  --cp-input examples\cp_parser_eval.jsonl ^
+  --vlso-input examples\vlso_eval.jsonl
+```
+
+This produces:
+- operator architecture
+- premise reasoning
+- shared world model
+- CP structuring
+- raw visual reasoning
+- general operator transfer
+
+and two conservative overall estimates:
+- research architecture overall
+- robust general intelligence overall
+
+Use these numbers for trend tracking. They are starter-benchmark estimates, not production-grade capability claims.
+
+## 0A. Evaluate operator self-evolution and transfer
+
+Run the operator algebra benchmark first:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_operator_algebra.py ^
+  --input examples\operator_algebra_eval.jsonl ^
+  --mode heuristic
+```
+
+Then run the starter cross-domain transfer benchmark:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_operator_transfer.py ^
+  --input examples\operator_transfer_eval.jsonl ^
+  --mode heuristic
+```
+
+This second command measures whether retained evolved operators still help on held-out domains instead of only on the domain that first produced them.
+
+To measure whether geometry-first signals really matter for retention, run:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_visual_signal_operator_impact.py ^
+  --input examples\operator_transfer_eval.jsonl ^
+  --mode heuristic
+```
+
+If you have a local LLM model id for operator summarization, compare heuristic and LLM proposal engines with:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\compare_operator_proposals.py ^
+  --input examples\operator_transfer_eval.jsonl ^
+  --mode heuristic ^
+  --llm-model-id Qwen/Qwen2.5-3B-Instruct
+```
+Internally, retained operators are now preceded by a proposal phase: repeated basis patterns and geometry signatures are summarized into candidate higher operators, then normalized and scored before retention.
+
+To run the full iterative self-evolution loop and persist retained operators back into SQLite memory, use:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\run_operator_self_evolution.py ^
+  --input examples\operator_transfer_eval.jsonl ^
+  --memory-store data\semop_memory.db ^
+  --source operator_self_evolution ^
+  --iterations 3
+```
+
+## 0B. Build a starter real-image VLSO benchmark
+
+If you already used the GUI family-batch collector and have downloaded files under `data\vlso_family_batch`, build a starter real-image eval set with:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\build_real_image_eval.py ^
+  --records data\vlso_family_batch\family_records.jsonl ^
+  --manifest data\vlso_family_batch\family_download_manifest.jsonl ^
+  --candidate-output data\vlso_family_batch\real_image_eval_candidates.jsonl ^
+  --seed-output examples\vlso_real_image_eval.jsonl ^
+  --limit 24
+```
+
+Then score the current VLSO stack on those real images:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_vlso_grounded_qa.py ^
+  --input examples\vlso_real_image_eval.jsonl ^
+  --mode deep ^
+  --answer-mode structured
+```
+
+Use this as a gap-finding benchmark, not a final scorecard. The current starter run is intentionally harsh and exposes weak raw internet-image grounding.
+
+## 0C. Run the CP LoRA experiment harness
+
+This creates train/val bundles, SFT exports, a heuristic baseline snapshot, and an optional LoRA training plan in one workspace:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace tests\cp_lora_experiment_smoke ^
+  --model local-test-model ^
+  --inputs examples\cp_parser_eval.jsonl ^
+  --execute-train ^
+  --dry-run-train ^
+  --local-files-only ^
+  --max-steps 4
+```
+
+If you replace `local-test-model` with a real local base model path, the same command can run a real LoRA experiment.
+
+To save checkpoints and resume later, add these flags:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace data\cp_lora_run ^
+  --model path\to\your_local_base_model ^
+  --inputs examples\cp_parser_eval.jsonl examples\cp_hidden_constraint_eval.jsonl ^
+  --eval-inputs examples\cp_geometry_parser_eval.jsonl ^
+  --execute-train ^
+  --max-steps 200 ^
+  --save-steps 25 ^
+  --save-total-limit 3 ^
+  --resume-from-checkpoint data\cp_lora_run\training_run\checkpoint-100
+```
+
+The easy GUI exposes the same flow under `5. Geometry starter tools -> CP LoRA train/resume`.
+
+If you manually review `data\vlso_family_batch\real_image_eval_candidates.jsonl`, convert the approved rows into a reusable gold eval file with:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\finalize_real_image_eval.py ^
+  --candidates data\vlso_family_batch\real_image_eval_candidates.jsonl ^
+  --output examples\vlso_real_image_eval_gold.jsonl
+```
+
+If you want the CP LoRA experiment to compare against an extra held-out set after training, pass `--eval-inputs`:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace data\cp_lora_run ^
+  --model path\to\your_local_base_model ^
+  --inputs examples\cp_parser_eval.jsonl ^
+  --eval-inputs examples\cp_geometry_parser_eval.jsonl ^
+  --execute-train ^
+  --max-steps 200
+```
 
 ## 1. Decide Which Flow You Need
 
@@ -156,6 +308,7 @@ The GUI lets you:
 - compare against a baseline
 - inspect review queue items
 - approve, reject, or mark items as follow-up
+- export teacher traces and run generic operator-student training
 
 ## 5. Resolve Review Items And Learn Rules
 
@@ -784,3 +937,76 @@ Useful `structural_role` values include:
 - `strap`
 
 These are converted into stronger structural bindings such as `ACCESS_PORT_OPERATOR`, `ACCESS_CONTROL_OPERATOR`, and `ATTACHED_GRASP_OPERATOR`.
+
+## Added starter benches
+
+- `examples/vlso_real_image_eval_gold.jsonl`: reviewed or auto-selected real-image VLSO benchmark
+- `examples/cp_hidden_constraint_eval.jsonl`: CP parser benchmark focused on hidden efficiency and structural constraints
+
+## Added experiment tool
+
+Use `tools/eval/run_premise_compatibility_experiment.py` to train a script-compatibility scorer from SQLite memory and compare hidden-premise metrics before and after loading the trained model.
+
+
+## Teacher Trace Export
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\export_teacher_traces.py ^
+  --hidden-premises examples\hidden_premise_eval.jsonl ^
+  --cp-input examples\cp_parser_eval.jsonl ^
+  --vlso-input examples\vlso_eval.jsonl ^
+  --examples-root examples ^
+  --output data\teacher_traces.jsonl ^
+  --sft-output data\teacher_traces_sft.jsonl
+```
+
+This exports a common distillation dataset for QLoRA/SFT experiments.
+
+Add `--operator-transfer-input examples\operator_transfer_eval.jsonl` if you want operator-proposal and self-evolution traces in the exported teacher dataset.
+
+You can also export harder traces with `--cp-hidden-input examples\cp_hidden_constraint_eval.jsonl` and `--vlso-real-image-input examples\vlso_real_image_eval_gold.jsonl`.
+
+## 0D. Build an operator-learning curriculum and student model
+
+Build the curriculum bundle from teacher traces:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\build_operator_learning_bundle.py ^
+  --teacher-traces data\teacher_traces.jsonl ^
+  --workspace data\operator_learning_bundle
+```
+
+Dry-run a generic operator student model:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\run_operator_training.py ^
+  --workspace data\operator_learning_bundle ^
+  --model Qwen/Qwen2.5-0.5B-Instruct ^
+  --dry-run ^
+  --use-lora
+```
+
+Resume from checkpoint if needed:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\run_operator_training.py ^
+  --workspace data\operator_learning_bundle ^
+  --model E:\path\to\local_text_model ^
+  --use-lora ^
+  --use-qlora ^
+  --resume-from-checkpoint data\operator_learning_bundle\training_run\checkpoint-100
+```
+
+See `docs/operator_learning_plan.md` for the full training roadmap.
+
+SemOp now also runs an operator compiler/executor after premise recovery and operator algebra. This means hidden premises, goal-preservation checks, and operator decompositions are compiled into a deterministic support trace before the final answer is synthesized.
+
+## Overall Understanding Benchmark
+
+Run the broad understanding check across hidden-premise reasoning, CP structuring, CP hidden constraints, starter VLSO, and reviewed real-image VLSO:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_understanding.py
+```
+
+In the easy GUI, use `5. Geometry starter tools -> Evaluation shortcuts -> Run overall understanding benchmark`.

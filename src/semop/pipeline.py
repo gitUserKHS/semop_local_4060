@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Any, Dict, List
 
 from .commonsense_kb import concept_label, kb_relations_for_concept, normalize_concept, scripts_for_concept
+from .context_chunks import split_context_into_chunks
+from .unified_parser import LearnedUnifiedParser
+from .context_understanding import OperatorContextAnalyzer
+from .analogy_policy import AnalogyPolicyScorer
+from .memory_analogies import AnalogicalMemoryBuilder
+from .multimodal_alignment_memory import MultimodalAlignmentMemory
 from .corpus_store import CorpusMemoryStore
 from .emergent_operators import EmergentOperatorInducer
 from .heuristic_extractors import HeuristicExtractor
@@ -12,6 +19,9 @@ from .llm_client import LocalLLMConfig, LocalTransformersExtractor
 from .logical_grammar import LogicalPattern, LogicalPatternMatcher
 from .operator_registry import TypedOperatorRegistry
 from .operator_algebra import OperatorAlgebraLearner
+from .retained_operator_algebra import RetainedOperatorAlgebra
+from .operator_repair import OperatorRepairEngine
+from .operator_runtime import compile_and_execute
 from .premise_explorer import HiddenPremiseExplorer
 from .semantic_operators import apply_many
 from .structures import Edge, Node, OperatorCandidate, PlanStep, StructuredMeaningGraph
@@ -20,7 +30,21 @@ from .validation import validate_graph
 
 
 class StructuredMeaningPipeline:
-    def __init__(self, mode: str = "heuristic", model_id: str = "Qwen/Qwen2.5-3B-Instruct", memory_store_path: str | None = None, memory_source: str | None = None, logical_weight_path: str | None = None):
+    def __init__(
+        self,
+        mode: str = "heuristic",
+        model_id: str = "Qwen/Qwen2.5-3B-Instruct",
+        memory_store_path: str | None = None,
+        memory_source: str | None = None,
+        logical_weight_path: str | None = None,
+        script_compatibility_model_path: str | None = None,
+        analogy_policy_path: str | None = None,
+        unified_parser_path: str | None = None,
+        retained_algebra_path: str | None = None,
+        repair_policy_path: str | None = None,
+        repair_program_path: str | None = None,
+        multimodal_alignment_path: str | None = None,
+    ):
         self.mode = mode
         self.heuristic = HeuristicExtractor()
         self.inducer = EmergentOperatorInducer()
@@ -31,55 +55,113 @@ class StructuredMeaningPipeline:
         self._registry_cache: TypedOperatorRegistry | None = None
         self._logical_pattern_cache: List[LogicalPattern] | None = None
         self._logical_matcher = LogicalPatternMatcher()
-        self.premise_explorer = HiddenPremiseExplorer()
+        self._visual_parser = None
+        self.premise_explorer = HiddenPremiseExplorer(
+            memory_store=self.memory_store,
+            memory_source=self.memory_source,
+            compatibility_model_path=script_compatibility_model_path,
+        )
         self.operator_algebra = OperatorAlgebraLearner()
+        self.context_analyzer = OperatorContextAnalyzer()
+        self.analogy_builder = AnalogicalMemoryBuilder()
+        self.analogy_policy = AnalogyPolicyScorer(model_path=analogy_policy_path) if analogy_policy_path else None
+        self.unified_parser = LearnedUnifiedParser(model_path=unified_parser_path) if unified_parser_path else None
+        self.parser_dominance_threshold = self.unified_parser.model.dominance_threshold if self.unified_parser is not None else 0.0
+        self.retained_algebra = RetainedOperatorAlgebra(model_path=retained_algebra_path) if retained_algebra_path else None
+        self.repair_engine = OperatorRepairEngine(repair_policy_path=repair_policy_path, repair_program_path=repair_program_path)
+        self.multimodal_alignment = MultimodalAlignmentMemory(model_path=multimodal_alignment_path) if multimodal_alignment_path else None
+        self.retained_algebra_path = retained_algebra_path
         self.logical_weight_path = logical_weight_path
         self._logical_weight_cache: Dict[str, float] | None = None
 
-    def run(self, query: str) -> StructuredMeaningGraph:
-        similar_graphs = self._retrieve_similar_graphs(query)
-        return self.run_with_memory_graphs(query, similar_graphs)
+    def run(self, query: str, source_context: str = "", visual_input: Any | None = None) -> StructuredMeaningGraph:
+        similar_graphs = self._retrieve_similar_graphs(query, source_context=source_context, visual_input=visual_input)
+        return self.run_with_memory_graphs(query, similar_graphs, source_context=source_context, visual_input=visual_input)
 
-    def run_with_memory_graphs(self, query: str, similar_graphs: List[StructuredMeaningGraph] | None = None) -> StructuredMeaningGraph:
+    def run_with_memory_graphs(
+        self,
+        query: str,
+        similar_graphs: List[StructuredMeaningGraph] | None = None,
+        source_context: str = "",
+        visual_input: Any | None = None,
+    ) -> StructuredMeaningGraph:
         similar_graphs = similar_graphs or []
-        graph = self._prepare_graph(query)
+        graph = self._prepare_graph(query, source_context=source_context, visual_input=visual_input)
+        if self.multimodal_alignment is not None:
+            graph = self.multimodal_alignment.enrich(graph)
         graph = self.premise_explorer.enrich(graph)
+        graph = self._attach_premise_memory_hints(graph)
         graph = self._apply_logical_grammar_priors(graph)
         graph = self._attach_memory_hints(graph, similar_graphs)
         graph = self.inducer.induce(graph)
         graph = self._annotate_with_registry(graph)
         graph = self._apply_memory_priors(graph, similar_graphs)
+        graph.analogical_matches = self.analogy_builder.build(graph, similar_graphs)
+        if graph.analogical_matches:
+            graph.audit_trace.append(f"analogical memory: selected {len(graph.analogical_matches)} structurally similar cases")
+        graph = self._apply_analogy_guidance(graph)
         return self._finalize_graph(graph)
 
-    def _prepare_graph(self, query: str) -> StructuredMeaningGraph:
+    def _prepare_graph(self, query: str, source_context: str = "", visual_input: Any | None = None) -> StructuredMeaningGraph:
         if self.mode == "heuristic":
-            graph = self.heuristic.extract(query)
+            parser_bootstrap = None
+            if self.unified_parser is not None:
+                prediction = self.unified_parser.predict(query, source_context=source_context)
+                if prediction.confidence >= self.parser_dominance_threshold:
+                    parser_bootstrap = self.unified_parser.bootstrap_graph(query, source_context=source_context, prediction=prediction)
+            graph = self._prepare_multimodal_graph(query, source_context=source_context, visual_input=visual_input, base_graph=parser_bootstrap)
             graph = self._apply_logical_relation_priors(graph)
+            graph = self._apply_unified_parser_priors(graph)
+            graph = self._attach_document_grounding_context(graph)
             return validate_graph(graph)
-
         try:
             raw = self.llm.extract(query) if self.llm is not None else None
         except Exception as exc:
-            graph = self.heuristic.extract(query)
+            graph = self._prepare_multimodal_graph(query, source_context=source_context, visual_input=visual_input)
             graph.warnings.append(f"llm extraction failed; fallback to heuristic: {exc}")
+            graph = self._apply_logical_relation_priors(graph)
+            graph = self._apply_unified_parser_priors(graph)
+            graph = self._attach_document_grounding_context(graph)
             return validate_graph(graph)
 
         graph = self._build_graph_from_llm(query, raw or {})
+        graph = self._prepare_multimodal_graph(query, source_context=source_context, visual_input=visual_input, base_graph=graph)
         graph = self._apply_logical_relation_priors(graph)
-        graph = self._ensure_plan(graph)
+        graph = self._apply_unified_parser_priors(graph)
+        graph = self._attach_document_grounding_context(graph)
         return validate_graph(graph)
 
     def _finalize_graph(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
         graph = self.symbolic.apply(graph)
         graph = self.operator_algebra.enrich(graph)
+        if self.retained_algebra is not None:
+            graph = self.retained_algebra.enrich(graph)
+        graph = self.repair_engine.run(graph)
+        graph.context_frame = self.context_analyzer.analyze(graph)
         graph = self._annotate_with_registry(graph)
+        graph = self._ensure_plan(graph)
         graph.induced_operators.sort(key=lambda candidate: (-candidate.confidence, candidate.name))
-        return validate_graph(graph)
+        graph = validate_graph(graph)
+        self._store_runtime_memory(graph)
+        return graph
 
-    def _retrieve_similar_graphs(self, query: str) -> List[StructuredMeaningGraph]:
+    def _retrieve_similar_graphs(self, query: str, source_context: str = "", visual_input: Any | None = None) -> List[StructuredMeaningGraph]:
         if self.memory_store is None:
             return []
-        return self.memory_store.search_similar_graphs(query, split="train", source=self.memory_source, top_k=3)
+        probe_graph = self._build_memory_probe_graph(query, source_context=source_context, visual_input=visual_input)
+        if self.analogy_policy is not None:
+            graphs = self.memory_store.fetch_graphs(split="train", source=self.memory_source)
+            return self.analogy_policy.rank_graphs(query, probe_graph, graphs, top_k=6)
+        return self.memory_store.search_similar_graphs(query, split="train", source=self.memory_source, top_k=6, query_graph=probe_graph)
+
+    def _build_memory_probe_graph(self, query: str, source_context: str = "", visual_input: Any | None = None) -> StructuredMeaningGraph:
+        graph = self._prepare_multimodal_graph(query, source_context=source_context, visual_input=visual_input)
+        graph = self._apply_logical_relation_priors(graph)
+        graph = self._apply_unified_parser_priors(graph)
+        graph = self._attach_document_grounding_context(graph)
+        graph = validate_graph(graph)
+        graph = self.premise_explorer.enrich(graph)
+        return graph
 
     def _load_registry(self) -> TypedOperatorRegistry | None:
         if self.memory_store is None:
@@ -235,6 +317,46 @@ class StructuredMeaningPipeline:
             if note not in graph.warnings:
                 graph.warnings.append(note)
         return graph
+
+
+    def _attach_premise_memory_hints(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        if self.memory_store is None:
+            return graph
+        premise_hits = self.memory_store.search_premise_support(graph.query, top_k=5, source=self.memory_source)
+        operator_hits = self.memory_store.search_operator_support(graph.query, top_k=5, source=self.memory_source)
+        for hit in premise_hits:
+            note = f"premise memory hint: {hit['premise']} ({hit.get('hidden_goal', '')})".strip()
+            if note not in graph.warnings:
+                graph.warnings.append(note)
+        existing_names = {candidate.name for candidate in graph.induced_operators}
+        for hit in operator_hits:
+            note = f"operator memory hint: {hit['operator_name']}"
+            if note not in graph.warnings:
+                graph.warnings.append(note)
+            if hit['operator_name'] not in existing_names:
+                graph.induced_operators.append(
+                    OperatorCandidate(
+                        name=str(hit['operator_name']),
+                        family=str(hit.get('operator_family', 'memory_family')),
+                        arity=2,
+                        input_types=[graph.intent],
+                        output_type='relation_frame',
+                        description='Retrieved from SQLite operator memory.',
+                        confidence=float(hit.get('support_score', 0.55)),
+                        provenance=['memory_operator_store'],
+                    )
+                )
+                existing_names.add(hit['operator_name'])
+        if premise_hits or operator_hits:
+            graph.audit_trace.append('sqlite premise/operator memory hints applied')
+        return graph
+
+    def _store_runtime_memory(self, graph: StructuredMeaningGraph) -> None:
+        if self.memory_store is None:
+            return
+        source = self.memory_source or 'runtime'
+        self.memory_store.upsert_graph(graph, source=source, split='runtime')
+        self.memory_store.upsert_premise_operator_memory(graph, source=source, split='runtime')
 
     def _attach_memory_hints(self, graph: StructuredMeaningGraph, similar_graphs: List[StructuredMeaningGraph]) -> StructuredMeaningGraph:
         if not similar_graphs:
@@ -396,6 +518,342 @@ class StructuredMeaningPipeline:
         )
         return graph
 
+
+    def _apply_analogy_guidance(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        if not graph.analogical_matches:
+            return graph
+        graph = self._apply_analogy_aware_planning(graph)
+        graph = self._apply_analogy_aware_operator_priorities(graph)
+        graph = self._apply_analogy_aware_verifier(graph)
+        return graph
+
+    def _apply_analogy_aware_planning(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        requirement_support = self._analogy_requirement_support(graph)
+        if not requirement_support:
+            return graph
+        plan_weight = self.analogy_policy.model.plan_guard_weight if self.analogy_policy is not None else 1.0
+        if not any(step.id == 'analogy_requirement_guard' for step in graph.plan):
+            requirement_labels = ', '.join(concept_label(item) for item in list(requirement_support.keys())[:3])
+            graph.plan.insert(
+                0,
+                PlanStep(
+                    id='analogy_requirement_guard',
+                    action=f"Recall similar cases and verify {requirement_labels} before direct execution.",
+                    rationale=f'Several structurally similar cases shared the same prerequisite pattern and failed when it was skipped (weight={plan_weight:.2f}).',
+                    requires=list(requirement_support.keys())[:3],
+                ),
+            )
+        if len(graph.analogical_matches) >= 2 and not any(step.id == 'analogy_compare_cases' for step in graph.plan):
+            graph.plan.insert(
+                1,
+                PlanStep(
+                    id='analogy_compare_cases',
+                    action='Compare recalled cases to separate shared constraints from surface wording differences.',
+                    rationale='Multiple analogies are available, so the plan should preserve the common structure rather than copy a single example.',
+                ),
+            )
+        note = 'analogy-aware planning: inserted prerequisite guard from structurally similar cases'
+        if note not in graph.audit_trace:
+            graph.audit_trace.append(note)
+        return graph
+
+    def _apply_analogy_aware_operator_priorities(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        family_support: Dict[str, float] = {}
+        weight = self.analogy_policy.model.operator_priority_weight if self.analogy_policy is not None else 0.7
+        for item in graph.analogical_matches:
+            for family in item.shared_operator_families:
+                family_support[family] = family_support.get(family, 0.0) + float(item.score)
+        if not family_support:
+            return graph
+        boosted: List[str] = []
+        for candidate in graph.induced_operators:
+            support = family_support.get(candidate.family, 0.0)
+            if support <= 0.0:
+                continue
+            candidate.confidence = round(min(0.99, candidate.confidence + min(0.16, 0.05 * support * weight)), 2)
+            tag = f'analogy_policy:operator_priority:{round(support, 2)}'
+            if tag not in candidate.provenance:
+                candidate.provenance.append(tag)
+            boosted.append(candidate.family)
+        if boosted:
+            note = 'analogy-aware operator priorities: boosted families from learned analogy policy'
+            if note not in graph.audit_trace:
+                graph.audit_trace.append(note)
+        return graph
+
+    def _apply_analogy_aware_verifier(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        requirement_support = self._analogy_requirement_support(graph)
+        if not requirement_support:
+            return graph
+
+        verifier_weight = self.analogy_policy.model.verifier_weight if self.analogy_policy is not None else 1.0
+        strengthened_premises: List[str] = []
+        for item in graph.premise_validations:
+            support = requirement_support.get(item.premise, 0)
+            if support <= 0 or item.status not in {'missing', 'unsupported', 'uncertain'}:
+                continue
+            item.support_score = round(min(0.99, item.support_score + min(0.22, 0.04 * support * verifier_weight)), 2)
+            reason = f'Analogical memory found {support} structurally similar cases that also depended on {concept_label(item.premise)}.'
+            if reason not in item.rationale:
+                item.rationale = (item.rationale + ' ' + reason).strip()
+            strengthened_premises.append(item.premise)
+
+        action_requirements = {
+            'walk_without_car': 'vehicle_present',
+            'insert_without_opening': 'open_access',
+            'retrieve_without_opening': 'open_access',
+            'pour_without_uncapping': 'open_access',
+            'proceed_without_opening': 'open_access',
+            'recompute_each_query': 'subquadratic_complexity',
+        }
+        strengthened_checks: List[str] = []
+        for item in graph.goal_preservation_checks:
+            required_premise = action_requirements.get(item.action)
+            support = requirement_support.get(required_premise or '', 0)
+            if support <= 0 or item.status not in {'risk_high', 'conditionally_valid'}:
+                continue
+            item.confidence = round(min(0.99, item.confidence + min(0.16, 0.03 * support * verifier_weight)), 2)
+            note = f'Analogical memory recalled {support} structurally similar cases that failed without {concept_label(required_premise)}.'
+            if note not in item.rationale:
+                item.rationale = (item.rationale + ' ' + note).strip()
+            strengthened_checks.append(item.action)
+
+        for premise, support in requirement_support.items():
+            if premise not in graph.missing_premises:
+                continue
+            warning = f'analogy verifier: {support} similar cases point to {concept_label(premise)} as a recurring prerequisite.'
+            if warning not in graph.warnings:
+                graph.warnings.append(warning)
+
+        if strengthened_premises or strengthened_checks:
+            note = 'analogy-aware verifier: strengthened premise and goal-risk checks from recalled cases'
+            if note not in graph.audit_trace:
+                graph.audit_trace.append(note)
+        return graph
+
+    @staticmethod
+    def _analogy_requirement_support(graph: StructuredMeaningGraph) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for item in graph.analogical_matches:
+            if item.analogy_type not in {'goal_premise_analogy', 'failure_analogy', 'operator_analogy'}:
+                continue
+            for premise in item.shared_requirements:
+                counts[premise] = counts.get(premise, 0) + 1
+        return counts
+
+    def _prepare_multimodal_graph(
+        self,
+        query: str,
+        source_context: str = "",
+        visual_input: Any | None = None,
+        base_graph: StructuredMeaningGraph | None = None,
+    ) -> StructuredMeaningGraph:
+        graph = deepcopy(base_graph) if base_graph is not None else self.heuristic.extract(query)
+        graph.query = query
+        graph.source_context = source_context or graph.source_context
+        if not any(node.id == "question" for node in graph.nodes):
+            graph.add_node(Node(id="question", label=query, kind="query", attributes={"text": query}, provenance=["pipeline:query"]))
+        if source_context.strip():
+            graph.domain = graph.domain if graph.domain != "general" else "document_grounded_reasoning"
+        if visual_input is not None:
+            graph = self._merge_visual_world(graph, visual_input)
+        return graph
+
+    def _apply_unified_parser_priors(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        if self.unified_parser is None:
+            return graph
+        return self.unified_parser.enrich(graph)
+
+    def _attach_document_grounding_context(self, graph: StructuredMeaningGraph) -> StructuredMeaningGraph:
+        if not graph.source_context.strip():
+            return graph
+        graph.add_node(
+            Node(
+                id="source_document",
+                label="source_document",
+                kind="document",
+                attributes={"pdf_like": self._looks_like_pdf_context(graph.source_context)},
+                provenance=["document:source_context"],
+            )
+        )
+        graph.add_edge(Edge(source="question", relation="USES_CONTEXT", target="source_document", confidence=0.92, provenance=["document:source_context"]))
+        chunks = split_context_into_chunks(graph.source_context)
+        for index, chunk in enumerate(chunks, start=1):
+            graph.add_node(
+                Node(
+                    id=chunk.chunk_id,
+                    label=chunk.text[:96],
+                    kind="evidence",
+                    attributes={"text": chunk.text, "source": chunk.source, "modality": "document"},
+                    provenance=["document:chunk"],
+                )
+            )
+            graph.add_edge(Edge(source="source_document", relation="HAS_EVIDENCE", target=chunk.chunk_id, confidence=0.9, provenance=["document:chunk"]))
+            if index <= 2:
+                graph.add_edge(Edge(source="question", relation="GROUNDED_BY", target=chunk.chunk_id, confidence=0.74, provenance=["document:grounding_context"]))
+        note = f"document grounding context attached: {len(chunks)} chunks"
+        if note not in graph.audit_trace:
+            graph.audit_trace.append(note)
+        return graph
+
+    @staticmethod
+    def _looks_like_pdf_context(text: str) -> bool:
+        lowered = text.lower()
+        return any(token in lowered for token in ["page ", "section", "appendix", ".pdf", "figure ", "table "])
+
+    def _merge_visual_world(self, graph: StructuredMeaningGraph, visual_input: Any) -> StructuredMeaningGraph:
+        parser = self._visual_parser_instance()
+        world, observation = parser.parse(visual_input)
+        graph.domain = graph.domain if graph.domain != "general" else "multimodal_reasoning"
+        graph.add_node(Node(id="visual_scene", label="visual_scene", kind="scene", attributes={"source": observation.metadata.get("source", "vision")}, provenance=["multimodal:vision_scene"]))
+        graph.add_edge(Edge(source="question", relation="CONDITIONS_ON", target="visual_scene", confidence=0.88, provenance=["multimodal:vision_scene"]))
+        for entity in world.entities:
+            graph.add_node(
+                Node(
+                    id=str(entity.id),
+                    label=str(entity.label),
+                    kind=str(entity.entity_type or "object"),
+                    attributes=dict(entity.attributes),
+                    provenance=[f"multimodal:{entity.modality}_entity"],
+                )
+            )
+        for relation in world.relations:
+            graph.add_edge(
+                Edge(
+                    source=str(relation.source),
+                    relation=str(relation.relation),
+                    target=str(relation.target),
+                    confidence=float(relation.confidence),
+                    attributes=dict(relation.attributes),
+                    provenance=[f"multimodal:{relation.modality}_relation"],
+                )
+            )
+        existing_names = {candidate.name for candidate in graph.induced_operators}
+        for operator in world.operators:
+            if operator.name in existing_names:
+                continue
+            graph.induced_operators.append(
+                OperatorCandidate(
+                    name=str(operator.name),
+                    family=str(operator.name if str(operator.name).endswith("_OPERATOR") else f"VISUAL_{operator.axis.upper()}"),
+                    arity=1,
+                    input_types=["visual_structure", graph.intent],
+                    output_type="visual_relation_frame",
+                    description=str(operator.description),
+                    examples=[str(operator.axis)],
+                    confidence=round(float(operator.confidence), 2),
+                    provenance=[f"multimodal:{operator.source_modality}_operator"],
+                )
+            )
+            existing_names.add(operator.name)
+        for goal in world.goals:
+            if goal not in graph.hidden_goals:
+                graph.hidden_goals.append(goal)
+        for item in world.inferred_steps[:3]:
+            if item not in graph.creative_alternatives:
+                graph.creative_alternatives.append(item)
+        for item in world.constraints[:4]:
+            if item not in graph.warnings:
+                graph.warnings.append(item)
+        self._merge_visual_premise_support(graph, world, observation)
+        self._attach_visual_grounding_context(graph, world, observation)
+        for item in world.audit_trace[:6]:
+            if item not in graph.audit_trace:
+                graph.audit_trace.append(item)
+        for item in world.warnings[:4]:
+            if item not in graph.warnings:
+                graph.warnings.append(item)
+        note = f"multimodal merge: fused {len(world.entities)} visual entities and {len(world.operators)} operators"
+        if note not in graph.audit_trace:
+            graph.audit_trace.append(note)
+        return graph
+
+    def _merge_visual_premise_support(self, graph: StructuredMeaningGraph, world, observation) -> None:
+        operator_names = {str(item.name).upper() for item in world.operators}
+        state_values = {str(item.get("value", item.get("state", ""))).upper() for item in observation.states if isinstance(item, dict)}
+        if operator_names & {"ACCESS_PORT_OPERATOR", "CONTAINER_ACCESS_OPERATOR", "CONTROLLED_ACCESS_OPERATOR", "OPENABLE"}:
+            if "OPEN" in state_values:
+                if "open_access" not in graph.satisfied_premises:
+                    graph.satisfied_premises.append("open_access")
+            elif "open_access" not in graph.required_premises and "open_access" not in graph.satisfied_premises:
+                graph.required_premises.append("open_access")
+        if operator_names & {"CONTAINER_BODY_OPERATOR", "MANIPULABLE_CONTAINER_OPERATOR", "CARRIABLE_CONTAINER_OPERATOR"}:
+            if "available_space" not in graph.satisfied_premises:
+                graph.satisfied_premises.append("available_space")
+        if operator_names & {"ATTACHED_GRASP_OPERATOR", "MANIPULABLE_CONTAINER_OPERATOR"}:
+            if "manipulable_grasp" not in graph.satisfied_premises:
+                graph.satisfied_premises.append("manipulable_grasp")
+        for premise in list(dict.fromkeys(graph.satisfied_premises)):
+            if premise in graph.required_premises:
+                graph.required_premises = [item for item in graph.required_premises if item != premise]
+            if premise in graph.missing_premises:
+                graph.missing_premises = [item for item in graph.missing_premises if item != premise]
+
+    def _attach_visual_grounding_context(self, graph: StructuredMeaningGraph, world, observation) -> None:
+        candidates = self._visual_grounding_candidates(graph, world)
+        if not candidates:
+            return
+        source = str(observation.metadata.get("source", "vision"))
+        for index, entity in enumerate(candidates, start=1):
+            evidence_id = f"visual_evidence_{index:03d}_{entity.id}"
+            text = self._visual_evidence_text(entity)
+            graph.add_node(
+                Node(
+                    id=evidence_id,
+                    label=text[:96],
+                    kind="evidence",
+                    attributes={"text": text, "source": source, "modality": "vision", "entity_id": str(entity.id)},
+                    provenance=["multimodal:vision_evidence"],
+                )
+            )
+            graph.add_edge(Edge(source="visual_scene", relation="HAS_EVIDENCE", target=evidence_id, confidence=0.82, provenance=["multimodal:vision_evidence"]))
+            graph.add_edge(Edge(source="question", relation="GROUNDED_BY", target=evidence_id, confidence=0.76, provenance=["multimodal:vision_grounding"]))
+        note = f"visual grounding context attached: {len(candidates)} evidence nodes"
+        if note not in graph.audit_trace:
+            graph.audit_trace.append(note)
+
+    def _visual_grounding_candidates(self, graph: StructuredMeaningGraph, world, limit: int = 4):
+        query_tokens = set(re.findall(r"[0-9a-z_]+", graph.query.lower()))
+        scored = []
+        for entity in world.entities:
+            haystack_parts = [str(entity.id), str(entity.label), str(entity.entity_type)]
+            haystack_parts.extend(str(value) for value in entity.attributes.values())
+            haystack = " ".join(haystack_parts).lower()
+            score = float(sum(1 for token in query_tokens if token and token in haystack))
+            if entity.entity_type in {"part", "container", "object", "state"}:
+                score += 0.5
+            if any(keyword in haystack for keyword in ["handle", "opening", "drawer", "cabinet", "door", "zipper", "lid", "bottle"]):
+                score += 1.5
+            if entity.attributes.get("structural_role"):
+                score += 1.0
+            scored.append((score, str(entity.id), entity))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        selected = [entity for score, _entity_id, entity in scored if score > 0][:limit]
+        if selected:
+            return selected
+        return [entity for _score, _entity_id, entity in scored[:limit]]
+
+    @staticmethod
+    def _visual_evidence_text(entity) -> str:
+        parts = [str(entity.label or entity.id)]
+        role = entity.attributes.get("structural_role")
+        if role:
+            parts.append(f"role={role}")
+        state = entity.attributes.get("value") or entity.attributes.get("state")
+        if state:
+            parts.append(f"state={state}")
+        parent = entity.attributes.get("part_of")
+        if parent:
+            parts.append(f"part_of={parent}")
+        return "visual evidence: " + ", ".join(parts)
+
+    def _visual_parser_instance(self):
+        if self._visual_parser is None:
+            from .vlso.visual_parser import VLSOVisualParser
+
+            self._visual_parser = VLSOVisualParser()
+        return self._visual_parser
+
     def _build_graph_from_llm(self, query: str, raw: Dict[str, Any]) -> StructuredMeaningGraph:
         graph = StructuredMeaningGraph(query=query, intent=raw.get("intent", "generic_reasoning"))
         for entity in raw.get("entities", []):
@@ -484,3 +942,9 @@ class StructuredMeaningPipeline:
             )
         )
         return steps
+
+
+
+
+
+

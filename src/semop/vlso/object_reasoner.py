@@ -62,6 +62,7 @@ class VisualObjectReasoner:
             if predictive_result.bindings:
                 observation.metadata['predictive_operator_priors'] = [item.model_dump() for item in predictive_result.bindings]
         structural_operators = [item.model_dump() for item in structural_bindings]
+        self._inject_real_image_archetypes(candidates, inferred_parts, inferred_affordances, inferred_constraints)
         for candidate in candidates:
             predictions = self.classifier.predict(candidate.features, limit=4, threshold=0.58)
             if predictions:
@@ -229,6 +230,67 @@ class VisualObjectReasoner:
             if is_grasp_like:
                 inferred_affordances.append({'subject': subject, 'value': 'TOOL_CONTROL_PART'})
 
+    def _inject_real_image_archetypes(
+        self,
+        candidates,
+        inferred_parts: List[dict],
+        inferred_affordances: List[dict],
+        inferred_constraints: List[str],
+    ) -> None:
+        children_by_parent: dict[str, list] = {}
+        for candidate in candidates:
+            if candidate.parent:
+                children_by_parent.setdefault(candidate.parent, []).append(candidate)
+        for candidate in candidates:
+            features = candidate.features
+            if features.get('is_dominant', 0.0) >= 1.0 and (
+                features.get('large_region', 0.0) >= 1.0
+                or features.get('rectilinear_bias', 0.0) >= 0.45
+                or features.get('hole_count_norm', 0.0) > 0.0
+            ):
+                inferred_affordances.append({'subject': candidate.subject, 'value': 'STRUCTURAL_CONTAINER_CANDIDATE'})
+                inferred_affordances.append({'subject': candidate.subject, 'value': 'HAS_INTERIOR'})
+                inferred_constraints.append('container_like_object_detected')
+        for parent, children in children_by_parent.items():
+            opening_like: list[str] = []
+            grasp_like: list[str] = []
+            for child in children:
+                features = child.features
+                opening_rule = (
+                    features.get('explicit_opening_hint', 0.0) >= 1.0
+                    or features.get('top_strip_candidate', 0.0) >= 1.0
+                    or (features.get('boundary_attached', 0.0) >= 1.0 and features.get('near_top_band', 0.0) >= 1.0 and features.get('horizontal_elongation', 0.0) >= 2.0)
+                    or features.get('hole_count_norm', 0.0) > 0.0
+                )
+                control_rule = (
+                    features.get('explicit_control_hint', 0.0) >= 1.0
+                    or features.get('side_strip_candidate', 0.0) >= 1.0
+                    or (features.get('boundary_attached', 0.0) >= 1.0 and features.get('near_side_band', 0.0) >= 1.0 and max(features.get('vertical_elongation', 0.0), features.get('horizontal_elongation', 0.0)) >= 1.8)
+                )
+                grasp_rule = (
+                    features.get('explicit_grasp_hint', 0.0) >= 1.0
+                    or features.get('side_strip_candidate', 0.0) >= 1.0
+                    or (features.get('near_side_band', 0.0) >= 1.0 and max(features.get('vertical_elongation', 0.0), features.get('horizontal_elongation', 0.0)) >= 1.8)
+                    or (features.get('compactness', 0.0) <= 0.5 and features.get('small_region', 0.0) >= 1.0)
+                )
+                if opening_rule:
+                    opening_like.append(child.subject)
+                    inferred_affordances.append({'subject': child.subject, 'value': 'ACCESS_OPENING_CANDIDATE'})
+                    inferred_constraints.append('opening_candidate_detected')
+                if control_rule:
+                    inferred_affordances.append({'subject': child.subject, 'value': 'ACCESS_CONTROL_PART'})
+                    inferred_constraints.append('closure_part_detected')
+                if grasp_rule:
+                    grasp_like.append(child.subject)
+                    inferred_affordances.append({'subject': child.subject, 'value': 'GRASPABLE_PART'})
+                    inferred_affordances.append({'subject': child.subject, 'value': 'HANDLE_CANDIDATE'})
+                    inferred_constraints.append('handle_like_part_detected')
+                if opening_rule or control_rule or grasp_rule:
+                    inferred_parts.append({'parent': parent, 'child': child.subject})
+            if opening_like and grasp_like:
+                inferred_affordances.append({'subject': parent, 'value': 'ACCESSIBLE_INTERIOR_PATH'})
+                inferred_constraints.append('controlled_access_structure_detected')
+
     def _apply_operator_match(
         self,
         metadata: dict,
@@ -288,7 +350,7 @@ class VisualObjectReasoner:
             signature.append('BOUNDARY_ATTACHED')
         if features.get('near_top_band', 0.0) >= 1.0:
             signature.append('TOP_BAND')
-        if features.get('near_side_band', 0.0) >= 1.0:
+        if features.get('near_side_band', 0.0) >= 1.0 and features.get('near_top_band', 0.0) < 1.0:
             signature.append('SIDE_BAND')
         if features.get('horizontal_elongation', 0.0) >= 2.3:
             signature.append('HORIZONTAL_ELONGATION')
@@ -304,6 +366,12 @@ class VisualObjectReasoner:
         features = candidate.features
         if any(token in upper for token in {"ZIPPER", "OPENING", "STRAP", "HANDLE", "GRASP"}):
             if not candidate.parent and features.get("touches_border", 0.0) >= 1.0:
-                if features.get("area_ratio", 0.0) <= 0.03:
+                if features.get("area_ratio", 0.0) <= 0.03 and features.get('segmentation_confidence', 0.0) < 0.55:
                     return False
+            if 'STRAP' in upper and features.get('top_strip_candidate', 0.0) >= 1.0 and features.get('explicit_grasp_hint', 0.0) < 1.0:
+                return False
+            if 'ZIPPER' in upper and features.get('top_strip_candidate', 0.0) < 1.0 and features.get('explicit_control_hint', 0.0) < 1.0 and features.get('hole_count_norm', 0.0) <= 0.0:
+                return False
+            if 'HANDLE' in upper and not candidate.parent and features.get('small_region', 0.0) >= 1.0:
+                return False
         return True

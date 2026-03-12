@@ -320,6 +320,13 @@ class CompetitiveProgrammingReasoner:
         return structure
 
 
+
+    def parse_problem(self, query: str) -> ContestProblemStructure | None:
+        normalized = " ".join(query.lower().split())
+        if not normalized:
+            return None
+        return self._structure_problem(normalized)
+
     @staticmethod
     def _contains_trigger(normalized: str, trigger: str) -> bool:
         if " " in trigger:

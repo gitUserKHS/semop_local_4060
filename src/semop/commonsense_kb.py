@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from typing import Any, Dict, Iterable, List
@@ -80,6 +80,33 @@ CONCEPT_ALIASES = {
     "검증된 라벨 일치": "verified_label_match",
     "verified label match": "verified_label_match",
     "worker": "worker",
+    "??": "drawer",
+    "drawer": "drawer",
+    "???": "cabinet",
+    "cabinet": "cabinet",
+    "?": "door",
+    "door": "door",
+    "??": "box",
+    "box": "box",
+    "?": "bottle",
+    "bottle": "bottle",
+    "jar": "jar",
+    "???": "jar",
+    "bin": "bin",
+    "pouch": "pouch",
+    "???": "pouch",
+    "suitcase": "suitcase",
+    "???": "suitcase",
+    "handle": "handle",
+    "???": "handle",
+    "cap": "cap",
+    "??": "cap",
+    "lid": "lid",
+    "??": "knob",
+    "knob": "knob",
+    "file": "file",
+    "folder": "folder",
+    "document": "document",
 }
 
 
@@ -336,3 +363,13 @@ def match_concepts(query: str) -> List[str]:
         if alias in lowered and concept_id not in matches:
             matches.append(concept_id)
     return matches
+
+
+def concept_family(concept_id: str) -> str:
+    data = lookup_concept(concept_id)
+    kind = str(data.get("kind", "concept"))
+    if kind in {"container", "service_place", "vehicle", "barrier", "closure", "part", "precondition", "state"}:
+        return kind
+    if 'container' in kind:
+        return 'container'
+    return kind or 'concept'

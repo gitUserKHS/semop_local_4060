@@ -20,6 +20,7 @@ class VlsoEvalCase:
     forbidden_terms: list[str] | None = None
     expected_operators: list[str] | None = None
     expected_operator_bindings: list[dict[str, str]] | None = None
+    expected_support_premises: list[str] | None = None
 
     def model_dump(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +35,7 @@ class VlsoEvalResult:
     grounded_answer_accuracy: float
     operator_recall: float
     operator_binding_recall: float
+    operator_premise_support: float
     answer_text: str
 
     def model_dump(self) -> dict[str, Any]:
@@ -49,6 +51,7 @@ class VlsoEvalSummary:
     grounded_answer_accuracy: float
     operator_recall: float
     operator_binding_recall: float
+    operator_premise_support: float
     results: list[dict[str, Any]]
 
     def model_dump(self) -> dict[str, Any]:
@@ -70,9 +73,13 @@ class VlsoGroundedEvaluator:
             visual_json = payload.get('visual_json')
             image_path = payload.get('image_path')
             if isinstance(visual_json, str) and visual_json and not Path(visual_json).is_absolute():
-                visual_json = str((base / visual_json).resolve())
+                primary = (base / visual_json).resolve()
+                fallback = (Path.cwd() / visual_json).resolve()
+                visual_json = str(primary if primary.exists() else fallback)
             if isinstance(image_path, str) and image_path and not Path(image_path).is_absolute():
-                image_path = str((base / image_path).resolve())
+                primary = (base / image_path).resolve()
+                fallback = (Path.cwd() / image_path).resolve()
+                image_path = str(primary if primary.exists() else fallback)
             output.append(
                 VlsoEvalCase(
                     case_id=str(payload.get('case_id', f'case_{len(output)+1}')),
@@ -85,6 +92,7 @@ class VlsoGroundedEvaluator:
                     forbidden_terms=[str(item) for item in payload.get('forbidden_terms', [])],
                     expected_operators=[str(item) for item in payload.get('expected_operators', [])],
                     expected_operator_bindings=[dict(item) for item in payload.get('expected_operator_bindings', [])],
+                    expected_support_premises=[str(item) for item in payload.get('expected_support_premises', [])],
                 )
             )
         return output
@@ -103,6 +111,7 @@ class VlsoGroundedEvaluator:
                     grounded_answer_accuracy=self._grounded_answer_accuracy(case, answer.answer_text),
                     operator_recall=self._operator_recall(case, world.model_dump()),
                     operator_binding_recall=self._operator_binding_recall(case, world.model_dump()),
+                    operator_premise_support=self._operator_premise_support(case, world.model_dump()),
                     answer_text=answer.answer_text,
                 )
             )
@@ -115,6 +124,7 @@ class VlsoGroundedEvaluator:
             grounded_answer_accuracy=round(sum(item.grounded_answer_accuracy for item in results) / total, 4),
             operator_recall=round(sum(item.operator_recall for item in results) / total, 4),
             operator_binding_recall=round(sum(item.operator_binding_recall for item in results) / total, 4),
+            operator_premise_support=round(sum(item.operator_premise_support for item in results) / total, 4),
             results=[item.model_dump() for item in results],
         )
 
@@ -213,6 +223,25 @@ class VlsoGroundedEvaluator:
             if isinstance(item, dict)
         }
         hits = sum(1 for item in expected if item in actual)
+        return round(hits / len(expected), 4)
+
+    @staticmethod
+
+    @staticmethod
+    def _operator_premise_support(case: VlsoEvalCase, world: dict[str, Any]) -> float:
+        expected = [item.lower() for item in (case.expected_support_premises or [])]
+        if not expected:
+            return 1.0
+        actual = {str(item.get('name', '')).upper() for item in world.get('operators', []) if isinstance(item, dict)}
+        actual |= {str(item.get('operator_name', '')).upper() for item in world.get('metadata', {}).get('structural_operator_bindings', []) if isinstance(item, dict)}
+        hits = 0
+        for premise in expected:
+            if premise == 'open_access' and actual & {'ACCESS_PORT_OPERATOR', 'ACCESS_CONTROL_OPERATOR', 'CONTAINER_ACCESS_OPERATOR', 'CONTROLLED_ACCESS_OPERATOR'}:
+                hits += 1
+            elif premise == 'available_space' and actual & {'CONTAINER_BODY_OPERATOR', 'CONTAINER_ACCESS_OPERATOR'}:
+                hits += 1
+            elif premise == 'manipulable_grasp' and actual & {'ATTACHED_GRASP_OPERATOR', 'MANIPULABLE_CONTAINER_OPERATOR'}:
+                hits += 1
         return round(hits / len(expected), 4)
 
     @staticmethod

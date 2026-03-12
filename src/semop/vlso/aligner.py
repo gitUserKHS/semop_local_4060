@@ -56,17 +56,58 @@ class VLSOAligner:
 
     def _align_hidden_premises(self, world: SharedWorldModel) -> None:
         hidden_premises = world.metadata.get('hidden_premises', []) if isinstance(world.metadata, dict) else []
+        required_premises = world.metadata.get('required_premises', []) if isinstance(world.metadata, dict) else []
+        premise_validations = world.metadata.get('premise_validations', []) if isinstance(world.metadata, dict) else []
         goal_checks = world.metadata.get('goal_preservation_checks', []) if isinstance(world.metadata, dict) else []
+        clarification_score = float(world.metadata.get('clarification_score', 0.0)) if isinstance(world.metadata, dict) else 0.0
+        clarification_reasons = world.metadata.get('clarification_reasons', []) if isinstance(world.metadata, dict) else []
         functors = world.metadata.get('functor_hypotheses', []) if isinstance(world.metadata, dict) else []
         operator_names = {item.name for item in world.operators}
+        hidden_goals = {str(item) for item in world.goals}
         if hidden_premises:
             world.audit_trace.append('cross-modal alignment: hidden premises projected into shared world model')
+        for premise in required_premises:
+            if premise not in world.constraints:
+                world.constraints.append(premise)
         if any(item.get('name') == 'VisualStructureToActionFunctor' for item in functors if isinstance(item, dict)):
             if 'ACCESS_PORT_OPERATOR' in operator_names and 'ACCESS_CONTROL_OPERATOR' in operator_names:
                 world.inferred_steps.append('Visual structure and language preconditions both indicate an access-first action sequence.')
                 if 'cross_modal_access_alignment' not in world.constraints:
                     world.constraints.append('cross_modal_access_alignment')
+        if any(item.get('premise') == 'open_access' and item.get('status') != 'contradicted' for item in premise_validations if isinstance(item, dict)):
+            if 'open_access_required' not in world.constraints:
+                world.constraints.append('open_access_required')
+        if any(item.get('premise') == 'vehicle_present' and item.get('status') == 'supported' for item in premise_validations if isinstance(item, dict)):
+            world.warnings.append('Goal-preservation alignment: service success still depends on the target vehicle being present.')
         if any(item.get('action') == 'walk_without_car' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
             world.warnings.append('Hidden-goal check: movement without the target object may fail the real service goal.')
         if any(item.get('action') == 'insert_without_opening' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
             world.warnings.append('Hidden-goal check: insertion without opening access may fail the containment goal.')
+        if any(item.get('action') == 'retrieve_without_opening' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
+            world.warnings.append('Hidden-goal check: retrieval without opening access may fail the access goal.')
+        if any(item.get('action') == 'pour_without_uncapping' and item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
+            world.warnings.append('Hidden-goal check: pouring without removing the cap or lid may fail the access goal.')
+        if 'retrieve_item_from_cabinet_goal' in hidden_goals and {'ACCESS_CONTROL_OPERATOR', 'ACCESS_PORT_OPERATOR'} & operator_names:
+            world.inferred_steps.append('Open the cabinet access-control part before retrieving the item inside.')
+            if 'cabinet_access_alignment' not in world.constraints:
+                world.constraints.append('cabinet_access_alignment')
+        access_goal_labels = {
+            'retrieve_item_from_box_goal': 'Open the box access-control part before retrieving the item inside.',
+            'retrieve_item_from_bin_goal': 'Open or lift the bin cover before retrieving the item inside.',
+            'retrieve_item_from_pouch_goal': 'Open the pouch access-control part before retrieving the item inside.',
+            'retrieve_item_from_suitcase_goal': 'Open the suitcase access-control part before retrieving the item inside.',
+        }
+        for goal_name, step_text in access_goal_labels.items():
+            if goal_name in hidden_goals and {'ACCESS_CONTROL_OPERATOR', 'ACCESS_PORT_OPERATOR'} & operator_names:
+                world.inferred_steps.append(step_text)
+                constraint_name = goal_name.replace('retrieve_item_from_', '').replace('_goal', '') + '_access_alignment'
+                if constraint_name not in world.constraints:
+                    world.constraints.append(constraint_name)
+        if 'pour_from_bottle_goal' in hidden_goals and {'ACCESS_CONTROL_OPERATOR', 'ACCESS_PORT_OPERATOR'} & operator_names:
+            world.inferred_steps.append('Remove or open the cap/control part before pouring from the container.')
+            if 'capped_access_alignment' not in world.constraints:
+                world.constraints.append('capped_access_alignment')
+        if clarification_score >= 0.5:
+            world.warnings.append(f'Clarification recommended: ambiguity remains high (score={clarification_score:.2f}).')
+            for reason in clarification_reasons[:2]:
+                world.audit_trace.append('clarification cue: ' + str(reason))

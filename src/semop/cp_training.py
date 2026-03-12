@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 from typing import Iterable, List
 
@@ -40,6 +41,9 @@ class CpParserTrainConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_target_modules: List[str] | None = None
+    resume_from_checkpoint: str | None = None
+    save_steps: int = 25
+    save_total_limit: int = 2
 
     def model_dump(self) -> dict:
         return asdict(self)
@@ -140,6 +144,42 @@ def load_cp_sft_records(path: str | Path) -> List[CpSftRecord]:
 
 
 class CpParserTrainingScaffold:
+    @staticmethod
+    def _resolve_local_model_source(model_name_or_path: str) -> str:
+        source_path = Path(model_name_or_path)
+        if source_path.exists():
+            return str(source_path)
+        if "/" not in model_name_or_path:
+            return model_name_or_path
+        owner, name = model_name_or_path.split("/", 1)
+        snapshot_root = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{owner}--{name}" / "snapshots"
+        if not snapshot_root.exists():
+            return model_name_or_path
+        snapshots = [candidate for candidate in snapshot_root.iterdir() if candidate.is_dir()]
+        if not snapshots:
+            return model_name_or_path
+        snapshots.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
+        return str(snapshots[0])
+
+    @staticmethod
+    def find_latest_checkpoint(output_dir: str | Path) -> str | None:
+        base = Path(output_dir)
+        if not base.exists():
+            return None
+        checkpoints = []
+        for child in base.iterdir():
+            if not child.is_dir() or not child.name.startswith("checkpoint-"):
+                continue
+            try:
+                step = int(child.name.split("-", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            checkpoints.append((step, child))
+        if not checkpoints:
+            return None
+        checkpoints.sort(key=lambda item: item[0])
+        return str(checkpoints[-1][1])
+
     def build_examples_from_episode_store(
         self,
         episode_store_path: str | Path,
@@ -230,6 +270,7 @@ class CpParserTrainingScaffold:
             "device_summary": self._device_summary(),
             "train_sft_path": str(train_path),
             "lora_enabled": config.use_lora,
+            "resume_from_checkpoint": config.resume_from_checkpoint,
         }
         if config.dry_run:
             plan_path = output_dir / "training_plan.json"
@@ -274,11 +315,16 @@ class CpParserTrainingScaffold:
                     "labels": input_ids.clone(),
                 }
 
-        tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path, local_files_only=config.local_files_only)
+        model_source = self._resolve_local_model_source(config.model_name_or_path) if config.local_files_only else config.model_name_or_path
+        summary["resolved_model_source"] = model_source
+        if config.local_files_only:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        tokenizer = AutoTokenizer.from_pretrained(model_source, local_files_only=config.local_files_only)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         model = AutoModelForCausalLM.from_pretrained(
-            config.model_name_or_path,
+            model_source,
             local_files_only=config.local_files_only,
         )
         if hasattr(model, "gradient_checkpointing_enable"):
@@ -312,30 +358,45 @@ class CpParserTrainingScaffold:
             model = get_peft_model(model, lora_config)
             summary["lora_target_modules"] = target_modules
         dataset = SftDataset(records, tokenizer, config.max_length)
-        use_cuda = bool(torch.cuda.is_available())
-        args = TrainingArguments(
-            output_dir=str(output_dir),
-            overwrite_output_dir=True,
-            per_device_train_batch_size=config.batch_size,
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            learning_rate=config.learning_rate,
-            max_steps=config.max_steps,
-            warmup_steps=config.warmup_steps,
-            logging_steps=max(1, min(10, config.max_steps)),
-            save_steps=max(1, config.max_steps),
-            save_total_limit=1,
-            report_to=[],
-            fp16=use_cuda,
-            bf16=False,
-            seed=config.seed,
-            remove_unused_columns=False,
-        )
+        training_kwargs = {
+            "output_dir": str(output_dir),
+            "per_device_train_batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
+            "learning_rate": config.learning_rate,
+            "max_steps": config.max_steps,
+            "warmup_steps": config.warmup_steps,
+            "logging_steps": max(1, min(10, config.max_steps)),
+            "save_steps": max(1, config.save_steps),
+            "save_total_limit": max(1, config.save_total_limit),
+            "report_to": [],
+            "fp16": False,
+            "bf16": False,
+            "seed": config.seed,
+            "remove_unused_columns": False,
+        }
+        try:
+            args = TrainingArguments(**training_kwargs, overwrite_output_dir=False)
+        except TypeError:
+            args = TrainingArguments(**training_kwargs)
         trainer = Trainer(model=model, args=args, train_dataset=dataset)
-        trainer.train()
+        trainer.train(resume_from_checkpoint=config.resume_from_checkpoint or None)
         trainer.save_model(str(output_dir / "final_model"))
         tokenizer.save_pretrained(str(output_dir / "final_model"))
+        latest_checkpoint = self.find_latest_checkpoint(output_dir)
+        checkpoint_dirs = []
+        for path_value in output_dir.glob("checkpoint-*"):
+            if not path_value.is_dir():
+                continue
+            try:
+                _ = int(path_value.name.split("-", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            checkpoint_dirs.append(str(path_value))
+        checkpoint_dirs.sort(key=lambda value: int(Path(value).name.split("-", 1)[1]))
         summary["mode"] = "train"
         summary["final_model_dir"] = str(output_dir / "final_model")
+        summary["latest_checkpoint"] = latest_checkpoint
+        summary["checkpoint_dirs"] = checkpoint_dirs
         return summary
 
 

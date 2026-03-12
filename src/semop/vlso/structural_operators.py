@@ -159,11 +159,11 @@ class VisualStructuralOperatorInducer:
                 features.get('boundary_attached', 0.0) >= 1.0
                 or features.get('hole_count_norm', 0.0) > 0.0
                 or features.get('explicit_opening_hint', 0.0) >= 1.0
+                or features.get('top_strip_candidate', 0.0) >= 1.0
             )
             and (
-                features.get('near_top_band', 0.0) >= 1.0
+                features.get('top_strip_candidate', 0.0) >= 1.0
                 or features.get('horizontal_elongation', 0.0) >= 2.1
-                or features.get('relative_area', 0.0) <= 0.18
                 or features.get('hole_count_norm', 0.0) > 0.0
                 or features.get('explicit_opening_hint', 0.0) >= 1.0
             )
@@ -176,6 +176,7 @@ class VisualStructuralOperatorInducer:
             and (
                 features.get('boundary_attached', 0.0) >= 1.0
                 or features.get('segmentation_confidence', 0.0) >= 0.5
+                or features.get('side_strip_candidate', 0.0) >= 1.0
             )
             and (
                 features.get('near_side_band', 0.0) >= 1.0
@@ -183,6 +184,7 @@ class VisualStructuralOperatorInducer:
                 or features.get('horizontal_elongation', 0.0) >= 2.8
                 or features.get('compactness', 0.0) <= 0.42
                 or features.get('explicit_control_hint', 0.0) >= 1.0
+                or features.get('side_strip_candidate', 0.0) >= 1.0
             )
         )
 
@@ -191,6 +193,7 @@ class VisualStructuralOperatorInducer:
         return (
             features.get('explicit_grasp_hint', 0.0) >= 1.0
             or features.get('near_side_band', 0.0) >= 1.0
+            or features.get('side_strip_candidate', 0.0) >= 1.0
             or max(features.get('horizontal_elongation', 0.0), features.get('vertical_elongation', 0.0)) >= 2.4
             or (features.get('segmentation_confidence', 0.0) >= 0.5 and features.get('compactness', 0.0) <= 0.5)
         )
@@ -207,6 +210,8 @@ class VisualStructuralOperatorInducer:
                 or features.get('explicit_opening_hint', 0.0) >= 1.0
                 or features.get('right_angle_count_norm', 0.0) >= 0.3
                 or features.get('parallel_edge_pair_norm', 0.0) >= 0.2
+                or features.get('large_region', 0.0) >= 1.0
+                or features.get('rectilinear_bias', 0.0) >= 0.45
             )
         )
 
@@ -222,7 +227,7 @@ class VisualStructuralOperatorInducer:
             signature.append('BOUNDARY_ATTACHED')
         if features.get('near_top_band', 0.0) >= 1.0:
             signature.append('TOP_BAND')
-        if features.get('near_side_band', 0.0) >= 1.0:
+        if features.get('near_side_band', 0.0) >= 1.0 and features.get('near_top_band', 0.0) < 1.0:
             signature.append('SIDE_BAND')
         if features.get('horizontal_elongation', 0.0) >= 2.3:
             signature.append('HORIZONTAL_ELONGATION')

@@ -13,7 +13,11 @@ At the research level, the longer-term target is broader: learn how logical word
 
 The architectural target is a logical-operator-based intelligence system organized around four axes: operator learning, world-model construction, reusable memory, and verifier loops.
 A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
+The current refactor direction is premise-first: candidate retrieval, premise proposal, and premise validation now precede later answer selection, CP code generation, and cross-modal alignment.
 An operator-algebra layer now also records how higher operators decompose into simpler basis operators and stores category-style functor hypotheses for cross-modal alignment.
+The current premise-first refactor is implemented end-to-end: hidden-premise candidate retrieval, proposal, validation, SQLite premise/operator memory, parser-first CP evaluation, and a shared evaluator snapshot are all wired into the codebase.
+An operator self-evolution loop is now also present: repeated higher-operator decompositions can be mined into evolved operator proposals, utility-scored, retained, and tested on a small cross-domain transfer benchmark.
+A new operator-proposal engine now sits in front of that loop: repeated decomposition and geometry/topology patterns are summarized into model-proposed higher operators, then normalized, merged, and passed to the verifier and transfer bench instead of being accepted directly.
 
 ## What You Can Run Today
 
@@ -45,6 +49,8 @@ An operator-algebra layer now also records how higher operators decompose into s
   - compress labeled concept examples into prototype memory for sample-efficient VLSO learning
 - `tools/vlso/train_visual_operators.py`
   - learn higher-level visual operator prototypes such as container-body, opening-control, and attached-grasp from a few labeled images
+- `src/semop/operator_proposal.py`
+  - propose higher operators from repeated decomposition patterns and geometry/topology signatures before self-evolution validation
 - `tools/vlso/run_geometry_reasoning_pipeline.py`
   - end-to-end geometry visual pipeline for candidates, pseudo labels, concept store, operator store, and grounded QA eval and structural operator recovery eval
 - `tools/vlso/generate_geometry_dataset.py`
@@ -63,9 +69,19 @@ An operator-algebra layer now also records how higher operators decompose into s
 - `tools/eval/evaluate_cp_parser.py`
   - evaluate heuristic, learned, or side-by-side CP parsers on DSL/frame labels
 - `tools/eval/evaluate_hidden_premises.py`
-  - evaluate hidden-goal recovery, critical premise recall, and goal-preservation checks
+  - evaluate hidden-goal recovery, critical premise recall, unsupported-premise precision, and goal-preservation checks
+- `tools/eval/evaluate_semop_stack.py`
+  - run a common evaluation snapshot across hidden premises, CP parser structure, and VLSO grounded QA
+- `tools/eval/evaluate_operator_intelligence_progress.py`
+  - convert the common evaluation snapshot into progress estimates for operator architecture, premise reasoning, world-model quality, and cross-domain transfer
 - `tools/eval/evaluate_operator_algebra.py`
   - evaluate operator decomposition recovery and functor-hypothesis recovery
+- `tools/eval/evaluate_operator_transfer.py`
+  - evaluate evolved operators on a starter cross-domain transfer benchmark
+- `tools/eval/evaluate_visual_signal_operator_impact.py`
+  - compare retained operators before and after ablating symmetry, closure, and axis-alignment geometry signals
+- `tools/eval/compare_operator_proposals.py`
+  - compare heuristic and LLM-backed operator proposal engines on the same graph set
 - `docs/operator_algebra_and_functors.md`
   - explain operator decomposition and functor-hypothesis alignment
 - `tools/ops/learn_feedback_rules.py`
@@ -93,6 +109,7 @@ Current code layout is documented in:
 - `docs/pdf_direction_and_plan_2026_03_10.md`
 - `docs/operator_intelligence_system.md`
 - `docs/operator_intelligence_roadmap.md` and `docs/operator_intelligence_execution_steps.md` and `docs/jepa_relevance_and_integration.md`
+- `docs/operator_intelligence_to_100_plan.md`
 
 Refresh it after structural changes with:
 
@@ -121,6 +138,7 @@ From the easy GUI you can click through:
 - retrain concept and operator stores from approved labels only
 - generate synthetic geometry images
 - generate CP geometry eval/train starter sets
+- run CP LoRA training or resume the latest checkpoint from the easy GUI
 
 ### 2. Run the operations copilot on a single SOP question
 
@@ -370,6 +388,78 @@ Compare VLSO grounded QA before and after approved-cluster retraining:
   --compare-operator-store data\vlso_geometry_pipeline_gui\approved_review_operators.db
 ```
 
+Build a starter real-image VLSO eval set from downloaded family-batch images:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\build_real_image_eval.py ^
+  --records data\vlso_family_batch\family_records.jsonl ^
+  --manifest data\vlso_family_batch\family_download_manifest.jsonl ^
+  --candidate-output data\vlso_family_batch\real_image_eval_candidates.jsonl ^
+  --seed-output examples\vlso_real_image_eval.jsonl ^
+  --limit 24
+```
+
+Run grounded QA on that starter real-image benchmark:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_vlso_grounded_qa.py ^
+  --input examples\vlso_real_image_eval.jsonl ^
+  --mode deep ^
+  --answer-mode structured
+```
+
+This seed benchmark is intentionally difficult. The current run is a gap-finding benchmark and shows that arbitrary internet-image grounding is still weak.
+
+Run a one-command CP LoRA experiment workspace build and dry-run training plan:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace tests\cp_lora_experiment_smoke ^
+  --model local-test-model ^
+  --inputs examples\cp_parser_eval.jsonl ^
+  --execute-train ^
+  --dry-run-train ^
+  --local-files-only ^
+  --max-steps 4
+```
+
+If you replace `local-test-model` with a real local base model, the same command can build train/val bundles, emit SFT files, run LoRA training, and compare learned vs heuristic parsing.
+
+To save checkpoints during training and resume later, add `--save-steps`, `--save-total-limit`, and `--resume-from-checkpoint`:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace data\cp_lora_run ^
+  --model path\to\your_local_base_model ^
+  --inputs examples\cp_parser_eval.jsonl examples\cp_hidden_constraint_eval.jsonl ^
+  --eval-inputs examples\cp_geometry_parser_eval.jsonl ^
+  --execute-train ^
+  --max-steps 200 ^
+  --save-steps 25 ^
+  --save-total-limit 3 ^
+  --resume-from-checkpoint data\cp_lora_run\training_run\checkpoint-100
+```
+
+If you already reviewed `data\vlso_family_batch\real_image_eval_candidates.jsonl`, finalize the approved rows into a gold real-image eval set with:
+
+```bash
+.\.venv312\Scripts\python.exe tools\vlso\finalize_real_image_eval.py ^
+  --candidates data\vlso_family_batch\real_image_eval_candidates.jsonl ^
+  --output examples\vlso_real_image_eval_gold.jsonl
+```
+
+To run the CP LoRA experiment against an extra held-out evaluation set, add `--eval-inputs`:
+
+```bash
+.\.venv312\Scripts\python.exe tools\cp\run_cp_lora_experiment.py ^
+  --workspace data\cp_lora_run ^
+  --model path\to\your_local_base_model ^
+  --inputs examples\cp_parser_eval.jsonl ^
+  --eval-inputs examples\cp_geometry_parser_eval.jsonl ^
+  --execute-train ^
+  --max-steps 200
+```
+
 ### 7. Run a hard-problem analysis
 
 ```bash
@@ -553,4 +643,56 @@ Recent geometry upgrades:
 - CP parsing now recognizes geometry-heavy statements and routes them into `computational_geometry_analysis`
 - CP code generation now includes a geometry template with `Point`, `cross`, `dot`, and orientation-style predicates
 
+## New evaluation paths
 
+- Real-image VLSO reviewed gold set: `examples/vlso_real_image_eval_gold.jsonl`
+- CP hidden-constraint parser bench: `examples/cp_hidden_constraint_eval.jsonl`
+- Script compatibility before/after experiment: `tools/eval/run_premise_compatibility_experiment.py`
+
+Example commands:
+```bash
+python tools\vlso\finalize_real_image_eval.py --candidates data\vlso_family_batch\real_image_eval_candidates.jsonl --output examples\vlso_real_image_eval_gold.jsonl --auto-approve-limit 8
+python tools\eval\evaluate_semop_stack.py --hidden-premises examples\hidden_premise_eval.jsonl --cp-input examples\cp_parser_eval.jsonl --cp-hidden-input examples\cp_hidden_constraint_eval.jsonl --vlso-input examples\vlso_eval.jsonl --vlso-real-image-input examples\vlso_real_image_eval_gold.jsonl
+python tools\eval\run_premise_compatibility_experiment.py --input examples\hidden_premise_eval.jsonl --memory-store data\semop_memory.db --output-model data\script_compatibility_model.json
+```
+
+
+## QLoRA and distillation
+
+Teacher traces for hidden-premise reasoning, CP structuring, and VLSO grounded QA can be exported with `tools/eval/export_teacher_traces.py`. The roadmap is documented in `docs/qlora_distillation_roadmap.md`.
+
+The same exporter also supports operator proposal and self-evolution traces via `--operator-transfer-input examples\operator_transfer_eval.jsonl`.
+
+You can then build a generic operator-learning curriculum and dry-run a small student model:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\build_operator_learning_bundle.py ^
+  --teacher-traces data\teacher_traces.jsonl ^
+  --workspace data\operator_learning_bundle
+```
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\run_operator_training.py ^
+  --workspace data\operator_learning_bundle ^
+  --model Qwen/Qwen2.5-0.5B-Instruct ^
+  --dry-run ^
+  --use-lora
+```
+
+The full workflow is documented in `docs/operator_learning_plan.md`.
+
+To reduce black-box reasoning, SemOp now also compiles hidden-premise and operator-algebra outputs into a deterministic operator program before final response synthesis. This runtime records satisfied facts, missing facts, and goal-risk decisions instead of leaving the whole reasoning path inside the model.
+
+## Overall Understanding Benchmark
+
+Run the broad understanding check across hidden-premise reasoning, CP structuring, CP hidden constraints, starter VLSO, and reviewed real-image VLSO:
+
+```bash
+.\.venv312\Scripts\python.exe tools\eval\evaluate_understanding.py
+```
+
+In the easy GUI, use `5. Geometry starter tools -> Evaluation shortcuts -> Run overall understanding benchmark`.
+
+## Shared Agent Doctrine
+
+All future agent work in this repository should follow `docs/multi_agent_operator_doctrine.md`: recover shared basis operators first, compose higher operators through algebra, and only retain operators that survive verifier and transfer checks.

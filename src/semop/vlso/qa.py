@@ -168,9 +168,9 @@ class VLSOQuestionAnswerer:
             if structural_containers or structural_access or container_entities or part_entities:
                 parts = []
                 if structural_containers:
-                    parts.append('structural containers: ' + ', '.join(structural_containers[:5]))
+                    parts.append('structural containers: ' + ', '.join(self._describe_entity(world, item) for item in structural_containers[:5]))
                 if structural_access:
-                    parts.append('structural access/grasp parts: ' + ', '.join(structural_access[:6]))
+                    parts.append('structural access/grasp parts: ' + ', '.join(self._describe_entity(world, item) for item in structural_access[:6]))
                 if container_entities:
                     parts.append("containers: " + ", ".join(container_entities[:5]))
                 if part_entities:
@@ -198,15 +198,17 @@ class VLSOQuestionAnswerer:
             structural_controls = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') in {'ACCESS_CONTROL_OPERATOR', 'ATTACHED_GRASP_OPERATOR'}]
             structural_containers = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') == 'CONTAINER_BODY_OPERATOR']
             if structural_openings and structural_controls:
-                container_text = structural_containers[0] if structural_containers else 'the container body'
+                container_text = self._describe_entity(world, structural_containers[0]) if structural_containers else 'the container body'
                 chosen_control = next((item for item in structural_controls if item not in structural_openings), structural_controls[0])
-                return 'Structural access path: use ' + chosen_control + ' to reach opening region ' + structural_openings[0] + ' on ' + container_text + '.'
+                return 'Structural access path: use ' + self._describe_entity(world, chosen_control) + ' to reach opening region ' + self._describe_entity(world, structural_openings[0]) + ' on ' + container_text + '.'
             if structural_openings:
-                return 'Most likely structural opening region: ' + ', '.join(structural_openings[:2])
+                return 'Most likely structural opening region: ' + ', '.join(self._describe_entity(world, item) for item in structural_openings[:2])
             if opening_candidates and handle_candidates:
-                return "Most likely access route: interact with " + handle_candidates[0] + " to reach " + opening_candidates[0] + "."
+                return "Most likely access route: interact with " + self._describe_entity(world, handle_candidates[0]) + " to reach " + self._describe_entity(world, opening_candidates[0]) + "."
+            if handle_candidates and structural_containers:
+                return "Likely access-related evidence: " + self._describe_entity(world, handle_candidates[0]) + " is attached to " + self._describe_entity(world, structural_containers[0]) + ", so an opening or access control is likely present nearby."
             if opening_candidates:
-                return "Most likely opening-related part: " + ", ".join(opening_candidates[:2])
+                return "Most likely opening-related part: " + ", ".join(self._describe_entity(world, item) for item in opening_candidates[:2])
             if "ACCESS_OPENING_CANDIDATE" in operator_names or "EDGE_OPENING" in operator_names or "opening_candidate_detected" in constraint_set:
                 return "Likely access path: use the opening candidate near the boundary or top band before inserting or reaching inside."
             if "HAS_INTERIOR" in operator_names or "container_like_object_detected" in constraint_set:
@@ -223,6 +225,18 @@ class VLSOQuestionAnswerer:
 
         if goal_checks and any(item.get('status') == 'risk_high' for item in goal_checks if isinstance(item, dict)):
             top = next(item for item in goal_checks if isinstance(item, dict) and item.get('status') == 'risk_high')
+            if top.get('hidden_goal') == 'retrieve_item_from_cabinet_goal':
+                return 'Hidden-goal risk detected: open the cabinet access-control part before retrieving the item inside.'
+            if top.get('hidden_goal') == 'retrieve_item_from_box_goal':
+                return 'Hidden-goal risk detected: open the box or lid before retrieving the item inside.'
+            if top.get('hidden_goal') == 'retrieve_item_from_bin_goal':
+                return 'Hidden-goal risk detected: open or lift the bin cover before retrieving the item inside.'
+            if top.get('hidden_goal') == 'retrieve_item_from_pouch_goal':
+                return 'Hidden-goal risk detected: open the pouch closure before retrieving the item inside.'
+            if top.get('hidden_goal') == 'retrieve_item_from_suitcase_goal':
+                return 'Hidden-goal risk detected: open the suitcase closure before retrieving the item inside.'
+            if top.get('hidden_goal') == 'pour_from_bottle_goal':
+                return 'Hidden-goal risk detected: remove or open the cap or lid before pouring from the container.'
             return 'Hidden-goal risk detected: ' + top.get('rationale', 'The proposed action may fail the real goal.')
 
         if hidden_premises and any(token in lowered for token in ['why', 'should', 'walk', 'go', 'insert', 'open']):
@@ -234,6 +248,8 @@ class VLSOQuestionAnswerer:
 
         if evidence:
             return "Best grounded answer from the current world model: " + evidence[0]
+        if constraint_set & {'container_like_object_detected', 'opening_candidate_detected', 'handle_like_part_detected'}:
+            return 'There is weak but usable structural evidence of a container, handle, or opening-related part. The scene likely contains an access path, but confidence is limited.'
         return self._weak_evidence_answer()
 
     def _evidence_lines(self, world: SharedWorldModel) -> list[str]:
@@ -300,6 +316,28 @@ class VLSOQuestionAnswerer:
     @staticmethod
     def _weak_evidence_answer() -> str:
         return "The current visual evidence is weak. I need a clearer image, detector output, or a more specific question."
+
+    @staticmethod
+    def _describe_entity(world: SharedWorldModel, entity_id: str) -> str:
+        for entity in world.entities:
+            if entity.id != entity_id:
+                continue
+            labels = entity.attributes.get('concept_labels') or []
+            upper = {str(item).upper() for item in labels} if isinstance(labels, list) else set()
+            if 'ZIPPER_LIKE_PART' in upper:
+                return f'zipper-like opening control ({entity_id})'
+            if 'HANDLE_LIKE_PART' in upper or 'HANDLE_CANDIDATE' in upper or 'KNOB_LIKE_PART' in upper:
+                return f'handle-like grasp part ({entity_id})'
+            if 'ACCESS_OPENING_CANDIDATE' in upper or 'EDGE_OPENING' in upper:
+                return f'opening region ({entity_id})'
+            if 'STRAP_LIKE_PART' in upper:
+                return f'strap-like grasp part ({entity_id})'
+            if 'GRASPABLE_PART' in upper:
+                return f'graspable part ({entity_id})'
+            if 'HAS_INTERIOR' in upper or 'STRUCTURAL_CONTAINER_CANDIDATE' in upper or 'BAG_LIKE_CONTAINER' in upper:
+                return f'container body ({entity_id})'
+            return entity.label or entity_id
+        return entity_id
 
     @staticmethod
     def _handle_candidates(world: SharedWorldModel) -> list[str]:

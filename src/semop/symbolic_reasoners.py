@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import List
 
 from .olympiad_reasoner import OlympiadReasoner
-from .structures import OperatorCandidate, PlanStep, StructuredMeaningGraph, SymbolicResult
+from .structures import Edge, Node, OperatorCandidate, PlanStep, StructuredMeaningGraph, SymbolicResult
 from .symbolic_arithmetic import ArithmeticReasoner
 from .symbolic_document import DocumentEvidenceReasoner
 
@@ -21,7 +21,8 @@ class SymbolicReasoner:
         olympiad = self.olympiad.solve(query)
         if olympiad is not None:
             return [olympiad]
-        evidence = self.document.solve(query)
+        document_query = query if not graph.source_context.strip() else f"{graph.source_context}\nQuestion: {query}"
+        evidence = self.document.solve(document_query)
         if evidence is not None:
             return [evidence]
         return []
@@ -145,6 +146,29 @@ class SymbolicReasoner:
                     provenance=["symbolic:document"],
                 )
             )
+        if not any(node.id == "question" for node in graph.nodes):
+            graph.add_node(Node(id="question", label=graph.query, kind="query", attributes={"text": graph.query}, provenance=["symbolic:document"]))
+        for index, evidence in enumerate(result.evidence, start=1):
+            evidence_id = self._find_existing_evidence_node(graph, evidence) or f"evidence_{index:03d}"
+            if not any(node.id == evidence_id for node in graph.nodes):
+                graph.add_node(
+                    Node(
+                        id=evidence_id,
+                        label=evidence[:96],
+                        kind="evidence",
+                        attributes={"text": evidence, "source": result.source or "symbolic_document"},
+                        provenance=["symbolic:document_evidence"],
+                    )
+                )
+            graph.add_edge(
+                Edge(
+                    source="question",
+                    relation="GROUNDED_BY",
+                    target=evidence_id,
+                    confidence=result.confidence,
+                    provenance=["symbolic:document"],
+                )
+            )
         if not any(step.id == "symbolic_doc_grounding" for step in graph.plan):
             graph.plan.insert(
                 0,
@@ -160,3 +184,10 @@ class SymbolicReasoner:
         extra = "If one sentence is weak, verify the adjacent sentence as well."
         if extra not in graph.creative_alternatives:
             graph.creative_alternatives.append(extra)
+
+    @staticmethod
+    def _find_existing_evidence_node(graph: StructuredMeaningGraph, text: str) -> str:
+        for node in graph.nodes:
+            if node.kind == "evidence" and str(node.attributes.get("text", "")).strip() == text.strip():
+                return node.id
+        return ""

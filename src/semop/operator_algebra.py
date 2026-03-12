@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
+from .basis_operators import canonicalize_basis_signature
 from .structures import FunctorHypothesis, OperatorCandidate, OperatorDecomposition, StructuredMeaningGraph
 
 
@@ -51,7 +52,7 @@ class OperatorAlgebraLearner:
             decompositions.append(
                 OperatorDecomposition(
                     operator_name='GOAL_PRESERVATION_OPERATOR',
-                    basis_operators=['hidden_goal', 'REQUIRES'] + (['BLOCKED_BY'] if 'BLOCKED_BY' in relation_names else []),
+                    basis_operators=canonicalize_basis_signature(['HIDDEN_GOAL', 'REQUIRES'] + (['BLOCKED_BY'] if 'BLOCKED_BY' in relation_names else [])),
                     rationale='A hidden goal plus required premises and blockers acts like a higher-order goal-preservation operator.',
                     confidence=0.82,
                 )
@@ -60,7 +61,7 @@ class OperatorAlgebraLearner:
             decompositions.append(
                 OperatorDecomposition(
                     operator_name='SERVICE_GOAL_OPERATOR',
-                    basis_operators=['TYPICAL_FOR', 'REQUIRES'],
+                    basis_operators=canonicalize_basis_signature(['TYPICAL_FOR', 'REQUIRES']),
                     rationale='Service-place reasoning can be decomposed into a typical-goal script and required enabling premises.',
                     confidence=0.79,
                 )
@@ -69,7 +70,7 @@ class OperatorAlgebraLearner:
             decompositions.append(
                 OperatorDecomposition(
                     operator_name='CONTAINMENT_GOAL_OPERATOR',
-                    basis_operators=['TYPICAL_FOR', 'REQUIRES', 'CONTAINS'],
+                    basis_operators=canonicalize_basis_signature(['TYPICAL_FOR', 'REQUIRES', 'CONTAINS']),
                     rationale='Containment reasoning decomposes into access, space, and interior-placement constraints.',
                     confidence=0.81,
                 )
@@ -79,7 +80,7 @@ class OperatorAlgebraLearner:
                 decompositions.append(
                     OperatorDecomposition(
                         operator_name=name,
-                        basis_operators=basis,
+                        basis_operators=canonicalize_basis_signature(basis),
                         rationale='A higher visual operator can be represented as a composition of simpler structural operators.',
                         confidence=0.76,
                     )
@@ -88,7 +89,7 @@ class OperatorAlgebraLearner:
             if any(item.operator_name == name for item in decompositions):
                 continue
             if name == 'SERVICE_GOAL_OPERATOR' and 'TYPICAL_FOR' in relation_names and 'REQUIRES' in relation_names:
-                decompositions.append(OperatorDecomposition(operator_name=name, basis_operators=basis, rationale='Language service reasoning exposes the same basis relations.', confidence=0.72))
+                decompositions.append(OperatorDecomposition(operator_name=name, basis_operators=canonicalize_basis_signature(basis), rationale='Language service reasoning exposes the same basis relations.', confidence=0.72))
         return self._merge_decompositions([], decompositions)
 
     def _induce_functors(self, graph: StructuredMeaningGraph, decompositions: List[OperatorDecomposition]) -> List[FunctorHypothesis]:
@@ -172,3 +173,4 @@ class OperatorAlgebraLearner:
                 continue
             merged.append(item)
         return merged
+

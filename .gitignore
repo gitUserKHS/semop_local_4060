@@ -1,4 +1,4 @@
-# Python bytecode and tool caches
+﻿# Python bytecode and tool caches
 __pycache__/
 *.py[cod]
 *.pyo
@@ -72,6 +72,7 @@ data/**/*.db
 data/**/*.sqlite
 data/**/*.sqlite3
 data/**/*.csv
+data/*_gui_run/
 data/**/*_downloads/
 data/**/*_downloads_312/
 data/**/*_normalized/
@@ -114,11 +115,21 @@ data/customer_eval*.jsonl
 # Test and smoke artifacts
 tests/*_smoke.json
 tests/*_smoke.jsonl
+tests/*_smoke/
 tests/*_summary.json
 tests/*_plan*.jsonl
 tests/*_manifest*.json
 tests/*_records*.jsonl
 tests/*_approved*.jsonl
+tests/*_artifacts/
+tests/tmp_*/
+tests/graph_supervision_test.jsonl
+tests/unified_parser_graph_slots.json
+tests/parser_first_bootstrap.json
+tests/operator_repair_policy_test.json
+tests/retained_repair_programs_test.json
+tests/multimodal_alignment_test.json
+tests/retained_operator_test.json
 tests/open_images_adapter_test/
 
 # Project-local reference documents
@@ -154,3 +165,4 @@ tests/cp_labeled_download_smoke/
 tests/vlso_geometry_bootstrap_smoke/
 tests/vlso_geometry_gui_smoke/
 tests/vlso_geometry_pipeline_smoke/
+

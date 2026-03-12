@@ -57,15 +57,42 @@ class CpLearnedParser:
         self._tokenizer = None
         self._model = None
 
+    @staticmethod
+    def _detect_adapter_base_model(model_name_or_path: str) -> str | None:
+        path = Path(model_name_or_path)
+        adapter_config = path / 'adapter_config.json'
+        if not adapter_config.exists():
+            return None
+        payload = json.loads(adapter_config.read_text(encoding='utf-8'))
+        return payload.get('base_model_name_or_path')
+
     def _load(self) -> None:
         if self._tokenizer is not None and self._model is not None:
             return
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, local_files_only=self.local_files_only)
-        if self._tokenizer.pad_token is None:
-            self._tokenizer.pad_token = self._tokenizer.eos_token
-        self._model = AutoModelForCausalLM.from_pretrained(self.model_name_or_path, local_files_only=self.local_files_only)
+        base_model_name = self._detect_adapter_base_model(self.model_name_or_path)
+        tokenizer_source = self.model_name_or_path
+        if base_model_name:
+            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, local_files_only=self.local_files_only)
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+            base_model = AutoModelForCausalLM.from_pretrained(base_model_name, local_files_only=self.local_files_only)
+            try:
+                from peft import PeftModel
+            except Exception as exc:
+                raise RuntimeError('PEFT adapter detected but `peft` is not available for loading the trained parser.') from exc
+            self._model = PeftModel.from_pretrained(base_model, self.model_name_or_path)
+            if hasattr(self._model, 'merge_and_unload'):
+                try:
+                    self._model = self._model.merge_and_unload()
+                except Exception:
+                    pass
+        else:
+            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, local_files_only=self.local_files_only)
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+            self._model = AutoModelForCausalLM.from_pretrained(self.model_name_or_path, local_files_only=self.local_files_only)
         if hasattr(self._model, 'eval'):
             self._model.eval()
 
@@ -127,17 +154,23 @@ class CpParserEvaluator:
         return len(left_set & right_set) / len(left_set | right_set)
 
     def predict_heuristic(self, statement: str) -> CpParserPrediction:
-        result = self.heuristic_reasoner.solve(statement)
-        if result is None:
+        structure = self.heuristic_reasoner.parse_problem(statement)
+        if structure is None:
             return CpParserPrediction(statement=statement, goal_types=[], domain_tags=[], logical_frames=[], dsl_operators=[], target_algorithm='', reasoning_sketch='')
+        top_algorithm = structure.candidate_algorithms[0] if structure.candidate_algorithms else ''
+        reasoning_sketch = (
+            'Reduce the statement into frames, operators, hidden constraints, and only then choose an algorithm family.'
+            if (structure.logical_frames or structure.dsl_operators)
+            else 'No strong parser structure match was found.'
+        )
         return CpParserPrediction(
             statement=statement,
-            goal_types=result.goal_types,
-            domain_tags=result.domain_tags,
-            logical_frames=result.logical_frames,
-            dsl_operators=result.dsl_operators,
-            target_algorithm=result.category,
-            reasoning_sketch=result.approach,
+            goal_types=structure.goal_types,
+            domain_tags=structure.domain_tags,
+            logical_frames=structure.logical_frames,
+            dsl_operators=structure.dsl_operators,
+            target_algorithm=top_algorithm,
+            reasoning_sketch=reasoning_sketch,
         )
 
     def evaluate_examples(self, examples: Iterable[CpDslExample], predictor: str = 'heuristic', model: CpLearnedParser | None = None) -> CpParserEvalSummary:

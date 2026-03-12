@@ -20,12 +20,20 @@ from semop import (
     CopilotRequest,
     CpGeometryTemplateGenerator,
     CpLabeledDatasetDownloader,
+    CpLoraExperimentConfig,
+    CpLoraExperimentRunner,
     CpParserTrainConfig,
     CpParserTrainingScaffold,
     DomainCopilot,
+    HiddenPremiseEvalCase,
+    OperatorCurriculumBuilder,
+    OperatorTrainConfig,
+    OperatorTrainingScaffold,
     PseudoLabelAcceptanceConfig,
+    SemOpUnderstandingEvaluator,
     SyntheticGeometrySceneBuilder,
     VLSOReasoner,
+    VlsoGroundedEvaluator,
     VlsoReviewImpactEvaluator,
     VisualApprovedReviewRetrainer,
     VisualClusterReviewDecision,
@@ -33,9 +41,10 @@ from semop import (
     VisualConceptPrototypeTrainer,
     VisualDataCollector,
     VisualFamilyBatchSummary,
-    build_object_family_manifest,
     VisualGeometryBootstrapPipeline,
     VisualOperatorPrototypeTrainer,
+    TeacherTraceExporter,
+    build_object_family_manifest,
 )
 
 
@@ -98,6 +107,31 @@ CP_GEOMETRY_EXAMPLE = {
     "model": "Qwen/Qwen2.5-0.5B-Instruct",
     "output_dir": "data/cp_geometry_parser_dry_run",
     "compare_input": "examples/cp_parser_eval.jsonl",
+}
+CP_LORA_EXAMPLE = {
+    "workspace": "data/cp_lora_gui_run",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "train_inputs": "examples/cp_parser_eval.jsonl examples/cp_hidden_constraint_eval.jsonl",
+    "eval_inputs": "examples/cp_geometry_parser_eval.jsonl examples/cp_hidden_constraint_eval.jsonl",
+    "max_steps": "100",
+    "save_steps": "25",
+    "save_total_limit": "2",
+}
+UNDERSTANDING_EVAL_EXAMPLE = {
+    "hidden": "examples/hidden_premise_eval.jsonl",
+    "cp": "examples/cp_parser_eval.jsonl",
+    "cp_hidden": "examples/cp_hidden_constraint_eval.jsonl",
+    "vlso": "examples/vlso_eval.jsonl",
+    "vlso_real": "examples/vlso_real_image_eval_gold.jsonl",
+}
+OPERATOR_TRAIN_EXAMPLE = {
+    "workspace": "data/operator_learning_gui_run",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "teacher_output": "data/operator_learning_gui_run/teacher_traces.jsonl",
+    "teacher_sft_output": "data/operator_learning_gui_run/teacher_traces_sft.jsonl",
+    "max_steps": "100",
+    "save_steps": "25",
+    "save_total_limit": "2",
 }
 GEOMETRY_PIPELINE_EXAMPLE = {
     "input_root": "examples/vlso/generated_geometry",
@@ -206,6 +240,25 @@ def _parse_family_targets(raw: str) -> dict[str, int]:
     return output
 
 
+def _latest_checkpoint_path(root: str) -> str:
+    base = Path(root)
+    if not base.exists():
+        return ''
+    candidates: list[tuple[int, Path]] = []
+    for path_value in base.rglob('checkpoint-*'):
+        if not path_value.is_dir():
+            continue
+        try:
+            step = int(path_value.name.split('-', 1)[1])
+        except (IndexError, ValueError):
+            continue
+        candidates.append((step, path_value))
+    if not candidates:
+        return ''
+    candidates.sort(key=lambda item: item[0])
+    return str(candidates[-1][1])
+
+
 def _render_value(value: object) -> str:
     if value is None or value == '':
         return '-'
@@ -227,6 +280,19 @@ def _info_block(label: str, value: object) -> str:
 
 def _raw_details(payload: dict[str, object]) -> str:
     return f"<details class='raw-json'><summary>Raw JSON</summary><pre>{_safe_json(payload)}</pre></details>"
+
+
+def _load_hidden_premise_cases(path_value: str) -> list[HiddenPremiseEvalCase]:
+    path = Path(path_value)
+    cases: list[HiddenPremiseEvalCase] = []
+    with path.open('r', encoding='utf-8-sig') as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            cases.append(HiddenPremiseEvalCase(**payload))
+    return cases
 
 
 def _record_id(record: dict[str, object]) -> str:
@@ -565,6 +631,71 @@ def _render_cp_parser_compare_summary(payload: dict[str, object]) -> str:
     return f"<div class='summary-grid'>{metrics}</div>{_raw_details(payload)}"
 
 
+def _render_cp_lora_experiment_summary(payload: dict[str, object]) -> str:
+    heuristic = payload.get('heuristic_eval', {}) if isinstance(payload.get('heuristic_eval'), dict) else {}
+    training = payload.get('training_summary', {}) if isinstance(payload.get('training_summary'), dict) else {}
+    compare_eval = payload.get('compare_eval', {}) if isinstance(payload.get('compare_eval'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Heuristic algorithm EM', heuristic.get('algorithm_exact_match')),
+        _metric_card('Heuristic frame jaccard', heuristic.get('frame_jaccard')),
+        _metric_card('Training mode', training.get('mode') or '-'),
+        _metric_card('Latest checkpoint', training.get('latest_checkpoint') or '-'),
+    ])
+    details = ''.join([
+        _info_block('Workspace train JSONL', payload.get('train_jsonl') or '-'),
+        _info_block('Workspace val JSONL', payload.get('val_jsonl') or '-'),
+        _info_block('Final model dir', training.get('final_model_dir') or '-'),
+        _info_block('Compare eval', compare_eval or '-'),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+
+
+def _render_understanding_summary(payload: dict[str, object]) -> str:
+    progress = payload.get('progress', {}) if isinstance(payload.get('progress'), dict) else {}
+    interpretation = payload.get('interpretation', {}) if isinstance(payload.get('interpretation'), dict) else {}
+    operator_arch = progress.get('operator_architecture', {}) if isinstance(progress.get('operator_architecture'), dict) else {}
+    premise_reasoning = progress.get('premise_reasoning', {}) if isinstance(progress.get('premise_reasoning'), dict) else {}
+    shared_world = progress.get('shared_world_model', {}) if isinstance(progress.get('shared_world_model'), dict) else {}
+    raw_visual = progress.get('raw_visual_reasoning', {}) if isinstance(progress.get('raw_visual_reasoning'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Research architecture', progress.get('research_architecture_overall')),
+        _metric_card('Robust understanding', progress.get('robust_general_intelligence_overall')),
+        _metric_card('Premise reasoning', premise_reasoning.get('score')),
+        _metric_card('Raw visual reasoning', raw_visual.get('score')),
+        _metric_card('Operator architecture', operator_arch.get('score')),
+        _metric_card('Shared world model', shared_world.get('score')),
+    ])
+    strengths = ''.join(f"<li>{html.escape(str(item))}</li>" for item in interpretation.get('strengths', []))
+    risks = ''.join(f"<li>{html.escape(str(item))}</li>" for item in interpretation.get('risks', []))
+    next_steps = ''.join(f"<li>{html.escape(str(item))}</li>" for item in interpretation.get('next_steps', []))
+    overview = f"<div class='info-block'><small>Headline</small><div>{html.escape(str(interpretation.get('headline', '-')))}</div></div>"
+    lists = (
+        f"<div class='mini-grid'><div class='info-block'><small>Strengths</small><ul>{strengths or '<li>-</li>'}</ul></div>"
+        f"<div class='info-block'><small>Risks</small><ul>{risks or '<li>-</li>'}</ul></div></div>"
+        f"<div class='info-block'><small>Next steps</small><ul>{next_steps or '<li>-</li>'}</ul></div>"
+    )
+    return f"<div class='summary-grid'>{metrics}</div>{overview}{lists}{_raw_details(payload)}"
+
+
+def _render_operator_training_summary(payload: dict[str, object]) -> str:
+    export_summary = payload.get('teacher_trace_summary', {}) if isinstance(payload.get('teacher_trace_summary'), dict) else {}
+    bundle_summary = payload.get('bundle_summary', {}) if isinstance(payload.get('bundle_summary'), dict) else {}
+    training = payload.get('training_summary', {}) if isinstance(payload.get('training_summary'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Teacher traces', export_summary.get('num_traces')),
+        _metric_card('Train rows', bundle_summary.get('num_train')),
+        _metric_card('Val rows', bundle_summary.get('num_val')),
+        _metric_card('Training mode', training.get('mode') or '-'),
+    ])
+    details = ''.join([
+        _info_block('Teacher trace JSONL', payload.get('teacher_trace_path') or '-'),
+        _info_block('Bundle workspace', payload.get('workspace') or '-'),
+        _info_block('Latest checkpoint', training.get('latest_checkpoint') or '-'),
+        _info_block('Final model dir', training.get('final_model_dir') or '-'),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+
+
 def _opening_candidates(world_payload: dict[str, object]) -> list[str]:
     entities = world_payload.get("entities", []) if isinstance(world_payload, dict) else []
     ranked: list[tuple[int, str]] = []
@@ -666,6 +797,8 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         "vlso_review_retrain": "Approved-cluster retrain result",
         "vlso_review_impact": "VLSO approved-store impact",
         "cp_parser_compare": "CP parser comparison",
+        "cp_lora_experiment": "CP LoRA experiment",
+        "operator_training": "Generic operator student training",
     }
     if kind == "ops":
         body = _render_ops_summary(payload)
@@ -679,6 +812,12 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         body = _render_review_impact_summary(payload)
     elif kind == "cp_parser_compare":
         body = _render_cp_parser_compare_summary(payload)
+    elif kind == "cp_lora_experiment":
+        body = _render_cp_lora_experiment_summary(payload)
+    elif kind == "operator_training":
+        body = _render_operator_training_summary(payload)
+    elif kind == "understanding_eval":
+        body = _render_understanding_summary(payload)
     else:
         body = _render_generic_summary(kind, payload)
     return f"<h3>{html.escape(titles.get(kind, kind))}</h3>{body}"
@@ -796,7 +935,33 @@ class StarterApp:
         cp_geometry_model = _first(form, "cp_geometry_model", CP_GEOMETRY_EXAMPLE["model"])
         cp_geometry_model_output = _first(form, "cp_geometry_model_output", CP_GEOMETRY_EXAMPLE["output_dir"])
         cp_compare_input = _first(form, "cp_compare_input", CP_GEOMETRY_EXAMPLE["compare_input"])
+        cp_lora_workspace = _first(form, "cp_lora_workspace", CP_LORA_EXAMPLE["workspace"])
+        cp_lora_model = _first(form, "cp_lora_model", CP_LORA_EXAMPLE["model"])
+        cp_lora_train_inputs = _first(form, "cp_lora_train_inputs", CP_LORA_EXAMPLE["train_inputs"])
+        cp_lora_eval_inputs = _first(form, "cp_lora_eval_inputs", CP_LORA_EXAMPLE["eval_inputs"])
+        cp_lora_max_steps = _first(form, "cp_lora_max_steps", CP_LORA_EXAMPLE["max_steps"])
+        cp_lora_save_steps = _first(form, "cp_lora_save_steps", CP_LORA_EXAMPLE["save_steps"])
+        cp_lora_save_total_limit = _first(form, "cp_lora_save_total_limit", CP_LORA_EXAMPLE["save_total_limit"])
+        cp_lora_resume_latest = _checked_form(form, "cp_lora_resume_latest", default=True)
+        cp_lora_dry_run = _checked_form(form, "cp_lora_dry_run", default=True)
+        operator_train_workspace = _first(form, "operator_train_workspace", OPERATOR_TRAIN_EXAMPLE["workspace"])
+        operator_train_model = _first(form, "operator_train_model", OPERATOR_TRAIN_EXAMPLE["model"])
+        operator_train_teacher_output = _first(form, "operator_train_teacher_output", OPERATOR_TRAIN_EXAMPLE["teacher_output"])
+        operator_train_teacher_sft_output = _first(form, "operator_train_teacher_sft_output", OPERATOR_TRAIN_EXAMPLE["teacher_sft_output"])
+        operator_train_max_steps = _first(form, "operator_train_max_steps", OPERATOR_TRAIN_EXAMPLE["max_steps"])
+        operator_train_save_steps = _first(form, "operator_train_save_steps", OPERATOR_TRAIN_EXAMPLE["save_steps"])
+        operator_train_save_total_limit = _first(form, "operator_train_save_total_limit", OPERATOR_TRAIN_EXAMPLE["save_total_limit"])
+        operator_train_resume_latest = _checked_form(form, "operator_train_resume_latest", default=True)
+        operator_train_dry_run = _checked_form(form, "operator_train_dry_run", default=True)
+        operator_train_local_files_only = _checked_form(form, "operator_train_local_files_only", default=True)
+        operator_train_use_lora = _checked_form(form, "operator_train_use_lora", default=True)
+        operator_train_use_qlora = _checked_form(form, "operator_train_use_qlora", default=False)
         vision_eval_input = _first(form, "vision_eval_input", VLSO_COMPARE_EXAMPLE["eval_input"])
+        understanding_hidden_input = _first(form, "understanding_hidden_input", UNDERSTANDING_EVAL_EXAMPLE["hidden"])
+        understanding_cp_input = _first(form, "understanding_cp_input", UNDERSTANDING_EVAL_EXAMPLE["cp"])
+        understanding_cp_hidden_input = _first(form, "understanding_cp_hidden_input", UNDERSTANDING_EVAL_EXAMPLE["cp_hidden"])
+        understanding_vlso_input = _first(form, "understanding_vlso_input", UNDERSTANDING_EVAL_EXAMPLE["vlso"])
+        understanding_vlso_real_input = _first(form, "understanding_vlso_real_input", UNDERSTANDING_EVAL_EXAMPLE["vlso_real"])
         geometry_pipeline_input_root = _first(form, "geometry_pipeline_input_root", GEOMETRY_PIPELINE_EXAMPLE["input_root"])
         geometry_pipeline_workspace = _first(form, "geometry_pipeline_workspace", GEOMETRY_PIPELINE_EXAMPLE["workspace"])
         geometry_cluster_threshold = _first(form, "geometry_cluster_threshold", GEOMETRY_PIPELINE_EXAMPLE["cluster_threshold"])
@@ -864,6 +1029,24 @@ class StarterApp:
                 result_kind = "cp_parser_compare"
                 result_payload = summary.model_dump()
                 flash = "CP parser comparison finished."
+                flash_tone = "success"
+            elif action == "run_understanding_eval":
+                hidden_cases = _load_hidden_premise_cases(understanding_hidden_input) if understanding_hidden_input else None
+                cp_examples = CpParserEvaluator.load_examples(Path(understanding_cp_input)) if understanding_cp_input else None
+                cp_hidden_examples = CpParserEvaluator.load_examples(Path(understanding_cp_hidden_input)) if understanding_cp_hidden_input else None
+                vlso_cases = VlsoGroundedEvaluator.load_cases(Path(understanding_vlso_input)) if understanding_vlso_input else None
+                vlso_real_cases = VlsoGroundedEvaluator.load_cases(Path(understanding_vlso_real_input)) if understanding_vlso_real_input else None
+                summary = SemOpUnderstandingEvaluator().evaluate(
+                    hidden_premise_cases=hidden_cases,
+                    cp_examples=cp_examples,
+                    cp_hidden_examples=cp_hidden_examples,
+                    vlso_cases=vlso_cases,
+                    vlso_real_image_cases=vlso_real_cases,
+                    cp_mode='heuristic',
+                )
+                result_kind = "understanding_eval"
+                result_payload = summary.model_dump()
+                flash = "Overall understanding benchmark finished."
                 flash_tone = "success"
             elif action == "download_cp_labels":
                 summary = CpLabeledDatasetDownloader().download_and_normalize(cp_manifest, cp_download_root, cp_download_output)
@@ -1102,6 +1285,87 @@ class StarterApp:
                 result_payload = summary.model_dump()
                 flash = "CP geometry train/val bundle generated."
                 flash_tone = "success"
+            elif action == "run_cp_lora_experiment":
+                train_inputs = _tokens(cp_lora_train_inputs)
+                eval_inputs = _tokens(cp_lora_eval_inputs)
+                training_run_dir = Path(cp_lora_workspace) / 'training_run'
+                resume_path = _latest_checkpoint_path(str(training_run_dir)) if cp_lora_resume_latest else ''
+                print(f"[GUI/CP] starting LoRA experiment workspace={cp_lora_workspace} dry_run={cp_lora_dry_run} resume={resume_path or '-'}", file=sys.stderr, flush=True)
+                summary = CpLoraExperimentRunner().run(CpLoraExperimentConfig(
+                    workspace=cp_lora_workspace,
+                    model_name_or_path=cp_lora_model,
+                    dataset_paths=train_inputs,
+                    eval_dataset_paths=eval_inputs or None,
+                    execute_train=True,
+                    dry_run_train=cp_lora_dry_run,
+                    local_files_only=False,
+                    use_lora=True,
+                    max_steps=int(cp_lora_max_steps or '100'),
+                    save_steps=int(cp_lora_save_steps or '25'),
+                    save_total_limit=int(cp_lora_save_total_limit or '2'),
+                    resume_from_checkpoint=resume_path or None,
+                ))
+                result_kind = "cp_lora_experiment"
+                result_payload = summary.model_dump()
+                print(f"[GUI/CP] finished LoRA experiment workspace={cp_lora_workspace} mode={summary.training_summary.get('mode') if summary.training_summary else '-'}", file=sys.stderr, flush=True)
+                flash = "CP LoRA experiment finished." if not cp_lora_dry_run else "CP LoRA dry-run finished."
+                flash_tone = "success"
+            elif action == "run_operator_training":
+                workspace_path = Path(operator_train_workspace)
+                workspace_path.mkdir(parents=True, exist_ok=True)
+                print(f"[GUI/Operator] exporting teacher traces workspace={operator_train_workspace}", file=sys.stderr, flush=True)
+                exporter = TeacherTraceExporter()
+                traces = []
+                traces.extend(exporter.export_hidden_premise_eval('examples/hidden_premise_eval.jsonl'))
+                traces.extend(exporter.export_cp_parser_eval('examples/cp_parser_eval.jsonl'))
+                traces.extend(exporter.export_cp_parser_eval('examples/cp_hidden_constraint_eval.jsonl'))
+                traces.extend(exporter.export_vlso_eval('examples/vlso_eval.jsonl', base_dir='.'))
+                real_image_eval = Path('examples/vlso_real_image_eval_gold.jsonl')
+                if real_image_eval.exists():
+                    traces.extend(exporter.export_vlso_eval(real_image_eval, base_dir='.'))
+                transfer_eval = Path('examples/operator_transfer_eval.jsonl')
+                if transfer_eval.exists():
+                    traces.extend(exporter.export_operator_transfer_eval(transfer_eval))
+                TeacherTraceExporter.save_jsonl(operator_train_teacher_output, traces)
+                TeacherTraceExporter.save_jsonl(operator_train_teacher_sft_output, TeacherTraceExporter.to_sft_records(traces))
+                export_summary = {
+                    'num_traces': len(traces),
+                    'teacher_trace_path': operator_train_teacher_output,
+                    'teacher_sft_output': operator_train_teacher_sft_output,
+                }
+                print(f"[GUI/Operator] building curriculum workspace={operator_train_workspace}", file=sys.stderr, flush=True)
+                bundle_summary = OperatorCurriculumBuilder().build_bundle(
+                    teacher_trace_path=operator_train_teacher_output,
+                    workspace=operator_train_workspace,
+                    val_ratio=0.15,
+                )
+                training_run_dir = workspace_path / 'training_run'
+                resume_path = _latest_checkpoint_path(str(training_run_dir)) if operator_train_resume_latest else ''
+                print(f"[GUI/Operator] starting training workspace={operator_train_workspace} dry_run={operator_train_dry_run} resume={resume_path or '-'}", file=sys.stderr, flush=True)
+                training_summary = OperatorTrainingScaffold().run(OperatorTrainConfig(
+                    model_name_or_path=operator_train_model,
+                    output_dir=str(training_run_dir),
+                    train_jsonl=bundle_summary.train_sft_jsonl,
+                    max_steps=int(operator_train_max_steps or '100'),
+                    dry_run=operator_train_dry_run,
+                    local_files_only=operator_train_local_files_only,
+                    use_lora=operator_train_use_lora,
+                    use_qlora=operator_train_use_qlora,
+                    resume_from_checkpoint=resume_path or None,
+                    save_steps=int(operator_train_save_steps or '25'),
+                    save_total_limit=int(operator_train_save_total_limit or '2'),
+                ))
+                result_kind = 'operator_training'
+                result_payload = {
+                    'workspace': operator_train_workspace,
+                    'teacher_trace_path': operator_train_teacher_output,
+                    'teacher_trace_summary': export_summary,
+                    'bundle_summary': bundle_summary.model_dump(),
+                    'training_summary': training_summary,
+                }
+                print(f"[GUI/Operator] finished training workspace={operator_train_workspace} mode={training_summary.get('mode', '-')}", file=sys.stderr, flush=True)
+                flash = 'Generic operator student training finished.' if not operator_train_dry_run else 'Generic operator student dry-run finished.'
+                flash_tone = 'success'
             elif action == "dry_run_cp_geometry_train":
                 summary = CpParserTrainingScaffold().run(CpParserTrainConfig(
                     model_name_or_path=cp_geometry_model,
@@ -1288,7 +1552,33 @@ class StarterApp:
             cp_geometry_model=cp_geometry_model,
             cp_geometry_model_output=cp_geometry_model_output,
             cp_compare_input=cp_compare_input,
+            cp_lora_workspace=cp_lora_workspace,
+            cp_lora_model=cp_lora_model,
+            cp_lora_train_inputs=cp_lora_train_inputs,
+            cp_lora_eval_inputs=cp_lora_eval_inputs,
+            cp_lora_max_steps=cp_lora_max_steps,
+            cp_lora_save_steps=cp_lora_save_steps,
+            cp_lora_save_total_limit=cp_lora_save_total_limit,
+            cp_lora_resume_latest=cp_lora_resume_latest,
+            cp_lora_dry_run=cp_lora_dry_run,
+            operator_train_workspace=operator_train_workspace,
+            operator_train_model=operator_train_model,
+            operator_train_teacher_output=operator_train_teacher_output,
+            operator_train_teacher_sft_output=operator_train_teacher_sft_output,
+            operator_train_max_steps=operator_train_max_steps,
+            operator_train_save_steps=operator_train_save_steps,
+            operator_train_save_total_limit=operator_train_save_total_limit,
+            operator_train_resume_latest=operator_train_resume_latest,
+            operator_train_dry_run=operator_train_dry_run,
+            operator_train_local_files_only=operator_train_local_files_only,
+            operator_train_use_lora=operator_train_use_lora,
+            operator_train_use_qlora=operator_train_use_qlora,
             vision_eval_input=vision_eval_input,
+            understanding_hidden_input=understanding_hidden_input,
+            understanding_cp_input=understanding_cp_input,
+            understanding_cp_hidden_input=understanding_cp_hidden_input,
+            understanding_vlso_input=understanding_vlso_input,
+            understanding_vlso_real_input=understanding_vlso_real_input,
             geometry_pipeline_input_root=geometry_pipeline_input_root,
             geometry_pipeline_workspace=geometry_pipeline_workspace,
             geometry_cluster_threshold=geometry_cluster_threshold,
@@ -1592,6 +1882,56 @@ pre {{ background:#14202a; color:#eef6fb; border-radius:18px; padding:16px; over
       </form>
       <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
       <form method="post">
+        <h3>CP LoRA train/resume</h3>
+        <label>Model id or path</label>
+        <input name="cp_lora_model" value="{html.escape(str(ctx['cp_lora_model']))}">
+        <label>Workspace</label>
+        <input name="cp_lora_workspace" value="{html.escape(str(ctx['cp_lora_workspace']))}">
+        <label>Train inputs</label>
+        <input name="cp_lora_train_inputs" value="{html.escape(str(ctx['cp_lora_train_inputs']))}">
+        <label>Eval inputs</label>
+        <input name="cp_lora_eval_inputs" value="{html.escape(str(ctx['cp_lora_eval_inputs']))}">
+        <div class="mini-grid">
+          <div><label>Max steps</label><input name="cp_lora_max_steps" value="{html.escape(str(ctx['cp_lora_max_steps']))}"></div>
+          <div><label>Save steps</label><input name="cp_lora_save_steps" value="{html.escape(str(ctx['cp_lora_save_steps']))}"></div>
+          <div><label>Save total limit</label><input name="cp_lora_save_total_limit" value="{html.escape(str(ctx['cp_lora_save_total_limit']))}"></div>
+        </div>
+        <input type="hidden" name="cp_lora_resume_latest" value="0">
+        <label class="inline"><input type="checkbox" name="cp_lora_resume_latest" value="1"{_checked(bool(ctx['cp_lora_resume_latest']))}> resume latest checkpoint if present</label>
+        <input type="hidden" name="cp_lora_dry_run" value="0">
+        <label class="inline"><input type="checkbox" name="cp_lora_dry_run" value="1"{_checked(bool(ctx['cp_lora_dry_run']))}> dry-run only</label>
+        <div class="actions"><button class="primary" name="action" value="run_cp_lora_experiment">Run CP LoRA experiment</button></div>
+      </form>
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
+      <form method="post">
+        <h3>Generic operator student train/resume</h3>
+        <label>Model id or path</label>
+        <input name="operator_train_model" value="{html.escape(str(ctx['operator_train_model']))}">
+        <label>Workspace</label>
+        <input name="operator_train_workspace" value="{html.escape(str(ctx['operator_train_workspace']))}">
+        <label>Teacher traces JSONL</label>
+        <input name="operator_train_teacher_output" value="{html.escape(str(ctx['operator_train_teacher_output']))}">
+        <label>Teacher SFT JSONL</label>
+        <input name="operator_train_teacher_sft_output" value="{html.escape(str(ctx['operator_train_teacher_sft_output']))}">
+        <div class="mini-grid">
+          <div><label>Max steps</label><input name="operator_train_max_steps" value="{html.escape(str(ctx['operator_train_max_steps']))}"></div>
+          <div><label>Save steps</label><input name="operator_train_save_steps" value="{html.escape(str(ctx['operator_train_save_steps']))}"></div>
+          <div><label>Save total limit</label><input name="operator_train_save_total_limit" value="{html.escape(str(ctx['operator_train_save_total_limit']))}"></div>
+        </div>
+        <input type="hidden" name="operator_train_resume_latest" value="0">
+        <label class="inline"><input type="checkbox" name="operator_train_resume_latest" value="1"{_checked(bool(ctx['operator_train_resume_latest']))}> resume latest checkpoint if present</label>
+        <input type="hidden" name="operator_train_dry_run" value="0">
+        <label class="inline"><input type="checkbox" name="operator_train_dry_run" value="1"{_checked(bool(ctx['operator_train_dry_run']))}> dry-run only</label>
+        <input type="hidden" name="operator_train_local_files_only" value="0">
+        <label class="inline"><input type="checkbox" name="operator_train_local_files_only" value="1"{_checked(bool(ctx['operator_train_local_files_only']))}> local-files-only</label>
+        <input type="hidden" name="operator_train_use_lora" value="0">
+        <label class="inline"><input type="checkbox" name="operator_train_use_lora" value="1"{_checked(bool(ctx['operator_train_use_lora']))}> use LoRA</label>
+        <input type="hidden" name="operator_train_use_qlora" value="0">
+        <label class="inline"><input type="checkbox" name="operator_train_use_qlora" value="1"{_checked(bool(ctx['operator_train_use_qlora']))}> use QLoRA (requires bitsandbytes)</label>
+        <div class="actions"><button class="primary" name="action" value="run_operator_training">Run generic operator training</button></div>
+      </form>
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
+      <form method="post">
         <h3>Evaluation shortcuts</h3>
         <label>VLSO eval JSONL</label>
         <input name="vision_eval_input" value="{html.escape(str(ctx['vision_eval_input']))}">
@@ -1599,6 +1939,17 @@ pre {{ background:#14202a; color:#eef6fb; border-radius:18px; padding:16px; over
         <label>CP parser eval JSONL</label>
         <input name="cp_compare_input" value="{html.escape(str(ctx['cp_compare_input']))}">
         <div class="actions"><button class="secondary" name="action" value="compare_cp_parsers">Compare CP heuristic vs model</button></div>
+        <label>Hidden premise eval JSONL</label>
+        <input name="understanding_hidden_input" value="{html.escape(str(ctx['understanding_hidden_input']))}">
+        <label>CP hidden-constraint eval JSONL</label>
+        <input name="understanding_cp_hidden_input" value="{html.escape(str(ctx['understanding_cp_hidden_input']))}">
+        <label>VLSO real-image eval JSONL</label>
+        <input name="understanding_vlso_real_input" value="{html.escape(str(ctx['understanding_vlso_real_input']))}">
+        <div class="mini-grid">
+          <div><label>CP understanding eval JSONL</label><input name="understanding_cp_input" value="{html.escape(str(ctx['understanding_cp_input']))}"></div>
+          <div><label>VLSO understanding eval JSONL</label><input name="understanding_vlso_input" value="{html.escape(str(ctx['understanding_vlso_input']))}"></div>
+        </div>
+        <div class="actions"><button class="primary" name="action" value="run_understanding_eval">Run overall understanding benchmark</button></div>
       </form>
       <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
       <form method="post">

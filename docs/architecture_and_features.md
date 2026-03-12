@@ -1,4 +1,4 @@
-﻿# SemOp Architecture And Current Feature Status
+# SemOp Architecture And Current Feature Status
 
 ## Current Project State
 
@@ -10,7 +10,7 @@ SemOp Local 4060 is no longer just one pipeline. It currently contains four acti
 
 As of the latest local validation in this workspace:
 - `python -m unittest discover -s tests -v` passes
-- total passing tests: `129`
+- total passing tests: `177`
 
 ## Intelligence Axes
 
@@ -27,18 +27,28 @@ The code-level map for these axes is captured in `src/semop/intelligence_map.py`
 ### 1. Core structured reasoning
 
 Current status:
+- three-stage hidden-premise engine with candidate retrieval, premise proposal, and premise validation
 - hidden-premise exploration and goal-preservation checks for queries with implicit goals or missing assumptions
+- SQLite-backed premise/operator memory for runtime reuse and later retrieval
 - operator algebra layer that decomposes higher operators into simpler basis operators
+- operator compiler/executor runtime that turns premise and operator-algebra outputs into a deterministic instruction stream and execution report
 - category-inspired functor hypotheses that align service goals, visual structure, and geometry frames
+- operator self-evolution loop that mines repeated decompositions into evolved operator proposals, scores utility, and retains promising higher operators
+- operator proposal engine that lets model-side summarizers propose higher operators from repeated decomposition patterns and visual geometry signatures before the verifier decides retention
+- visual-signal ablation bench for testing whether symmetry, closure, and axis-alignment signals actually improve retained operator quality
+- proposal comparator that can contrast heuristic proposals with LLM-backed operator naming and summarization
+- operator transfer benchmark for checking whether evolved operators survive held-out domains
 - operator induction, grammar hypothesis generation, and memory-prior injection
 - logical word to concept-frame pattern learning for connectors such as `has`, `if`, `before`, `requires`, and `can`
 - response synthesis into readable structured explanations
+- `tools/eval/evaluate_semop_stack.py` can now run a shared snapshot across hidden-premise, CP parser, and VLSO grounded evaluation, including operator-level premise support
 
 Primary modules:
 - `src/semop/pipeline.py`
 - `src/semop/premise_explorer.py`
 - `src/semop/premise_eval.py`
 - `src/semop/operator_algebra.py`
+- `src/semop/operator_evolution.py`
 - `src/semop/logical_grammar.py`
 - `src/semop/emergent_operators.py`
 - `src/semop/operator_hierarchy.py`
@@ -110,6 +120,7 @@ Current status:
 - detector payload adapters for detections, segments, annotations, and instances
 - segmentation-aware structural grounding that preserves `part_of`, `part_of_confidence`, `structural_role`, and `segmentation_confidence` into downstream structural operators
 - raw-image parsing with mask cleanup, border-frame suppression, geometry hints, and structural-first operator induction
+- geometry primitive backbone now derives symmetry, axis-alignment, closure, right-angle, and parallel-edge signatures before semantic labeling
 - polygon-edge reasoning that derives `PARALLEL`, `PERPENDICULAR`, and `EQUAL_LENGTH` relations plus shape hypotheses such as triangle, rectangle, square, parallelogram, and quadrilateral
 - deep-first vision backbone path with DINOv2/OpenCLIP adapter slots and structural fallback
 - visual embedding store for scene retrieval
@@ -210,15 +221,29 @@ Representative entry points:
 
 ## Current Strengths
 
+Recent progress note:
+- hidden-premise retrieval is now hybrid: rule + commonsense script + premise/script/operator memory + trainable script-compatibility scorer
+- review-approved VLSO clusters can now seed premise/script/operator memory, not just concept stores
+- operator support can now be evaluated at the premise level, not only by final answer correctness
+
+
 - strong emphasis on explicit intermediate structure instead of pure text generation
 - good local-first support on RTX 4060 8GB with small-model and symbolic-heavy flows
 - competitive-programming path has real validation and repair, not just code generation
 - VLSO path now supports raw images, detector outputs, structural operator induction from geometry/topology primitives, concept memory, grounded QA, concept-store comparison, cluster-level self-training review, and few-shot visual operator prototypes that learn reusable relation patterns from small image sets
 - VLSO operator families now generalize beyond bag-only scenes toward drawer, door, bottle, box, and tool-like access structures through broader operator derivation rules
 - starter held-out eval assets now exist for VLSO grounded QA, VLSO geometry QA, general CP parser benchmarking, and geometry-only CP parser benchmarking
+- a real-image VLSO benchmark builder and reviewed-gold finalizer now exist for turning downloaded public images into a harder held-out QA set
+- the CP LoRA experiment harness now supports separate held-out evaluation inputs so trained parsers can be compared against heuristic baselines on a different split
 - documentation and tooling already cover practical few-shot data loops
 
 ## Current Limits
+
+Operator self-evolution status:
+- evolved operators are now mined, merged, retained, transfer-tested, and can be persisted across repeated iterations through the SQLite-backed self-evolution loop
+- this is still a starter self-evolution loop, not a fully autonomous lifelong operator invention system
+- the main bottleneck is still cross-domain transfer on larger held-out sets
+
 
 ### General reasoning
 - still a prototype and not a fully learned, end-to-end general reasoner
@@ -232,6 +257,7 @@ Representative entry points:
 - deep backbones improve retrieval and priors, but robust raw-image operator extraction is still not equivalent to a production detector/segmenter stack
 - structural induction is now the primary VLSO reasoning path, but the raw-image parser and topology extraction are still too weak to guarantee fully general scene understanding
 - few-shot concept memory is efficient, but it now acts as adaptation rather than the first source of semantics
+- a starter real-image benchmark now exists at `examples/vlso_real_image_eval.jsonl`, and the current low grounded-QA score confirms that arbitrary internet-image grounding is still the main bottleneck
 - general visual QA accuracy across arbitrary internet images is not solved yet
 
 ## Recommended Next Steps
@@ -241,3 +267,32 @@ Representative entry points:
 3. Train the CP learned parser and compare it against the heuristic parser on a larger held-out set.
 4. Keep `README.md`, `docs/index.md`, and this file aligned whenever new tools are added.
 
+## Progress Tracking
+
+SemOp now has a research-facing progress estimator driven by actual evaluator outputs instead of manual percentages.
+Use `tools/eval/evaluate_operator_intelligence_progress.py` to combine hidden-premise, CP parser, and VLSO grounded QA metrics into six axes:
+- operator architecture
+- premise reasoning
+- shared world model
+- CP structuring
+- raw visual reasoning
+- general operator transfer
+
+The long-range completion plan is documented in `docs/operator_intelligence_to_100_plan.md`.
+
+- access-family hidden goals now explicitly include box/pouch/suitcase/bin in addition to drawer/cabinet/bottle/jar, and premise support operators are injected from hidden-goal structure
+- script compatibility scoring now blends lexical overlap with concept-family compatibility and harder sibling negatives
+
+- the common evaluator now supports `cp_hidden_constraints` and `vlso_real_image` snapshots, so parser-first hidden-constraint evaluation and reviewed real-image VLSO evaluation can be tracked alongside the core starter benches
+- a trainable compatibility experiment path now exists to compare hidden-premise metrics before and after a learned script-compatibility scorer is loaded
+
+
+## Distillation and QLoRA
+
+The project now includes a common teacher-trace export layer via `src/semop/distillation.py` and `tools/eval/export_teacher_traces.py`. Hidden-premise reasoning, CP structuring, and VLSO grounded QA can be exported into a unified JSONL/SFT format for QLoRA experiments.
+
+The distillation exporter also covers `operator_proposal` and `operator_self_evolution` tasks so that operator invention loops can be distilled, not only hidden-premise and VLSO/CP outputs. A generic operator-learning curriculum builder and student-training scaffold now turn those teacher traces into train/val bundles and LoRA/QLoRA-ready SFT runs.
+
+## Shared Doctrine
+
+The repository now treats `docs/multi_agent_operator_doctrine.md` as the top-level engineering rule for all future agents and subprojects: basis operators first, composition and compiler alignment second, task-specific heuristics last.

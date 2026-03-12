@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
@@ -70,6 +70,28 @@ class GoalPreservationCheck:
 
 
 @dataclass
+class PremiseCandidate:
+    premise: str
+    hidden_goal: str = ""
+    candidate_type: str = "required"
+    source: str = "rule"
+    support_score: float = 0.6
+    evidence: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PremiseValidation:
+    premise: str
+    hidden_goal: str = ""
+    status: str = "supported"
+    support_score: float = 0.6
+    contradiction_score: float = 0.0
+    goal_relevance: float = 0.6
+    rationale: str = ""
+    requirement_state: str = "unknown"
+
+
+@dataclass
 class OperatorDecomposition:
     operator_name: str
     basis_operators: List[str] = field(default_factory=list)
@@ -88,6 +110,58 @@ class FunctorHypothesis:
 
 
 @dataclass
+class AnalogicalMatch:
+    query: str
+    score: float = 0.0
+    analogy_type: str = "surface_analogy"
+    shared_basis: List[str] = field(default_factory=list)
+    shared_nodes: List[str] = field(default_factory=list)
+    shared_goals: List[str] = field(default_factory=list)
+    shared_requirements: List[str] = field(default_factory=list)
+    shared_operator_families: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ContextFrame:
+    frame_type: str = "generic_reasoning"
+    reasoning_mode: str = "structure_first"
+    primary_goal: str = ""
+    focus_entities: List[str] = field(default_factory=list)
+    active_constraints: List[str] = field(default_factory=list)
+    missing_requirements: List[str] = field(default_factory=list)
+    satisfied_requirements: List[str] = field(default_factory=list)
+    available_alternatives: List[str] = field(default_factory=list)
+    risk_signals: List[str] = field(default_factory=list)
+    basis_signature: List[str] = field(default_factory=list)
+    operator_view: List[str] = field(default_factory=list)
+    functor_view: List[str] = field(default_factory=list)
+    evidence: List[str] = field(default_factory=list)
+    summary: str = ""
+
+
+@dataclass
+class OperatorInstruction:
+    opcode: str
+    arguments: Dict[str, Any] = field(default_factory=dict)
+    evidence: List[str] = field(default_factory=list)
+    confidence: float = 0.6
+
+
+@dataclass
+class OperatorExecutionReport:
+    satisfied_facts: List[str] = field(default_factory=list)
+    missing_facts: List[str] = field(default_factory=list)
+    derived_decisions: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    support_trace: List[str] = field(default_factory=list)
+    basis_operator_hits: List[str] = field(default_factory=list)
+    basis_operator_axes: Dict[str, str] = field(default_factory=dict)
+    compiler_alignment_score: float = 0.0
+    compiler_findings: List[str] = field(default_factory=list)
+    composition_score: float = 0.0
+    counterexample_repairs: List[str] = field(default_factory=list)
+
+@dataclass
 class StructuredMeaningGraph:
     query: str
     intent: str
@@ -103,11 +177,21 @@ class StructuredMeaningGraph:
     hidden_goals: List[str] = field(default_factory=list)
     hidden_assumptions: List[str] = field(default_factory=list)
     required_premises: List[str] = field(default_factory=list)
+    satisfied_premises: List[str] = field(default_factory=list)
+    missing_premises: List[str] = field(default_factory=list)
     optional_interpretations: List[str] = field(default_factory=list)
+    premise_candidates: List[PremiseCandidate] = field(default_factory=list)
+    premise_validations: List[PremiseValidation] = field(default_factory=list)
     goal_preservation_checks: List[GoalPreservationCheck] = field(default_factory=list)
     operator_decompositions: List[OperatorDecomposition] = field(default_factory=list)
     functor_hypotheses: List[FunctorHypothesis] = field(default_factory=list)
+    operator_instructions: List[OperatorInstruction] = field(default_factory=list)
+    operator_execution: OperatorExecutionReport | None = None
+    analogical_matches: List[AnalogicalMatch] = field(default_factory=list)
+    context_frame: ContextFrame | None = None
     clarification_needed: bool = False
+    clarification_score: float = 0.0
+    clarification_reasons: List[str] = field(default_factory=list)
     plan: List[PlanStep] = field(default_factory=list)
     candidate_actions: List[str] = field(default_factory=list)
     creative_alternatives: List[str] = field(default_factory=list)
@@ -166,11 +250,23 @@ class StructuredMeaningGraph:
         graph.hidden_goals = list(data.get("hidden_goals", []))
         graph.hidden_assumptions = list(data.get("hidden_assumptions", []))
         graph.required_premises = list(data.get("required_premises", []))
+        graph.satisfied_premises = list(data.get("satisfied_premises", []))
+        graph.missing_premises = list(data.get("missing_premises", []))
         graph.optional_interpretations = list(data.get("optional_interpretations", []))
+        graph.premise_candidates = [PremiseCandidate(**item) for item in data.get("premise_candidates", [])]
+        graph.premise_validations = [PremiseValidation(**item) for item in data.get("premise_validations", [])]
         graph.goal_preservation_checks = [GoalPreservationCheck(**item) for item in data.get("goal_preservation_checks", [])]
         graph.operator_decompositions = [OperatorDecomposition(**item) for item in data.get("operator_decompositions", [])]
         graph.functor_hypotheses = [FunctorHypothesis(**item) for item in data.get("functor_hypotheses", [])]
+        graph.operator_instructions = [OperatorInstruction(**item) for item in data.get("operator_instructions", [])]
+        operator_execution = data.get("operator_execution")
+        graph.operator_execution = OperatorExecutionReport(**operator_execution) if operator_execution else None
+        graph.analogical_matches = [AnalogicalMatch(**item) for item in data.get("analogical_matches", [])]
+        context_frame = data.get("context_frame")
+        graph.context_frame = ContextFrame(**context_frame) if context_frame else None
         graph.clarification_needed = bool(data.get("clarification_needed", False))
+        graph.clarification_score = float(data.get("clarification_score", 0.0))
+        graph.clarification_reasons = list(data.get("clarification_reasons", []))
         graph.plan = [PlanStep(**item) for item in data.get("plan", [])]
         graph.candidate_actions = list(data.get("candidate_actions", []))
         graph.creative_alternatives = list(data.get("creative_alternatives", []))
@@ -216,3 +312,16 @@ EXTRACTION_SCHEMA: Dict[str, Any] = {
 
 def _merge_unique(left: List[str], right: List[str]) -> List[str]:
     return list(dict.fromkeys(left + right))
+
+
+
+
+
+
+
+
+
+
+
+
+

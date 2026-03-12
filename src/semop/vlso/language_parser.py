@@ -39,7 +39,13 @@ class VLSOLanguageParser:
         model.constraints.extend(item for item in graph.required_premises if item not in model.constraints)
         model.warnings.extend(graph.warnings)
         model.metadata['hidden_premises'] = list(graph.hidden_assumptions)
+        model.metadata['required_premises'] = list(graph.required_premises)
+        model.metadata['optional_interpretations'] = list(graph.optional_interpretations)
+        model.metadata['premise_candidates'] = [item.__dict__ for item in graph.premise_candidates]
+        model.metadata['premise_validations'] = [item.__dict__ for item in graph.premise_validations]
         model.metadata['goal_preservation_checks'] = [item.__dict__ for item in graph.goal_preservation_checks]
+        model.metadata['clarification_score'] = graph.clarification_score
+        model.metadata['clarification_reasons'] = list(graph.clarification_reasons)
         model.metadata['operator_decompositions'] = [item.__dict__ for item in graph.operator_decompositions]
         model.metadata['functor_hypotheses'] = [item.__dict__ for item in graph.functor_hypotheses]
         model.audit_trace.extend(graph.audit_trace)

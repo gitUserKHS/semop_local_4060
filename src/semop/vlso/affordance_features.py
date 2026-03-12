@@ -107,6 +107,8 @@ class VisualAffordanceFeatureExtractor:
             "height_over_width": height / width,
             "horizontal_elongation": width / height,
             "vertical_elongation": height / width,
+            "center_x_norm": ((box[0] + box[2]) / 2.0) / max(1.0, frame_area ** 0.5),
+            "center_y_norm": ((box[1] + box[3]) / 2.0) / max(1.0, frame_area ** 0.5),
             "vertex_count_norm": min(1.0, self._vertex_count(item) / 12.0),
             "shape_complexity": min(1.0, max(0.0, (self._vertex_count(item) - 4) / 12.0)),
             "overlap_children": min(1.0, overlaps / 4.0),
@@ -125,12 +127,24 @@ class VisualAffordanceFeatureExtractor:
             "right_angle_count_norm": min(1.0, right_angle_count / 4.0),
             "parallel_edge_pair_norm": min(1.0, parallel_edge_pair_count / 4.0),
             "equal_length_pair_norm": min(1.0, equal_length_pair_count / 4.0),
+            "large_region": 1.0 if area / max(1.0, frame_area) >= 0.08 else 0.0,
+            "small_region": 1.0 if area / max(1.0, frame_area) <= 0.025 else 0.0,
+            "rectilinear_bias": min(1.0, max(right_angle_count, parallel_edge_pair_count) / 4.0),
+            "top_strip_candidate": 1.0 if near_top_band >= 1.0 and (width / height) >= 2.0 and relative_area <= 0.22 else 0.0,
+            "side_strip_candidate": 1.0 if near_side_band >= 1.0 and (height / width) >= 1.6 and relative_area <= 0.22 else 0.0,
         }
 
     def _frame_area(self, observation: VisualObservation) -> float:
         size = observation.metadata.get("image_size") or [0, 0]
         if isinstance(size, list) and len(size) == 2:
-            return max(1.0, float(size[0]) * float(size[1]))
+            try:
+                width = float(size[0])
+                height = float(size[1])
+            except (TypeError, ValueError):
+                width = 0.0
+                height = 0.0
+            if width > 0 and height > 0:
+                return max(1.0, width * height)
         boxes = [self._bbox(item) for item in observation.objects if isinstance(item.get("bbox"), list) and len(item.get("bbox")) == 4]
         if not boxes:
             return 1.0
