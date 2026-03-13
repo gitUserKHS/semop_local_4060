@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -25,10 +26,14 @@ from semop import (
     GroundedExplanationEvalCase,
     HiddenPremiseEvalCase,
     OperatorTransferEvalCase,
+    ReviewQueueStore,
     SemOpUnderstandingEvaluator,
     UnifiedSemOpTrainer,
     VLSOReasoner,
     VlsoGroundedEvaluator,
+    collect_review_promotion_decisions,
+    infer_review_severity,
+    review_reasons_from_graph_and_kpis,
 )
 from semop.structures import StructuredMeaningGraph
 
@@ -65,6 +70,12 @@ VISION_STORE_EXAMPLE = {
     'weights': 'data/vlso_samples/trained_affordance_weights.json',
     'review_path': 'data/vlso_download_pipeline_gui/manual_label_reviews.json',
 }
+GUIDED_BOOTSTRAP_SOURCE = 'studio_bootstrap'
+GUIDED_BOOTSTRAP_VARIANTS = (
+    'The route is blocked and approval has not arrived yet. What should I verify before moving?',
+    'Manager approval is still pending. Do I continue the task or stop first?',
+    'The work zone is blocked. Should I reroute now or confirm approval before continuing?',
+)
 SPLIT_OPTIONS = ('train', 'val', 'test')
 VISION_MODE_OPTIONS = ('deep', 'hybrid', 'heuristic')
 VISION_ANSWER_MODE_OPTIONS = ('structured', 'llm')
@@ -449,6 +460,105 @@ def build_vision_payload(query: str, image_path: str, mode: str, answer_mode: st
     return {'world': world.model_dump(), 'answer': answer.model_dump()}
 
 
+def _store_graph_count(store_path: str, source: str, split: str) -> int:
+    if not store_path or not Path(store_path).exists():
+        return 0
+    return CorpusMemoryStore(store_path).count_examples(split=split or None, source=source or None)
+
+
+def _review_queue_snapshot(review_queue_path: str, domain: str) -> dict[str, int]:
+    snapshot = {'pending': 0, 'approved': 0, 'rejected': 0, 'needs_followup': 0, 'total': 0, 'promotable': 0}
+    if not review_queue_path or not Path(review_queue_path).exists():
+        return snapshot
+    store = ReviewQueueStore(review_queue_path)
+    snapshot.update(store.fetch_stats())
+    decisions = collect_review_promotion_decisions(review_queue_path, domain=domain or None)
+    snapshot['promotable'] = sum(1 for _detail, decision in decisions if decision.promotable)
+    return snapshot
+
+
+def _unique_texts(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        normalized = str(item).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _guided_bootstrap_requests(state: StudioState) -> list[CopilotRequest]:
+    context = state.ops_context.strip() or OPS_EXAMPLE['context']
+    domain = state.ops_domain.strip() or OPS_EXAMPLE['domain']
+    scenario = state.ops_scenario.strip() or OPS_EXAMPLE['scenario']
+    queries = _unique_texts([state.ops_query.strip() or OPS_EXAMPLE['query'], *GUIDED_BOOTSTRAP_VARIANTS])
+    return [CopilotRequest(query=query, context=context, domain=domain, scenario=scenario) for query in queries]
+
+
+def _bootstrap_review_reasons(graph: StructuredMeaningGraph, kpis: dict[str, Any]) -> list[str]:
+    reasons = review_reasons_from_graph_and_kpis(graph, kpis)
+    if graph.source_context.strip() and 'grounding_review' not in reasons:
+        reasons.append('grounding_review')
+    reasons.append('approved_training_trace')
+    return _unique_texts(reasons)
+
+
+def _gate_diagnosis(payload: dict[str, object] | None) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {'observations': [], 'actions': []}
+    benchmark = payload.get('benchmark', {}) if isinstance(payload.get('benchmark'), dict) else {}
+    gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
+    promoted = payload.get('promoted_review_benchmarks', {}) if isinstance(payload.get('promoted_review_benchmarks'), dict) else {}
+    corpus = payload.get('benchmark_corpus', {}) if isinstance(payload.get('benchmark_corpus'), dict) else {}
+    training = payload.get('training', {}) if isinstance(payload.get('training'), dict) else {}
+
+    observations: list[str] = []
+    actions: list[str] = []
+
+    promoted_count = int(promoted.get('promoted_review_count', 0) or 0)
+    grounding_cases = int(promoted.get('grounding_case_count', 0) or 0) + int(corpus.get('grounding_case_count', 0) or 0)
+    compiler_cases = int(promoted.get('compiler_case_count', 0) or 0) + int(corpus.get('compiler_case_count', 0) or 0)
+    seed_graphs = int(training.get('trained_on_graphs', 0) or 0)
+
+    if promoted_count == 0:
+        observations.append('No approved review traces were promoted into the learning loop yet.')
+        actions.append('Run Guided starter loop once to seed approved training traces automatically.')
+    if seed_graphs < 3:
+        observations.append(f'The current seed graph count is only {seed_graphs}, so analogy learning is still thin.')
+        actions.append('Add at least 3-4 closely related starter queries so the analogy policy can compare similar cases.')
+    if float(benchmark.get('analogy_usefulness', 0.0) or 0.0) <= 0.0:
+        observations.append('Analogy usefulness is zero, which usually means the seed graphs do not overlap enough yet.')
+    if grounding_cases == 0:
+        observations.append('No grounded explanation benchmark cases were available for the gate.')
+        actions.append('Approve at least one grounded trace with SOP context so grounding cases can be derived.')
+    elif float(benchmark.get('grounded_explanation_fidelity', 0.0) or 0.0) <= 0.0:
+        observations.append('Grounding cases exist, but the current bundle did not support their claims or evidence yet.')
+        actions.append('Inspect grounded answers and keep approved document-grounded examples in the review queue.')
+    if compiler_cases == 0:
+        observations.append('No compiler or repair benchmark cases were available for the gate.')
+        actions.append('Keep at least one approved grounding or compiler review so repair cases can be derived automatically.')
+    elif float(benchmark.get('repair_success_rate', 0.0) or 0.0) <= 0.0:
+        observations.append('Repair cases exist, but the learned repair program did not fire on them yet.')
+        actions.append('Seed approved grounded traces first, then rerun the gate so document and claim repair cases are harvested.')
+    if gate.get('blocking_reasons') and not actions:
+        actions.append('Open the blocking reasons below and fix the lowest-scoring axis first.')
+    return {'observations': _unique_texts(observations), 'actions': _unique_texts(actions)}
+
+
+def _render_diagnosis_blocks(payload: dict[str, object] | None) -> str:
+    diagnosis = _gate_diagnosis(payload)
+    observations = diagnosis.get('observations', [])
+    actions = diagnosis.get('actions', [])
+    if not observations and not actions:
+        return ''
+    return ''.join([
+        _info_block('What this result means', observations or '-'),
+        _info_block('Beginner next step', actions or '-'),
+    ])
+
+
 def _render_ops_summary(payload: dict[str, object]) -> str:
     metrics = ''.join([
         _metric_card('Domain', payload.get('domain')),
@@ -508,6 +618,7 @@ def _render_unified_gate_summary(payload: dict[str, object]) -> str:
     gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
     promoted = payload.get('promoted_review_benchmarks', {}) if isinstance(payload.get('promoted_review_benchmarks'), dict) else {}
     corpus = payload.get('benchmark_corpus', {}) if isinstance(payload.get('benchmark_corpus'), dict) else {}
+    guided = payload.get('guided_bootstrap', {}) if isinstance(payload.get('guided_bootstrap'), dict) else {}
     metrics = ''.join([
         _metric_card('Accepted', gate.get('accepted')),
         _metric_card('Unseen transfer', benchmark.get('unseen_transfer')),
@@ -521,9 +632,13 @@ def _render_unified_gate_summary(payload: dict[str, object]) -> str:
         _info_block('Blocking reasons', gate.get('blocking_reasons') or gate.get('slice_blocking_reasons') or '-'),
         _info_block('Decision path', gate.get('decision_path') or '-'),
         _info_block('Promoted review cases', promoted.get('promoted_review_count') or '-'),
+        _info_block('Grounding cases', promoted.get('grounding_case_count') or corpus.get('grounding_case_count') or '-'),
+        _info_block('Repair cases', promoted.get('compiler_case_count') or corpus.get('compiler_case_count') or '-'),
+        _info_block('Guided source', guided.get('source_used') or '-'),
         _info_block('Persistent corpus added', corpus.get('added_case_count') or '-'),
     ])
-    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+    diagnosis = _render_diagnosis_blocks(payload)
+    return f"<div class='summary-grid'>{metrics}</div>{details}{diagnosis}{_raw_details(payload)}"
 
 
 def _render_understanding_summary(payload: dict[str, object]) -> str:
@@ -552,6 +667,7 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         'vision': 'Vision-grounded reasoning result',
         'unified_training': 'Unified SemOp training result',
         'unified_benchmark_gate': 'Unified benchmark gate result',
+        'guided_learning': 'Guided starter learning result',
         'understanding_eval': 'Overall understanding benchmark',
     }
     if kind == 'ops':
@@ -560,7 +676,7 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         body = _render_vision_summary(payload)
     elif kind == 'unified_training':
         body = _render_unified_training_summary(payload)
-    elif kind == 'unified_benchmark_gate':
+    elif kind in {'unified_benchmark_gate', 'guided_learning'}:
         body = _render_unified_gate_summary(payload)
     elif kind == 'understanding_eval':
         body = _render_understanding_summary(payload)
@@ -590,13 +706,17 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
         state.understanding_vlso_real_input,
     ]
     benchmark_ready = sum(1 for path in benchmark_inputs if Path(path).exists())
+    store_graphs = _store_graph_count(state.unified_store_path, state.unified_source, state.unified_split)
+    review_snapshot = _review_queue_snapshot(state.unified_review_queue_path, state.unified_operating_domain)
     cards = [
         (
             'Unified trainer lane',
             'Main artifacts for parser, analogy, repair, and continuous learning.',
             [
                 _metric_card('Corpus store', _status_text(state.unified_store_path, 'connected', 'missing')),
-                _metric_card('Review queue', _status_text(state.unified_review_queue_path, 'connected', 'missing')),
+                _metric_card('Seed graphs', store_graphs),
+                _metric_card('Approved reviews', review_snapshot.get('approved', 0)),
+                _metric_card('Promotable reviews', review_snapshot.get('promotable', 0)),
                 _metric_card('Artifacts ready', f'{artifact_ready}/{len(unified_artifacts)}'),
                 _metric_card('Gate summary', _status_text(str(unified_output_dir / 'benchmark_gate.json'), 'ready', 'not run')),
             ],
@@ -625,6 +745,7 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
             [
                 _metric_card('Benchmark files ready', f'{benchmark_ready}/{len(benchmark_inputs)}'),
                 _metric_card('Transfer input', _status_text(state.unified_transfer_input, 'ready', 'missing')),
+                _metric_card('Pending reviews', review_snapshot.get('pending', 0)),
                 _metric_card('Last result', result_kind or 'none'),
                 _metric_card('Approved-only mode', state.unified_approved_queries_only),
             ],
@@ -668,7 +789,7 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             "<h2>Start from a single example, then move into the training loop.</h2>"
             f"<ul class='spotlight-list'>{tips}</ul></div>"
         )
-    if kind == 'unified_benchmark_gate':
+    if kind in {'unified_benchmark_gate', 'guided_learning'}:
         gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
         benchmark = payload.get('benchmark', {}) if isinstance(payload.get('benchmark'), dict) else {}
         title = 'The benchmark gate is open.' if gate.get('accepted') else 'The benchmark gate is still blocked.'
@@ -677,8 +798,11 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             f"Grounded fidelity: {_render_value(benchmark.get('grounded_explanation_fidelity'))}",
             f"Repair success: {_render_value(benchmark.get('repair_success_rate'))}",
         ]
+        diagnosis = _gate_diagnosis(payload)
+        notes.extend(diagnosis.get('observations', [])[:2])
+        notes.extend(diagnosis.get('actions', [])[:2])
         if gate.get('blocking_reasons'):
-            notes.extend(str(item) for item in gate.get('blocking_reasons', [])[:3])
+            notes.extend(str(item) for item in gate.get('blocking_reasons', [])[:2])
     elif kind == 'unified_training':
         title = 'Unified artifacts were exported successfully.'
         notes = [
@@ -775,7 +899,8 @@ def _render_training_section(state: StudioState) -> str:
     <div class="section-head"><div><small class="eyebrow">Training</small><h2>Unified artifact trainer</h2><p>This exports parser, analogy, retained algebra, repair policy, repair utility, multimodal alignment, and continuous-learning artifacts from one corpus store.</p></div></div>
     <form method="post">
       {_render_unified_scope_fields(state)}
-      <div class="actions"><button class="primary" name="action" value="run_unified_training">Run unified trainer</button></div>
+      <div class="info-block"><small>Beginner shortcut</small>If the benchmark gate is stuck at 0.0 for analogy, grounding, or repair, use the guided starter loop once. It seeds approved traces, stores starter graphs, then runs training and the benchmark gate in one pass.</div>
+      <div class="actions"><button class="primary" name="action" value="run_unified_training">Run unified trainer</button><button class="secondary" name="action" value="run_guided_learning">Guided starter loop</button></div>
     </form>
   </section>
 """
@@ -795,7 +920,7 @@ def _render_benchmark_section(state: StudioState) -> str:
         <div><label>VLSO eval JSONL</label><input name="understanding_vlso_input" value="{html.escape(state.understanding_vlso_input)}"></div>
         <div><label>VLSO real-image eval JSONL</label><input name="understanding_vlso_real_input" value="{html.escape(state.understanding_vlso_real_input)}"></div>
       </div>
-      <div class="actions"><button class="primary" name="action" value="run_unified_benchmark_gate">Train + benchmark gate</button><button class="secondary" name="action" value="run_understanding_eval">Run overall understanding benchmark</button></div>
+      <div class="actions"><button class="primary" name="action" value="run_unified_benchmark_gate">Train + benchmark gate</button><button class="secondary" name="action" value="run_guided_learning">Bootstrap + train + gate</button><button class="secondary" name="action" value="run_understanding_eval">Run overall understanding benchmark</button></div>
       <small>The benchmark gate will also derive starter analogy, grounding, and repair cases from the selected corpus store, so you do not have to hand-author every case first.</small>
     </form>
   </section>
@@ -812,7 +937,11 @@ def _render_notes_section() -> str:
 
 class StudioApp:
     def __init__(self) -> None:
-        self.ops = DomainCopilot(mode='heuristic', review_queue_path=UNIFIED_EXAMPLE['review_queue'])
+        pass
+
+    @staticmethod
+    def _copilot(review_queue_path: str | None = None) -> DomainCopilot:
+        return DomainCopilot(mode='heuristic', review_queue_path=review_queue_path or None)
 
     def handle(self, form: dict[str, list[str]]) -> str:
         action = _first(form, 'action', '')
@@ -848,6 +977,8 @@ class StudioApp:
             return state, self._run_unified_training(state)
         if action == 'run_unified_benchmark_gate':
             return state, self._run_unified_benchmark_gate(state)
+        if action == 'run_guided_learning':
+            return self._run_guided_learning(state)
         if action == 'run_understanding_eval':
             return state, self._run_understanding_eval(state)
         return state, ActionOutcome()
@@ -859,7 +990,7 @@ class StudioApp:
             domain=state.ops_domain,
             scenario=state.ops_scenario,
         )
-        result = self.ops.run(request)
+        result = self._copilot(state.unified_review_queue_path).run(request)
         return ActionOutcome(
             flash='Context reasoning finished.',
             flash_tone='success',
@@ -930,6 +1061,75 @@ class StudioApp:
             flash_tone='success',
             result_kind='unified_benchmark_gate',
             result_payload=summary.model_dump(),
+        )
+
+    def _run_guided_learning(self, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        source_used = (state.unified_source or GUIDED_BOOTSTRAP_SOURCE).strip() or GUIDED_BOOTSTRAP_SOURCE
+        seeded_state = replace(state, unified_source=source_used, unified_split='train', unified_approved_queries_only=True)
+        store = CorpusMemoryStore(seeded_state.unified_store_path)
+        review_store = ReviewQueueStore(seeded_state.unified_review_queue_path)
+        existing_approved = {
+            (item.domain, item.scenario, item.query)
+            for item in review_store.fetch_items(status='approved', limit=500)
+        }
+        seeded_queries: list[str] = []
+        approved_items = 0
+        for request in _guided_bootstrap_requests(seeded_state):
+            result = self._copilot(None).run(request)
+            store.upsert_graph(result.graph, source=source_used, split='train')
+            store.upsert_premise_operator_memory(result.graph, source=source_used, split='train')
+            seeded_queries.append(request.query)
+            reasons = _bootstrap_review_reasons(result.graph, result.kpis.model_dump())
+            severity = infer_review_severity(request.domain, request.scenario, reasons, result.kpis.model_dump())
+            key = (request.domain, request.scenario, request.query)
+            if key in existing_approved:
+                continue
+            item_id = review_store.enqueue(
+                domain=request.domain,
+                scenario=request.scenario,
+                query=request.query,
+                reasons=reasons,
+                answer_text=result.answer_text,
+                kpis=result.kpis.model_dump(),
+                audit_items=[{'stage': item.stage, 'detail': item.detail} for item in result.audit_items],
+                context_text=request.context,
+                graph_payload=result.graph.model_dump(),
+                severity=severity,
+            )
+            review_store.update_status(item_id, 'approved', 'SemOp Studio guided starter trace.')
+            existing_approved.add(key)
+            approved_items += 1
+        graphs = _load_store_graphs(seeded_state.unified_store_path, seeded_state.unified_source, seeded_state.unified_split)
+        summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+            seeded_state.unified_store_path,
+            seeded_state.unified_output_dir,
+            source=seeded_state.unified_source or None,
+            split=seeded_state.unified_split,
+            review_store_path=seeded_state.unified_review_queue_path or None,
+            approved_queries_only=seeded_state.unified_approved_queries_only,
+            hidden_premise_cases=_load_hidden_premise_cases(seeded_state.understanding_hidden_input),
+            transfer_cases=_load_operator_transfer_cases(seeded_state.unified_transfer_input),
+            analogy_cases=_derive_starter_analogy_cases(graphs),
+            grounding_cases=_derive_starter_grounding_cases(graphs),
+            compiler_cases=_derive_starter_compiler_cases(graphs),
+            vlso_cases=_load_vlso_cases(seeded_state.understanding_vlso_input),
+            baseline_summary_path=seeded_state.unified_baseline_summary_path or None,
+            operating_domain=seeded_state.unified_operating_domain or None,
+            benchmark_corpus_path=seeded_state.unified_benchmark_corpus_path or None,
+        )
+        payload = summary.model_dump()
+        payload['guided_bootstrap'] = {
+            'source_used': source_used,
+            'split_used': seeded_state.unified_split,
+            'seeded_query_count': len(_unique_texts(seeded_queries)),
+            'approved_review_count': approved_items,
+            'queries': _unique_texts(seeded_queries),
+        }
+        return seeded_state, ActionOutcome(
+            flash=f'Guided starter loop seeded {len(_unique_texts(seeded_queries))} starter traces and approved {approved_items} reviews before rerunning the gate.',
+            flash_tone='success',
+            result_kind='guided_learning',
+            result_payload=payload,
         )
 
     @staticmethod
@@ -1039,9 +1239,9 @@ pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; over
       <h2>Use the same order every time.</h2>
       <ol>
         <li>Run the ops or vision example to confirm local reasoning works.</li>
-        <li>Launch Unified trainer on your corpus store.</li>
-        <li>Run Train + benchmark gate to score the new artifact bundle.</li>
-        <li>Inspect the result console and keep only accepted bundles.</li>
+        <li>If the gate is blocked at 0.0, use Guided starter loop once.</li>
+        <li>Then rerun Train + benchmark gate on the same store.</li>
+        <li>Inspect the diagnosis and keep only accepted bundles.</li>
       </ol>
       <div class="hero-preview-wrap">{vision_preview_html}</div>
     </div>

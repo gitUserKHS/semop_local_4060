@@ -23,6 +23,8 @@ Then open:
 - benchmark-gated learning
 - compact result inspection
 
+If the benchmark gate is blocked with `0.0` on analogy, grounding, or repair, use the GUI button `Guided starter loop` once. It seeds starter graphs, writes approved review traces, and reruns training plus the gate automatically.
+
 If you need the older all-in-one power-user lab, you can still run:
 
 ```bash
