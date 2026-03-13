@@ -138,3 +138,9 @@ All future work should follow the doctrine in `docs/multi_agent_operator_doctrin
 - `src/semop/multimodal_alignment_memory.py` now retains visual-language alignment traces and can project hidden goals, required premises, and functors back into new visual queries.
 - `src/semop/retained_operator_algebra.py` now tracks activation success and can retire low-utility retained operators instead of reusing them forever.
 - `src/semop/continuous_learning.py` now exports runtime traces, graph supervision, and SFT rows into a continuous-learning bundle for later retraining.
+- `src/semop/operator_repair.py` now synthesizes typed multi-step repair proposals, applies reject gates for unsafe actions such as unsupported-claim trimming, and records `repair_rejected:*` decisions for downstream learning.
+- `src/semop/continuous_learning.py` now exports applied and rejected repair-program traces so successful repairs feed back into later parser and operator training.
+
+
+- `src/semop/repair_utility.py` now learns expected repair utility from post-repair benchmark-like deltas and lets runtime reject low-value repair actions or programs.
+- `src/semop/unified_benchmark.py` now reinjects promoted review graphs and repair-trace graphs into unified parser, retained operator, repair-program, and repair-utility training.

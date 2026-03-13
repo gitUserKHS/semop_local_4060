@@ -148,6 +148,15 @@ class OperatorInstruction:
 
 
 @dataclass
+class ClaimGrounding:
+    claim: str
+    grounded: bool = False
+    support_kind: str = "unsupported"
+    supports: List[str] = field(default_factory=list)
+    score: float = 0.0
+
+
+@dataclass
 class OperatorExecutionReport:
     satisfied_facts: List[str] = field(default_factory=list)
     missing_facts: List[str] = field(default_factory=list)
@@ -160,6 +169,8 @@ class OperatorExecutionReport:
     compiler_findings: List[str] = field(default_factory=list)
     composition_score: float = 0.0
     counterexample_repairs: List[str] = field(default_factory=list)
+    claim_groundings: List[ClaimGrounding] = field(default_factory=list)
+    claim_grounding_score: float = 0.0
 
 @dataclass
 class StructuredMeaningGraph:
@@ -260,7 +271,12 @@ class StructuredMeaningGraph:
         graph.functor_hypotheses = [FunctorHypothesis(**item) for item in data.get("functor_hypotheses", [])]
         graph.operator_instructions = [OperatorInstruction(**item) for item in data.get("operator_instructions", [])]
         operator_execution = data.get("operator_execution")
-        graph.operator_execution = OperatorExecutionReport(**operator_execution) if operator_execution else None
+        if operator_execution:
+            payload = dict(operator_execution)
+            payload["claim_groundings"] = [ClaimGrounding(**item) for item in payload.get("claim_groundings", [])]
+            graph.operator_execution = OperatorExecutionReport(**payload)
+        else:
+            graph.operator_execution = None
         graph.analogical_matches = [AnalogicalMatch(**item) for item in data.get("analogical_matches", [])]
         context_frame = data.get("context_frame")
         graph.context_frame = ContextFrame(**context_frame) if context_frame else None
@@ -312,6 +328,7 @@ EXTRACTION_SCHEMA: Dict[str, Any] = {
 
 def _merge_unique(left: List[str], right: List[str]) -> List[str]:
     return list(dict.fromkeys(left + right))
+
 
 
 

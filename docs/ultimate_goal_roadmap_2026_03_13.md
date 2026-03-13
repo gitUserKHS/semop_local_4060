@@ -1,4 +1,4 @@
-# Ultimate Goal Roadmap (2026-03-13)
+﻿# Ultimate Goal Roadmap (2026-03-13)
 
 ## Goal
 
@@ -21,6 +21,25 @@ Implemented:
 - retained repair-program memory with counterexample-conditioned repair synthesis
 - unified benchmark artifacts for parser, analogy, retained algebra, repair policy, and retained repair programs
 
+## Progress Estimate
+
+This is a system-design progress estimate, not a claim that the research problem is solved.
+
+- architecture coverage: about `80-85%`
+  - shared graph, analogy, compiler, repair, grounding, benchmark, and continuous-learning loops exist in code
+- policy and operationalization: about `85-90%`
+  - review promotion, benchmark gate, slice baseline checks, severity weighting, and persistent corpora are wired in
+- learned generalization: about `45-60%`
+  - parser-first and retained memories exist, but broad data coverage and repeated retraining are still the main bottleneck
+- end-goal readiness overall: about `60-70%`
+  - the scaffold is strong; the main remaining gap is not missing subsystems but scaling supervised traces, multimodal alignment, and benchmarked transfer
+
+What remains largest:
+1. make learned parsing dominate heuristics on a larger share of inputs
+2. improve real multimodal grounding quality on diverse visual evidence
+3. close the loop from retained operator usage outcomes back into parser/operator retraining
+4. enforce claim-level grounded explanation checking, not only graph-level grounding
+5. run the continuous-learning loop repeatedly on larger reviewed corpora and prove benchmark gains across unseen slices
 ## Remaining Work To Reach The Architecture Limit
 
 ### 1. Learned parser dominance
@@ -61,15 +80,21 @@ Concrete implementation path:
 
 ### 4. Typed repair program search
 
+Progress now in code:
+- `src/semop/operator_repair.py` synthesizes typed multi-step proposals for hidden-goal prerequisite repair, document grounding repair, visual grounding repair, claim-grounding repair, and functor repair.
+- `src/semop/retained_repair_programs.py` now learns multi-step repair compositions from successful repair traces and keeps utility-weighted sequence records.
+- `src/semop/repair_utility.py` now learns expected repair utility from post-repair benchmark-like deltas and lets runtime reject low-value repair actions or programs.
+- `src/semop/unified_benchmark.py` now reinjects promoted review graphs and repair-trace graphs into parser, retained operator, repair-program, and repair-utility training.
+
 Still needed:
-- synthesize multi-step repair programs over typed compiler failures, not only select stored sequences
-- learn when a repair should be rejected instead of applied
-- feed successful repairs back into parser and operator training
+- scale repair utility learning with larger reviewed corpora and later benchmark outcomes, not only current local delta signals
+- add slice-specific utility gates so high-risk scenarios can reject repairs that look acceptable on global averages
+- retire or demote repair programs that repeatedly fail continuous-learning benchmark gates over time
 
 Concrete implementation path:
-1. treat `repair_applied:*` traces as repair programs with typed preconditions
-2. train a repair-program proposer over compiler findings and graph state
-3. add verifier gates for unsafe or low-utility repairs
+1. treat `repair_applied:*` and `repair_rejected:*` traces as repair-program and utility supervision with typed preconditions
+2. accumulate slice-aware post-repair outcome deltas from benchmark runs into the repair-utility artifact
+3. use continuous gate outcomes to retire low-utility repair programs and reinforce high-transfer ones
 
 ### 5. Grounded explanation fidelity
 
@@ -120,3 +145,6 @@ The next implementation should only be accepted if it improves at least one of:
 - repair synthesis quality
 - grounded explanation fidelity
 - unified continuous learning
+
+
+

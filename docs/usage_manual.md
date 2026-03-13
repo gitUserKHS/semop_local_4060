@@ -10,13 +10,29 @@ Code layout reference:
 If you just want to test the project without learning commands first, run:
 
 ```bash
+.\.venv312\Scripts\python.exe semop_studio_gui.py
+```
+
+Then open:
+- `http://127.0.0.1:8780`
+
+`semop_studio_gui.py` is the friendlier default surface for:
+- context reasoning
+- vision-grounded reasoning
+- unified artifact training
+- benchmark-gated learning
+- compact result inspection
+
+If you need the older all-in-one power-user lab, you can still run:
+
+```bash
 .\.venv312\Scripts\python.exe semop_easy_gui.py
 ```
 
 Then open:
 - `http://127.0.0.1:8770`
 
-This single GUI lets you:
+That advanced GUI still lets you:
 - test warehouse and SOP reasoning
 - test competitive-programming analysis
 - ask image-grounded questions on `data\scene.png` or your own image

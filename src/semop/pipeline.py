@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from copy import deepcopy
 import json
@@ -43,6 +43,7 @@ class StructuredMeaningPipeline:
         retained_algebra_path: str | None = None,
         repair_policy_path: str | None = None,
         repair_program_path: str | None = None,
+        repair_utility_path: str | None = None,
         multimodal_alignment_path: str | None = None,
     ):
         self.mode = mode
@@ -68,7 +69,7 @@ class StructuredMeaningPipeline:
         self.unified_parser = LearnedUnifiedParser(model_path=unified_parser_path) if unified_parser_path else None
         self.parser_dominance_threshold = self.unified_parser.model.dominance_threshold if self.unified_parser is not None else 0.0
         self.retained_algebra = RetainedOperatorAlgebra(model_path=retained_algebra_path) if retained_algebra_path else None
-        self.repair_engine = OperatorRepairEngine(repair_policy_path=repair_policy_path, repair_program_path=repair_program_path)
+        self.repair_engine = OperatorRepairEngine(repair_policy_path=repair_policy_path, repair_program_path=repair_program_path, repair_utility_path=repair_utility_path)
         self.multimodal_alignment = MultimodalAlignmentMemory(model_path=multimodal_alignment_path) if multimodal_alignment_path else None
         self.retained_algebra_path = retained_algebra_path
         self.logical_weight_path = logical_weight_path
@@ -942,6 +943,7 @@ class StructuredMeaningPipeline:
             )
         )
         return steps
+
 
 
 

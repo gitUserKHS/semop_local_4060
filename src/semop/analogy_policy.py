@@ -141,6 +141,87 @@ class AnalogyPolicyTrainer:
         )
         return AnalogyPolicyTrainingSummary(output_path=str(output), trained_on_pairs=model.trained_on_pairs, model=model.model_dump())
 
+    def train_from_graphs(
+        self,
+        graphs: List[StructuredMeaningGraph],
+        output_path: str | Path,
+        epochs: int = 120,
+        learning_rate: float = 0.18,
+    ) -> AnalogyPolicyTrainingSummary:
+        graphs = list(graphs)
+        training_examples = self._build_training_examples(graphs)
+        weights = {
+            'bias_weight': 0.0,
+            'lexical_weight': 0.05,
+            'goal_weight': 0.1,
+            'requirement_weight': 0.1,
+            'missing_weight': 0.1,
+            'relation_weight': 0.1,
+            'operator_weight': 0.1,
+            'node_family_weight': 0.1,
+            'script_weight': 0.05,
+        }
+        loss = 0.0
+        if training_examples:
+            for _ in range(max(1, epochs)):
+                epoch_loss = 0.0
+                for row in training_examples:
+                    features = row.get('features', {})
+                    x = {
+                        'bias_weight': 1.0,
+                        'lexical_weight': float(features.get('lexical_overlap', 0.0)),
+                        'goal_weight': float(features.get('goal_overlap', 0.0)),
+                        'requirement_weight': float(features.get('requirement_overlap', 0.0)),
+                        'missing_weight': float(features.get('missing_overlap', 0.0)),
+                        'relation_weight': float(features.get('relation_overlap', 0.0)),
+                        'operator_weight': float(features.get('operator_overlap', 0.0)),
+                        'node_family_weight': float(features.get('node_family_overlap', 0.0)),
+                        'script_weight': float(features.get('script_overlap', 0.0)),
+                    }
+                    y = float(row.get('label', 0.0))
+                    z = sum(weights[key] * value for key, value in x.items())
+                    pred = 1.0 / (1.0 + math.exp(-z))
+                    error = pred - y
+                    epoch_loss += -(y * self._safe_log(pred) + (1.0 - y) * self._safe_log(1.0 - pred))
+                    for key, value in x.items():
+                        weights[key] -= learning_rate * error * value
+                loss = epoch_loss / float(max(1, len(training_examples)))
+
+        model = AnalogyPolicyModel(
+            bias_weight=round(weights['bias_weight'], 4),
+            lexical_weight=round(weights['lexical_weight'], 4),
+            goal_weight=round(weights['goal_weight'], 4),
+            requirement_weight=round(weights['requirement_weight'], 4),
+            missing_weight=round(weights['missing_weight'], 4),
+            relation_weight=round(weights['relation_weight'], 4),
+            operator_weight=round(weights['operator_weight'], 4),
+            node_family_weight=round(weights['node_family_weight'], 4),
+            script_weight=round(weights['script_weight'], 4),
+            support_floor=0.02,
+            plan_guard_weight=round(max(0.5, min(1.8, 0.55 + weights['requirement_weight'] + weights['missing_weight'])), 4),
+            verifier_weight=round(max(0.6, min(2.0, 0.6 + weights['goal_weight'] + weights['requirement_weight'] + weights['missing_weight'])), 4),
+            operator_priority_weight=round(max(0.3, min(1.6, 0.35 + weights['operator_weight'] + weights['node_family_weight'])), 4),
+            trained_on_pairs=max(0, len(graphs) * max(0, len(graphs) - 1) // 2),
+            training_examples=len(training_examples),
+            training_loss=round(loss, 6),
+        )
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    'weights': model.model_dump(),
+                    'trained_on_pairs': model.trained_on_pairs,
+                    'training_examples': len(training_examples),
+                    'training_loss': loss,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding='utf-8',
+        )
+        return AnalogyPolicyTrainingSummary(output_path=str(output), trained_on_pairs=model.trained_on_pairs, model=model.model_dump())
+
     def _build_training_examples(self, graphs: List[StructuredMeaningGraph]) -> List[dict[str, Any]]:
         examples: List[dict[str, Any]] = []
         scorer = AnalogyPolicyScorer(model=AnalogyPolicyModel())
@@ -263,3 +344,4 @@ class AnalogyPolicyScorer:
         if re.match(r'^pass_through_.+_goal$', goal):
             return 'pass_through_barrier_goal'
         return goal
+

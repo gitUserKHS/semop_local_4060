@@ -1,4 +1,4 @@
-from .basis_operators import BASIS_OPERATOR_AXES, basis_operator_axis, canonicalize_basis_signature, infer_basis_operators, normalize_operator_symbol
+﻿from .basis_operators import BASIS_OPERATOR_AXES, basis_operator_axis, canonicalize_basis_signature, infer_basis_operators, normalize_operator_symbol
 from .baseline_runner import BASELINE_SPECS, BaselineRunner, BaselineSpec
 from .context_chunks import TextChunk, split_context_into_chunks
 from .context_understanding import OperatorContextAnalyzer
@@ -9,8 +9,9 @@ from .unified_parser import LearnedUnifiedParser, UnifiedParserModel, UnifiedPar
 from .retained_operator_algebra import RetainedOperatorAlgebra, RetainedOperatorModel, RetainedOperatorRecord, RetainedOperatorTrainer, RetainedOperatorTrainingSummary
 from .operator_repair import OperatorRepairAttempt, OperatorRepairEngine
 from .operator_repair_policy import OperatorRepairPolicyModel, OperatorRepairPolicyScorer, OperatorRepairPolicyTrainer, OperatorRepairPolicyTrainingSummary, train_repair_policy_from_graphs
+from .repair_utility import RepairUtilityModel, RepairUtilityScorer, RepairUtilityTrainer, RepairUtilityTrainingSummary, train_repair_utility_from_graphs
 from .retained_repair_programs import RetainedRepairProgramLibrary, RetainedRepairProgramModel, RetainedRepairProgramRecord, RetainedRepairProgramTrainer, RetainedRepairProgramTrainingSummary, train_retained_repair_programs_from_graphs
-from .unified_benchmark import AnalogyEvalCase, CompilerRepairEvalCase, GroundedExplanationEvalCase, UnifiedBenchmarkHarness, UnifiedBenchmarkSummary, UnifiedSemOpArtifacts, UnifiedSemOpTrainer, UnifiedSemOpTrainingSummary
+from .unified_benchmark import AnalogyEvalCase, BenchmarkGateDecision, BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer, BenchmarkGatedTrainingSummary, BenchmarkSliceSummary, CompilerRepairEvalCase, GroundedExplanationEvalCase, PersistentBenchmarkCorpusSummary, PromotedReviewBenchmarkCases, UnifiedBenchmarkHarness, UnifiedBenchmarkSummary, UnifiedSemOpArtifacts, UnifiedSemOpTrainer, UnifiedSemOpTrainingSummary
 from .cp_knowledge import CpAlgorithmKnowledge, CpDslOperator, CpKnowledgeBase, CpKnowledgeLoader, CpLogicalFrame
 from .cp_corpus import CpCorpusBuilder, CpCorpusRecord
 from .cp_dataset import CpDslExample, load_cp_dsl_examples, save_cp_dsl_examples
@@ -43,6 +44,7 @@ from .labeled_eval import LabeledOpsCase, LabeledOpsCaseResult, LabeledOpsEvalua
 from .logical_grammar import GrammarInductionResult, LogicalGrammarInducer, LogicalPattern, LogicalPatternMatch, LogicalPatternMatcher
 from .memory_prior_eval import MemoryPriorEvaluationResult, MemoryPriorEvaluator, QueryPriorEffect
 from .multimodal_alignment_memory import MultimodalAlignmentMemory, MultimodalAlignmentModel, MultimodalAlignmentRecord, MultimodalAlignmentTrainer, MultimodalAlignmentTrainingSummary, train_multimodal_alignment_from_graphs
+from .operating_policies import DEFAULT_REVIEW_SEVERITY_WEIGHTS, DomainOperatingPolicy, OPERATING_POLICIES, ReviewPromotionDecision, collect_review_promotion_decisions, evaluate_review_promotion, infer_operating_domain, promoted_review_details, resolve_operating_policy, resolve_review_severity_weight, resolve_slice_balance_limit, resolve_slice_thresholds
 from .model_cache import DEFAULT_EMBEDDING_MODEL_ID, EmbeddingModelCache, resolve_embedding_model_id
 from .olympiad_reasoner import OlympiadReasoner
 from .operator_hierarchy import OperatorCompositionPattern, OperatorHierarchyLearner, OperatorHierarchyNode, OperatorHierarchyResult
@@ -66,11 +68,11 @@ from .rag_baseline import PlainRagBaseline, RagBaselineResult
 from .remote_datasets import DownloadedArtifact, RemoteDatasetDownloader
 from .response_synthesizer import ResponseSynthesizer, SynthesizedResponse
 from .script_compatibility import ScriptCompatibilityBreakdown, ScriptCompatibilityModel, ScriptCompatibilityScorer, ScriptCompatibilityTrainer, ScriptCompatibilityTrainingSummary
-from .review_queue import ReviewQueueItem, ReviewQueueStore, review_reasons_from_kpis
+from .review_queue import ReviewQueueItem, ReviewQueueStore, infer_review_severity, normalize_review_severity, review_reasons_from_graph, review_reasons_from_graph_and_kpis, review_reasons_from_kpis, severity_weight
 from .symbolic_arithmetic import ArithmeticReasoner
 from .symbolic_document import DocumentEvidenceReasoner
 from .symbolic_reasoners import SymbolicReasoner
-from .structures import ContextFrame, FunctorHypothesis as GraphFunctorHypothesis, GoalPreservationCheck, OperatorDecomposition as GraphOperatorDecomposition, OperatorExecutionReport, OperatorInstruction, PremiseCandidate, PremiseValidation, SymbolicResult
+from .structures import ClaimGrounding, ContextFrame, FunctorHypothesis as GraphFunctorHypothesis, GoalPreservationCheck, OperatorDecomposition as GraphOperatorDecomposition, OperatorExecutionReport, OperatorInstruction, PremiseCandidate, PremiseValidation, SymbolicResult
 from .transfer_eval import TransferEvaluator
 from .understanding_eval import SemOpUnderstandingEvaluator, UnderstandingEvalSummary
 from .vlso.real_image_eval import RealImageEvalBuilder, RealImageEvalCaseCandidate, RealImageEvalBuildSummary, RealImageEvalFinalizeSummary
@@ -95,6 +97,7 @@ __all__ = [
     "CURATED_PRESETS",
     "CURATED_PUBLIC_DATASETS",
     "CompetitiveProgrammingReasoner",
+    "ClaimGrounding",
     "ContextFrame",
     "ContestProblemStructure",
     "ContestSolution",
@@ -302,6 +305,9 @@ __all__ = [
     "ResponseSynthesizer",
     "ReviewQueueItem",
     "ReviewQueueStore",
+    "infer_review_severity",
+    "normalize_review_severity",
+    "severity_weight",
     "RealImageEvalBuilder",
     "RealImageEvalCaseCandidate",
     "RealImageEvalBuildSummary",
@@ -405,15 +411,62 @@ __all__ = [
     "save_cp_dsl_examples",
     "preset_manifest",
     "resolve_domain_profile",
+    "resolve_operating_policy",
+    "resolve_review_severity_weight",
+    "resolve_slice_balance_limit",
+    "resolve_slice_thresholds",
+    "DEFAULT_REVIEW_SEVERITY_WEIGHTS",
+    "promoted_review_details",
+    "collect_review_promotion_decisions",
+    "evaluate_review_promotion",
+    "infer_operating_domain",
+    "DomainOperatingPolicy",
+    "ReviewPromotionDecision",
+    "OPERATING_POLICIES",
     "resolve_embedding_model_id",
     "review_reasons_from_kpis",
+    "review_reasons_from_graph",
+    "review_reasons_from_graph_and_kpis",
     "split_context_into_chunks",
     "train_repair_policy_from_graphs",
+    "RepairUtilityModel",
+    "RepairUtilityScorer",
+    "RepairUtilityTrainer",
+    "RepairUtilityTrainingSummary",
+    "train_repair_utility_from_graphs",
     "train_retained_repair_programs_from_graphs",
     "train_multimodal_alignment_from_graphs",
     "export_graph_supervision_from_graphs",
     "build_continuous_learning_bundle",
+    "BenchmarkGateDecision",
+    "BenchmarkGateThresholds",
+    "BenchmarkGatedContinuousTrainer",
+    "BenchmarkGatedTrainingSummary",
+    "BenchmarkSliceSummary",
+    "PersistentBenchmarkCorpusSummary",
+    "PromotedReviewBenchmarkCases",
 ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

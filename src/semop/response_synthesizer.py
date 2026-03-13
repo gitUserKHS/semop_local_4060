@@ -237,8 +237,17 @@ class ResponseSynthesizer:
         grounding = self._grounded_evidence_lines(graph)
         if grounding:
             lines.append('Grounding: ' + ' | '.join(grounding[:2]))
+        if report.claim_groundings:
+            grounded = sum(1 for item in report.claim_groundings if item.grounded)
+            lines.append(f'Claim support: {grounded}/{len(report.claim_groundings)} grounded (score={report.claim_grounding_score:.2f})')
+            for item in report.claim_groundings[:2]:
+                if item.grounded and item.supports:
+                    support = item.supports[0].strip().replace('\n', ' ')
+                    lines.append(f'Claim: {item.claim} <- {support[:72]}')
+                elif not item.grounded:
+                    lines.append(f'Unsupported claim: {item.claim}')
         lines.extend(f'Decision: {item}' for item in report.derived_decisions[:4])
-        return lines[:8]
+        return lines[:10]
 
     def _grounded_evidence_lines(self, graph: StructuredMeaningGraph) -> List[str]:
         evidence_lookup = {node.id: node for node in graph.nodes if node.kind == "evidence"}

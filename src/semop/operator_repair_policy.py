@@ -15,6 +15,7 @@ REPAIR_ACTIONS = [
     'bind_requires_edges',
     'attach_document_context_nodes',
     'attach_visual_scene',
+    'trim_unsupported_claims',
     'rebind_functor_object_map',
 ]
 
@@ -103,6 +104,16 @@ class OperatorRepairPolicyTrainer:
             broken.edges = [edge for edge in broken.edges if not (edge.source == 'question' and edge.relation == 'CONDITIONS_ON' and edge.target == 'visual_scene')]
             compile_and_execute(broken)
             examples.append((self._features(broken), 'attach_visual_scene'))
+        if any(result.domain == 'document_grounding' and result.answer.strip() for result in graph.symbolic_results):
+            broken = self._clone_graph(graph)
+            for result in broken.symbolic_results:
+                if result.domain != 'document_grounding' or not result.answer.strip():
+                    continue
+                if ' and ' not in result.answer:
+                    result.answer = result.answer.rstrip('. ') + ' and inspect the hidden sensor.'
+            compile_and_execute(broken)
+            if broken.operator_execution is not None and any(not item.grounded for item in broken.operator_execution.claim_groundings):
+                examples.append((self._features(broken), 'trim_unsupported_claims'))
         if graph.functor_hypotheses:
             broken = self._clone_graph(graph)
             for functor in broken.functor_hypotheses:
@@ -130,6 +141,10 @@ class OperatorRepairPolicyTrainer:
             features.add('has_visual_signal')
         if graph.functor_hypotheses:
             features.add('has_functor')
+        if report is not None and report.claim_groundings:
+            features.add('has_claim_grounding')
+            if any(not item.grounded for item in report.claim_groundings):
+                features.add('has_unsupported_claim')
         return sorted(features)
 
 
@@ -149,6 +164,10 @@ class OperatorRepairPolicyScorer:
             features.add('has_visual_signal')
         if graph.functor_hypotheses:
             features.add('has_functor')
+        if graph.operator_execution is not None and graph.operator_execution.claim_groundings:
+            features.add('has_claim_grounding')
+            if any(not item.grounded for item in graph.operator_execution.claim_groundings):
+                features.add('has_unsupported_claim')
         scored: list[tuple[str, float]] = []
         for action in REPAIR_ACTIONS:
             score = float(self.model.bias.get(action, 0.0))

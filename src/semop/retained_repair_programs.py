@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
@@ -25,6 +25,8 @@ class RetainedRepairProgramRecord:
     support: int = 0
     success_rate: float = 0.0
     average_score: float = 0.0
+    utility_delta: float = 0.0
+    sequence_length: int = 1
     rationale: str = ""
 
     def model_dump(self) -> dict[str, Any]:
@@ -82,6 +84,7 @@ class RetainedRepairProgramTrainer:
         engine = OperatorRepairEngine()
         grouped: dict[tuple[tuple[str, ...], tuple[str, ...]], dict[str, Any]] = {}
         for graph in graphs:
+            self._harvest_repair_trace(graph, grouped)
             for broken in self._synthetic_breakages(graph):
                 broken = compile_and_execute(broken)
                 before_score = float(broken.operator_execution.composition_score) if broken.operator_execution is not None else 0.0
@@ -91,15 +94,12 @@ class RetainedRepairProgramTrainer:
                 report = repaired.operator_execution
                 if report is None:
                     continue
-                actions = [
-                    item.split(":", 1)[1]
-                    for item in report.derived_decisions
-                    if item.startswith("repair_applied:")
-                ]
+                actions = self._applied_actions(repaired)
                 if not actions:
                     continue
                 after_score = float(report.composition_score)
-                if after_score < before_score:
+                utility_delta = self._utility_delta(broken, repaired)
+                if after_score < before_score and utility_delta < 0.0:
                     continue
                 flags = tuple(self._feature_flags(broken))
                 key = (tuple(dict.fromkeys(actions)), flags)
@@ -111,7 +111,9 @@ class RetainedRepairProgramTrainer:
                         "trigger_counts": {},
                         "basis_counts": {},
                         "support": 0,
+                        "success_sum": 0.0,
                         "score_sum": 0.0,
+                        "utility_sum": 0.0,
                         "rationales": [],
                     },
                 )
@@ -120,7 +122,9 @@ class RetainedRepairProgramTrainer:
                 for basis in self._basis_signature(broken):
                     bucket["basis_counts"][basis] = int(bucket["basis_counts"].get(basis, 0)) + 1
                 bucket["support"] += 1
+                bucket["success_sum"] += 1.0 if after_score >= before_score else 0.0
                 bucket["score_sum"] += after_score
+                bucket["utility_sum"] += utility_delta
                 rationale = " ".join(findings[:2] + counterexample_repairs[:1]).strip()
                 if rationale:
                     bucket["rationales"].append(rationale)
@@ -133,6 +137,8 @@ class RetainedRepairProgramTrainer:
             trigger_terms = self._top_terms(bucket["trigger_counts"])
             basis_signature = self._top_terms(bucket["basis_counts"], limit=5)
             average_score = round(float(bucket["score_sum"]) / float(max(1, support)), 4)
+            utility_delta = round(float(bucket["utility_sum"]) / float(max(1, support)), 4)
+            success_rate = round(float(bucket["success_sum"]) / float(max(1, support)), 4)
             actions = list(bucket["actions"])
             program_name = actions[0] if actions else "repair_program"
             records.append(
@@ -143,13 +149,15 @@ class RetainedRepairProgramTrainer:
                     basis_signature=basis_signature,
                     required_features=list(bucket["required_features"]),
                     support=support,
-                    success_rate=1.0,
+                    success_rate=success_rate,
                     average_score=average_score,
+                    utility_delta=utility_delta,
+                    sequence_length=len(actions) or 1,
                     rationale=" ".join(dict.fromkeys(bucket["rationales"]))[:240] or "Retained repair program distilled from successful compiler-guided repairs.",
                 )
             )
 
-        records.sort(key=lambda item: (-item.support, -item.average_score, item.program_id))
+        records.sort(key=lambda item: (-item.utility_delta, -item.support, -item.average_score, item.program_id))
         model = RetainedRepairProgramModel(records=records, trained_on_graphs=len(graphs))
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -160,6 +168,48 @@ class RetainedRepairProgramTrainer:
             retained_program_count=len(records),
             model=model.model_dump(),
         )
+
+    @staticmethod
+    def _applied_actions(graph: StructuredMeaningGraph) -> list[str]:
+        report = graph.operator_execution
+        if report is None:
+            return []
+        return list(dict.fromkeys(item.split(":", 1)[1] for item in report.derived_decisions if item.startswith("repair_applied:")))
+
+    def _harvest_repair_trace(self, graph: StructuredMeaningGraph, grouped: dict[tuple[tuple[str, ...], tuple[str, ...]], dict[str, Any]]) -> None:
+        report = graph.operator_execution
+        if report is None:
+            return
+        actions = self._applied_actions(graph)
+        if not actions:
+            return
+        flags = tuple(self._feature_flags(graph))
+        key = (tuple(actions), flags)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "actions": list(actions),
+                "required_features": list(flags),
+                "trigger_counts": {},
+                "basis_counts": {},
+                "support": 0,
+                "success_sum": 0.0,
+                "score_sum": 0.0,
+                "utility_sum": 0.0,
+                "rationales": [],
+            },
+        )
+        for token in self._trigger_terms(list(report.compiler_findings), list(report.counterexample_repairs)):
+            bucket["trigger_counts"][token] = int(bucket["trigger_counts"].get(token, 0)) + 1
+        for basis in self._basis_signature(graph):
+            bucket["basis_counts"][basis] = int(bucket["basis_counts"].get(basis, 0)) + 1
+        bucket["support"] += 1
+        bucket["success_sum"] += 1.0
+        bucket["score_sum"] += float(report.composition_score)
+        bucket["utility_sum"] += self._trace_utility(graph)
+        rationale = " ".join(list(report.compiler_findings[:2]) + list(report.counterexample_repairs[:1]) + list(graph.audit_trace[:1])).strip()
+        if rationale:
+            bucket["rationales"].append(rationale)
 
     def _synthetic_breakages(self, graph: StructuredMeaningGraph) -> list[StructuredMeaningGraph]:
         broken_graphs: list[StructuredMeaningGraph] = []
@@ -175,6 +225,14 @@ class RetainedRepairProgramTrainer:
             broken = StructuredMeaningGraph.from_dict(graph.model_dump())
             broken.nodes = [node for node in broken.nodes if node.id not in {"source_document"} and node.kind != "evidence"]
             broken.edges = [edge for edge in broken.edges if edge.relation not in {"USES_CONTEXT", "HAS_EVIDENCE", "GROUNDED_BY"}]
+            broken_graphs.append(broken)
+        if any(result.domain == "document_grounding" and result.answer.strip() for result in graph.symbolic_results):
+            broken = StructuredMeaningGraph.from_dict(graph.model_dump())
+            for result in broken.symbolic_results:
+                if result.domain != "document_grounding" or not result.answer.strip():
+                    continue
+                if " and " not in result.answer:
+                    result.answer = result.answer.rstrip(". ") + " and inspect the hidden sensor."
             broken_graphs.append(broken)
         if any(any(tag.startswith("multimodal:vision") for tag in node.provenance) for node in graph.nodes):
             broken = StructuredMeaningGraph.from_dict(graph.model_dump())
@@ -201,6 +259,12 @@ class RetainedRepairProgramTrainer:
             flags.append("has_visual_signal")
         if graph.functor_hypotheses:
             flags.append("has_functor")
+        if graph.operator_execution is not None and graph.operator_execution.claim_groundings:
+            flags.append("has_claim_grounding")
+            if any(item.grounded for item in graph.operator_execution.claim_groundings):
+                flags.append("has_grounded_claim")
+            if any(not item.grounded for item in graph.operator_execution.claim_groundings):
+                flags.append("has_unsupported_claim")
         return flags
 
     @staticmethod
@@ -223,6 +287,23 @@ class RetainedRepairProgramTrainer:
         items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
         return [item[0] for item in items[:limit]]
 
+    @classmethod
+    def _utility_delta(cls, broken: StructuredMeaningGraph, repaired: StructuredMeaningGraph) -> float:
+        before_report = broken.operator_execution
+        after_report = repaired.operator_execution
+        before_comp = float(before_report.composition_score) if before_report is not None else 0.0
+        after_comp = float(after_report.composition_score) if after_report is not None else 0.0
+        before_claim = float(before_report.claim_grounding_score) if before_report is not None else 0.0
+        after_claim = float(after_report.claim_grounding_score) if after_report is not None else 0.0
+        return round((0.6 * (after_comp - before_comp)) + (0.4 * (after_claim - before_claim)), 4)
+
+    @classmethod
+    def _trace_utility(cls, graph: StructuredMeaningGraph) -> float:
+        report = graph.operator_execution
+        if report is None:
+            return 0.0
+        return round((0.7 * float(report.composition_score)) + (0.3 * float(report.claim_grounding_score)), 4)
+
 
 class RetainedRepairProgramLibrary:
     def __init__(self, model: RetainedRepairProgramModel | None = None, model_path: str | Path | None = None) -> None:
@@ -243,10 +324,12 @@ class RetainedRepairProgramLibrary:
             trigger_overlap = len(trigger_terms & set(record.trigger_terms)) / float(len(record.trigger_terms) or 1)
             flag_overlap = len(flags & set(record.required_features)) / float(len(record.required_features) or 1)
             basis_overlap = len(basis & set(record.basis_signature)) / float(len(record.basis_signature) or 1)
-            score = (0.45 * trigger_overlap) + (0.25 * flag_overlap) + (0.2 * basis_overlap) + (0.1 * record.success_rate)
+            utility_bonus = max(0.0, float(record.utility_delta))
+            sequence_bonus = min(1.0, float(record.sequence_length) / 3.0)
+            score = (0.35 * trigger_overlap) + (0.2 * flag_overlap) + (0.15 * basis_overlap) + (0.1 * record.success_rate) + (0.1 * utility_bonus) + (0.1 * sequence_bonus)
             if score >= self.model.min_match_score:
                 scored.append((record, round(score, 4)))
-        scored.sort(key=lambda item: (-item[1], -item[0].support, item[0].program_id))
+        scored.sort(key=lambda item: (-item[1], -item[0].utility_delta, -item[0].support, item[0].program_id))
         return scored
 
     def synthesize_actions(
@@ -282,6 +365,8 @@ class RetainedRepairProgramLibrary:
             actions.append("attach_visual_scene")
         if "functor" in text or "object map" in text:
             actions.append("rebind_functor_object_map")
+        if "claim" in text or "unsupported" in text or "sensor" in text:
+            actions.append("trim_unsupported_claims")
         return actions
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
@@ -30,6 +30,7 @@ class DistillationSftRecord:
     prompt: str
     completion: str
     task: str
+    metadata: dict[str, Any] | None = None
 
     def model_dump(self) -> dict[str, Any]:
         return asdict(self)
@@ -320,3 +321,4 @@ class TeacherTraceExporter:
             f"Question:\n{record.input_text}\n\n"
             f"Teacher trace context:\n{json.dumps(record.teacher_trace, ensure_ascii=False)}"
         )
+

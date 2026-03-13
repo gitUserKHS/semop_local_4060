@@ -116,6 +116,7 @@ data/customer_eval*.jsonl
 tests/*_smoke.json
 tests/*_smoke.jsonl
 tests/*_smoke/
+tests/*_debug.json
 tests/*_summary.json
 tests/*_plan*.jsonl
 tests/*_manifest*.json

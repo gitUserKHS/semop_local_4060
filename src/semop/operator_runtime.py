@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Dict, List
 
 from .basis_operators import BASIS_OPERATOR_AXES, basis_operator_axis, canonicalize_basis_signature, infer_basis_operators, normalize_operator_symbol
 from .commonsense_kb import concept_label
-from .structures import OperatorExecutionReport, OperatorInstruction, StructuredMeaningGraph
+from .structures import ClaimGrounding, OperatorExecutionReport, OperatorInstruction, StructuredMeaningGraph
 
 
 @dataclass
@@ -279,13 +280,24 @@ class OperatorCompositionVerifier:
             repairs.extend(grounding_repairs)
         if graph.source_context.strip() or any(any(tag.startswith('multimodal:vision') for tag in node.provenance) for node in graph.nodes):
             scores.append(grounding_score)
+        claim_score, claim_groundings, claim_findings, claim_repairs = self._check_claim_grounding(graph, report)
+        if claim_groundings:
+            report.claim_groundings = claim_groundings[:6]
+            report.claim_grounding_score = round(claim_score, 4)
+            findings.extend(claim_findings)
+            repairs.extend(claim_repairs)
+            scores.append(claim_score)
 
         composition_score = round(sum(scores) / float(len(scores)), 4) if scores else 1.0
-        report.compiler_findings = findings[:10]
-        report.counterexample_repairs = list(dict.fromkeys(repairs))[:8]
+        report.compiler_findings = findings[:12]
+        report.counterexample_repairs = list(dict.fromkeys(repairs))[:10]
         report.composition_score = composition_score
         if composition_score < 0.65:
             warning = f'compiler composition risk: score={composition_score:.2f}'
+            if warning not in report.warnings:
+                report.warnings.append(warning)
+        if claim_groundings and claim_score < 0.75:
+            warning = f'claim grounding risk: score={claim_score:.2f}'
             if warning not in report.warnings:
                 report.warnings.append(warning)
         for repair in report.counterexample_repairs[:3]:
@@ -415,6 +427,131 @@ class OperatorCompositionVerifier:
             score -= 0.1
         return max(0.0, score), findings[:3], repairs[:3]
 
+    @classmethod
+    def _check_claim_grounding(cls, graph: StructuredMeaningGraph, report: OperatorExecutionReport) -> tuple[float, List[ClaimGrounding], List[str], List[str]]:
+        claims = cls._candidate_claims(graph)
+        if not claims:
+            return 1.0, [], [], []
+        evidence_texts = cls._grounding_support_texts(graph)
+        operator_texts = list(report.support_trace[:20]) + list(report.derived_decisions[:8]) + list(report.satisfied_facts[:6]) + list(report.missing_facts[:6])
+        claim_groundings: List[ClaimGrounding] = []
+        findings: List[str] = []
+        repairs: List[str] = []
+        grounded_count = 0
+        for claim in claims:
+            tokens = cls._salient_tokens(claim)
+            if not tokens:
+                continue
+            evidence_hits = cls._matching_supports(tokens, evidence_texts)
+            operator_hits = cls._matching_supports(tokens, operator_texts)
+            matched_tokens = cls._matched_tokens(tokens, evidence_hits + operator_hits)
+            score = len(matched_tokens) / float(len(tokens)) if tokens else 0.0
+            grounded = bool(evidence_hits or operator_hits) and score >= 0.34
+            support_kind = 'unsupported'
+            supports: List[str] = []
+            if grounded:
+                grounded_count += 1
+                if evidence_hits and operator_hits:
+                    support_kind = 'mixed'
+                    supports = evidence_hits[:1] + operator_hits[:1]
+                elif evidence_hits:
+                    support_kind = 'evidence'
+                    supports = evidence_hits[:2]
+                else:
+                    support_kind = 'operator_trace'
+                    supports = operator_hits[:2]
+            else:
+                findings.append(f'claim grounding warning: "{claim}" has no explicit evidence or operator trace.')
+                repairs.append(f'repair: attach claim-level evidence or operator trace for "{claim}" or remove the unsupported clause.')
+            claim_groundings.append(
+                ClaimGrounding(
+                    claim=claim,
+                    grounded=grounded,
+                    support_kind=support_kind,
+                    supports=supports,
+                    score=round(score, 4),
+                )
+            )
+        if not claim_groundings:
+            return 1.0, [], [], []
+        return grounded_count / float(len(claim_groundings)), claim_groundings, findings[:4], repairs[:4]
+
+    @staticmethod
+    def _candidate_claims(graph: StructuredMeaningGraph) -> List[str]:
+        claims: List[str] = []
+        for result in graph.symbolic_results:
+            if result.domain == 'document_grounding' and result.answer.strip():
+                claims.extend(OperatorCompositionVerifier._split_claims(result.answer))
+        if not claims and any(edge.source == 'question' and edge.relation == 'GROUNDED_BY' for edge in graph.edges):
+            claims.extend(step.action for step in graph.plan[:2] if step.status == 'valid' and step.action.strip())
+        return list(dict.fromkeys(claims))[:4]
+
+    @staticmethod
+    def _grounding_support_texts(graph: StructuredMeaningGraph) -> List[str]:
+        evidence_lookup = {node.id: node for node in graph.nodes if node.kind == 'evidence'}
+        texts: List[str] = []
+        for edge in graph.edges:
+            if edge.source != 'question' or edge.relation != 'GROUNDED_BY':
+                continue
+            node = evidence_lookup.get(edge.target)
+            if node is None:
+                continue
+            text = str(node.attributes.get('text', node.label)).strip()
+            if text:
+                texts.append(text)
+        for result in graph.symbolic_results:
+            texts.extend(item for item in result.evidence[:2] if item)
+            texts.extend(item for item in result.equations[:1] if item)
+        return list(dict.fromkeys(texts))[:8]
+
+    @staticmethod
+    def _split_claims(text: str) -> List[str]:
+        normalized = re.sub(r'\s+', ' ', str(text).strip())
+        if not normalized:
+            return []
+        parts = re.split(r'[.;\n]+|\s+(?:and|then|but)\s+', normalized)
+        claims: List[str] = []
+        for item in parts:
+            claim = item.strip(' -:|,')
+            if len(claim) >= 6:
+                claims.append(claim)
+        return claims[:4]
+
+    @staticmethod
+    def _salient_tokens(text: str) -> List[str]:
+        stopwords = {
+            'the', 'and', 'then', 'but', 'with', 'from', 'into', 'this', 'that', 'what', 'should', 'would', 'could',
+            'before', 'after', 'need', 'needs', 'must', 'first', 'next', 'have', 'has', 'there', 'here', 'hidden'
+        }
+        tokens: List[str] = []
+        for item in re.findall(r"[A-Za-z가-힣0-9]+", text.lower()):
+            if item in stopwords:
+                continue
+            if any('가' <= char <= '힣' for char in item):
+                if len(item) >= 2:
+                    tokens.append(item)
+            elif len(item) >= 4:
+                tokens.append(item)
+        return list(dict.fromkeys(tokens))[:8]
+
+    @staticmethod
+    def _matching_supports(tokens: List[str], supports: List[str]) -> List[str]:
+        matches: List[str] = []
+        for support in supports:
+            lowered = support.lower()
+            if any(token in lowered for token in tokens):
+                matches.append(support)
+        return matches
+
+    @staticmethod
+    def _matched_tokens(tokens: List[str], supports: List[str]) -> set[str]:
+        matched: set[str] = set()
+        lowered_supports = [item.lower() for item in supports]
+        for token in tokens:
+            if any(token in support for support in lowered_supports):
+                matched.add(token)
+        return matched
+
     @staticmethod
     def _repair_hint_for_missing_basis(operator_name: str, missing: List[str]) -> str:
         hints = {
@@ -445,3 +582,4 @@ def compile_and_execute(graph: StructuredMeaningGraph) -> StructuredMeaningGraph
         if warning not in graph.warnings:
             graph.warnings.append(warning)
     return graph
+

@@ -9,7 +9,7 @@ from .ops_kpi import OpsKpiEvaluator, OpsKpiReport
 from .product_profiles import DomainProfile, resolve_domain_profile
 from .response_synthesizer import ResponseSynthesizer
 from .pipeline import StructuredMeaningPipeline
-from .review_queue import ReviewQueueStore, review_reasons_from_kpis
+from .review_queue import ReviewQueueStore, infer_review_severity, review_reasons_from_graph_and_kpis
 from .structures import StructuredMeaningGraph
 
 
@@ -36,6 +36,7 @@ class CopilotResult:
     audit_items: List[AuditItem]
     queued_for_review: bool = False
     review_reasons: List[str] = field(default_factory=list)
+    review_severity: str = "medium"
 
     def model_dump(self) -> Dict[str, Any]:
         return {
@@ -46,6 +47,7 @@ class CopilotResult:
             "audit_items": [asdict(item) for item in self.audit_items],
             "queued_for_review": self.queued_for_review,
             "review_reasons": self.review_reasons,
+            "review_severity": self.review_severity,
         }
 
     def model_dump_json(self, indent: int = 2, ensure_ascii: bool = False) -> str:
@@ -62,7 +64,7 @@ class CopilotResult:
         lines.append(f"- human audit usefulness: {self.kpis.human_audit_usefulness}")
         lines.append(f"- clarification need rate: {self.kpis.clarification_need_rate}")
         if self.queued_for_review:
-            lines.append(f"- review queue: queued ({', '.join(self.review_reasons)})")
+            lines.append(f"- review queue: queued [{self.review_severity}] ({', '.join(self.review_reasons)})")
         if self.kpis.notes:
             lines.append("")
             lines.append("운영 메모:")
@@ -187,9 +189,15 @@ class DomainCopilot:
     def _enqueue_review_if_needed(self, result: CopilotResult) -> None:
         if self.review_queue is None:
             return
-        reasons = review_reasons_from_kpis(result.kpis.model_dump())
+        reasons = review_reasons_from_graph_and_kpis(result.graph, result.kpis.model_dump())
         if not reasons:
             return
+        severity = infer_review_severity(
+            result.request.domain,
+            result.request.scenario,
+            reasons,
+            result.kpis.model_dump(),
+        )
         self.review_queue.enqueue(
             domain=result.request.domain,
             scenario=result.request.scenario,
@@ -198,6 +206,14 @@ class DomainCopilot:
             answer_text=result.answer_text,
             kpis=result.kpis.model_dump(),
             audit_items=[asdict(item) for item in result.audit_items],
+            context_text=result.request.context,
+            graph_payload=result.graph.model_dump(),
+            severity=severity,
         )
         result.queued_for_review = True
         result.review_reasons = reasons
+        result.review_severity = severity
+
+
+
+

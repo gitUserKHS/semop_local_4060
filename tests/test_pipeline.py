@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -240,14 +240,14 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertEqual(hits[0]['premise'], 'vehicle_present')
 
     def test_operator_algebra_decomposes_hidden_goal_reasoning(self) -> None:
-        graph = StructuredMeaningPipeline(mode="heuristic").run("?紐꾧컧?關肉?揶쎛?遺얜쑓 筌△몿? 筌띾맪?, 椰꾨챷堉긷첎?뉙돱?")
+        graph = StructuredMeaningPipeline(mode="heuristic").run("?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??")
         names = {item.operator_name for item in graph.operator_decompositions}
         self.assertIn("GOAL_PRESERVATION_OPERATOR", names)
         self.assertIn("SERVICE_GOAL_OPERATOR", names)
         self.assertTrue(any(item.name == "ServiceGoalToConstraintFunctor" for item in graph.functor_hypotheses))
 
     def test_vlso_language_parser_projects_hidden_premises_into_world_model(self) -> None:
-        world, graph = VLSOReasoner().language_parser.parse("?紐꾧컧?關肉?揶쎛?遺얜쑓 筌△몿? 筌띾맪?, 椰꾨챷堉긷첎?뉙돱?")
+        world, graph = VLSOReasoner().language_parser.parse("?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??")
         self.assertIn("clean_car_goal", world.goals)
         self.assertIn("vehicle_present", world.constraints)
         self.assertTrue(world.metadata.get('hidden_premises'))
@@ -257,7 +257,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         evaluator = OperatorAlgebraEvaluator(StructuredMeaningPipeline(mode="heuristic"))
         summary = evaluator.evaluate([
             __import__('semop').OperatorAlgebraEvalCase(
-                query="?紐꾧컧?關肉?揶쎛?遺얜쑓 筌△몿? 筌띾맪?, 椰꾨챷堉긷첎?뉙돱?",
+                query="?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??",
                 expected_decompositions=["GOAL_PRESERVATION_OPERATOR", "SERVICE_GOAL_OPERATOR"],
                 expected_functors=["ServiceGoalToConstraintFunctor"],
             )
@@ -482,7 +482,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
                 {'id': 'handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]]},
             ]
         }
-        world = VLSOReasoner(mode='deep').run("???뿺 揶쎛獄쎻뫗肉?筌?굞??獄쏅뗀以??節뚮선???醫됲돱?", visual_payload)
+        world = VLSOReasoner(mode='deep').run("???????좊읈??袁⑸젻泳?④덩?癲?????袁⑸즴??繞??壤굿??苑?????ル㎦??", visual_payload)
         self.assertTrue(any('containment goal' in warning.lower() or 'access-first' in step.lower() for warning in world.warnings for step in world.inferred_steps[:1]) or any('Visual structure and language preconditions' in step for step in world.inferred_steps))
 
     def test_synthesizer_produces_human_readable_answer(self) -> None:
@@ -1787,6 +1787,37 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(result.queued_for_review)
         self.assertTrue(pending)
 
+    def test_review_queue_persists_graph_snapshot_and_context(self) -> None:
+        db_path = os.path.join(os.path.dirname(__file__), 'review_queue_graph_snapshot.db')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        try:
+            copilot = DomainCopilot(mode='heuristic', review_queue_path=db_path)
+            request = CopilotRequest(
+                query='The aisle is blocked and approval is still missing. What should I do with the forklift move?',
+                context=(
+                    'Exception SOP\n'
+                    '- Stop forklift movement when the aisle is blocked.\n'
+                    '- Do not rack-load without supervisor approval and safety clearance.\n'
+                    '- If not urgent, use the staging area and file an incident report.'
+                ),
+                domain='warehouse_exception',
+                scenario='exception_response',
+            )
+            result = copilot.run(request)
+            queue = ReviewQueueStore(db_path)
+            pending = queue.fetch_pending(limit=5)
+            self.assertTrue(result.queued_for_review)
+            self.assertTrue(pending)
+            detail = queue.fetch_item_detail(pending[0].id)
+            self.assertEqual(detail['context_text'], request.context)
+            self.assertIsInstance(detail['graph'], dict)
+            self.assertEqual(detail['graph']['query'], result.graph.query)
+            self.assertEqual(detail['graph']['source_context'], result.graph.source_context)
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+
     def test_compare_baseline_schema_supports_multiple_baselines(self) -> None:
         self.assertIn("lexical_rag", BASELINE_SPECS)
         self.assertIn("first_chunk", BASELINE_SPECS)
@@ -1810,6 +1841,67 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         stats = queue.fetch_stats()
         self.assertEqual(detail["status"], "approved")
         self.assertEqual(stats["approved"], 1)
+
+    def test_review_reason_enrichment_detects_grounding_compiler_and_repair_gaps(self) -> None:
+        from semop import review_reasons_from_graph_and_kpis
+        from semop.structures import ClaimGrounding, OperatorExecutionReport, StructuredMeaningGraph
+
+        graph = StructuredMeaningGraph(query='broken grounding case', intent='goal_directed_reasoning', source_context='Manual: open the drawer first.')
+        graph.operator_execution = OperatorExecutionReport(
+            compiler_findings=[
+                'compiler warning: BROKEN_OPERATOR missing basis REQUIRES',
+                'grounding compiler warning: document-backed reasoning has no explicit GROUNDED_BY evidence edge.',
+                'claim grounding warning: "inspect the hidden sensor" has no explicit evidence or operator trace.',
+            ],
+            composition_score=0.41,
+            counterexample_repairs=['repair: attach document evidence nodes and ground the question on them before answering.'],
+            claim_groundings=[
+                ClaimGrounding(claim='open the drawer first', grounded=True, support_kind='evidence', supports=['Open the drawer first.'], score=1.0),
+                ClaimGrounding(claim='inspect the hidden sensor', grounded=False, support_kind='unsupported', supports=[], score=0.0),
+            ],
+            claim_grounding_score=0.5,
+            derived_decisions=[],
+        )
+        reasons = review_reasons_from_graph_and_kpis(
+            graph,
+            {
+                'invalid_advice_rate': 0.0,
+                'clarification_need_rate': 0.0,
+                'plan_executability': 1.0,
+                'human_audit_usefulness': 1.0,
+                'context_misread_rate': 0.31,
+                'relation_recovery': 0.45,
+            },
+        )
+        self.assertIn('grounding_review', reasons)
+        self.assertIn('claim_grounding_review', reasons)
+        self.assertIn('compiler_validity_gap', reasons)
+        self.assertIn('repair_failure', reasons)
+        self.assertIn('context_misread_review', reasons)
+        self.assertIn('relation_recovery_gap', reasons)
+
+    def test_domain_copilot_enqueues_runtime_review_reasons_for_compiler_gaps(self) -> None:
+        db_path = os.path.join(os.path.dirname(__file__), 'review_queue_runtime_reason_test.db')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        try:
+            copilot = DomainCopilot(mode='heuristic', review_queue_path=db_path)
+            request = CopilotRequest(
+                query='The drawer is closed and I need the folder inside. Should I pull the folder out right now?',
+                domain='general',
+                scenario='qa',
+            )
+            result = copilot.run(request)
+            queue = ReviewQueueStore(db_path)
+            pending = queue.fetch_pending(limit=5)
+            self.assertTrue(result.queued_for_review)
+            self.assertIn('compiler_validity_gap', result.review_reasons)
+            self.assertIn('repair_failure', result.review_reasons)
+            self.assertTrue(pending)
+            self.assertIn('compiler_validity_gap', pending[0].reasons)
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
 
     def test_feedback_rules_are_applied_back_into_copilot(self) -> None:
         rules_path = os.path.join(os.path.dirname(__file__), "feedback_rules_test.json")
@@ -3907,7 +3999,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(response.compiled_execution)
         self.assertTrue(response.context_frame)
         self.assertIn('Decision:', response.to_text())
-        self.assertIn('留λ씫 ?꾨젅??', response.to_text())
+        self.assertIn('?곗궛???ㅽ뻾:', response.to_text())
 
     def test_response_synthesizer_includes_analogical_memories(self) -> None:
         db_path = os.path.join(os.path.dirname(__file__), 'analogical_response_test.db')
@@ -3921,7 +4013,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             graph = StructuredMeaningPipeline(mode='heuristic', memory_store_path=db_path, memory_source='demo').run('The box is closed and I need the file inside. Can I pull it out now?')
             response = ResponseSynthesizer().synthesize(graph)
             self.assertTrue(response.analogical_memories)
-            self.assertIn('?곗긽???щ?:', response.to_text())
+            self.assertIn('??⑥る쭜?????:', response.to_text())
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
@@ -3981,6 +4073,50 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         graph.add_node(Node(id='drawer_handle', label='drawer handle', kind='part', provenance=['multimodal:vision_entity']))
         graph = compile_and_execute(graph)
         self.assertTrue(any('visual reasoning has no explicit GROUNDED_BY visual evidence edge' in item for item in graph.operator_execution.compiler_findings))
+
+    def test_operator_runtime_claim_grounding_flags_unsupported_document_claim(self) -> None:
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        graph = StructuredMeaningPipeline(mode='heuristic').run(
+            'What should I do first?',
+            source_context='Manual:\nOpen the drawer before retrieval.',
+        )
+        graph.symbolic_results = [
+            SymbolicResult(
+                domain='document_grounding',
+                answer='Open the drawer first and inspect the hidden sensor.',
+                evidence=['Open the drawer before retrieval.'],
+                confidence=0.92,
+                source='unit_test',
+            )
+        ]
+        graph = compile_and_execute(graph)
+        self.assertIsNotNone(graph.operator_execution)
+        self.assertTrue(graph.operator_execution.claim_groundings)
+        self.assertLess(graph.operator_execution.claim_grounding_score, 1.0)
+        self.assertTrue(any('claim grounding warning:' in item for item in graph.operator_execution.compiler_findings))
+        self.assertTrue(any((not item.grounded) and 'sensor' in item.claim.lower() for item in graph.operator_execution.claim_groundings))
+
+    def test_response_synthesizer_surfaces_claim_grounding_lines(self) -> None:
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        graph = StructuredMeaningPipeline(mode='heuristic').run(
+            'What should I do first?',
+            source_context='Manual:\nOpen the drawer before retrieval.',
+        )
+        graph.symbolic_results = [
+            SymbolicResult(
+                domain='document_grounding',
+                answer='Open the drawer first and inspect the hidden sensor.',
+                evidence=['Open the drawer before retrieval.'],
+                confidence=0.92,
+                source='unit_test',
+            )
+        ]
+        graph = compile_and_execute(graph)
+        response = ResponseSynthesizer().synthesize(graph)
+        self.assertTrue(any('Claim support:' in item for item in response.compiled_execution))
+        self.assertTrue(any('Unsupported claim:' in item or item.startswith('Claim: ') for item in response.compiled_execution))
 
     def test_retained_operator_trainer_reuses_verified_decompositions(self) -> None:
         from semop import RetainedOperatorTrainer
@@ -4174,6 +4310,120 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
+    def test_operator_repair_policy_trainer_prioritizes_claim_repairs(self) -> None:
+        from semop import OperatorRepairPolicyScorer, OperatorRepairPolicyTrainer, compile_and_execute
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        output_path = os.path.join(os.path.dirname(__file__), 'operator_repair_policy_claim_test.json')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            summary = OperatorRepairPolicyTrainer().train_from_graphs([graph], output_path)
+            self.assertGreater(summary.trained_on_examples, 0)
+            broken = StructuredMeaningGraph.from_dict(graph.model_dump())
+            broken.symbolic_results[0].answer = 'Open the drawer first and inspect the hidden sensor.'
+            broken = compile_and_execute(broken)
+            ranked = OperatorRepairPolicyScorer(model_path=output_path).rank_actions(broken, broken.operator_execution.compiler_findings)
+            self.assertIn('trim_unsupported_claims', ranked[:3])
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_repair_utility_trainer_learns_claim_trim_utility(self) -> None:
+        from semop import RepairUtilityScorer, RepairUtilityTrainer, compile_and_execute
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        output_path = os.path.join(os.path.dirname(__file__), 'repair_utility_claim_test.json')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            summary = RepairUtilityTrainer().train_from_graphs([graph], output_path)
+            self.assertGreater(summary.trained_on_examples, 0)
+            positive = StructuredMeaningGraph.from_dict(graph.model_dump())
+            positive.symbolic_results[0].answer = 'Open the drawer first and inspect the hidden sensor.'
+            positive = compile_and_execute(positive)
+            scorer = RepairUtilityScorer(model_path=output_path)
+            positive_score = scorer.score_action(
+                positive,
+                'trim_unsupported_claims',
+                positive.operator_execution.compiler_findings + positive.operator_execution.counterexample_repairs,
+            )
+            self.assertGreater(positive_score, scorer.model.action_min_utility)
+            unsafe = StructuredMeaningGraph.from_dict(graph.model_dump())
+            unsafe.symbolic_results[0].answer = 'Inspect the hidden sensor.'
+            unsafe = compile_and_execute(unsafe)
+            reject_reason = scorer.rejection_reason(
+                unsafe,
+                'trim_unsupported_claims',
+                unsafe.operator_execution.compiler_findings + unsafe.operator_execution.counterexample_repairs,
+                ['typed_claim_grounding_repair'],
+            )
+            self.assertTrue(isinstance(reject_reason, str) and reject_reason.startswith('low_expected_utility'))
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_operator_repair_engine_uses_utility_model_to_reject_low_value_document_repair(self) -> None:
+        from semop import OperatorRepairEngine, RepairUtilityModel, compile_and_execute
+        from semop.structures import SymbolicResult
+
+        output_path = os.path.join(os.path.dirname(__file__), 'repair_utility_reject_test.json')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        try:
+            model = RepairUtilityModel(
+                action_bias={'attach_document_context_nodes': -1.0},
+                program_bias={'typed_document_grounding_repair': -1.0},
+            )
+            Path(output_path).write_text(json.dumps({'weights': model.model_dump()}, ensure_ascii=False, indent=2), encoding='utf-8')
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            graph.nodes = [node for node in graph.nodes if node.id not in {'source_document'} and node.kind != 'evidence']
+            graph.edges = [edge for edge in graph.edges if edge.relation not in {'USES_CONTEXT', 'HAS_EVIDENCE', 'GROUNDED_BY'}]
+            graph = compile_and_execute(graph)
+            repaired = OperatorRepairEngine(repair_utility_path=output_path).run(graph)
+            self.assertIn('repair_rejected:attach_document_context_nodes', repaired.operator_execution.derived_decisions)
+            self.assertTrue(any('low_expected_utility' in item for item in repaired.audit_trace))
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
     def test_unified_semop_trainer_emits_repair_policy_artifact(self) -> None:
         from semop import UnifiedSemOpTrainer
 
@@ -4210,18 +4460,57 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             self.assertTrue(os.path.exists(training.artifacts.multimodal_alignment_path))
             self.assertTrue(os.path.exists(training.artifacts.repair_policy_path))
             self.assertTrue(os.path.exists(training.artifacts.retained_repair_program_path))
+            self.assertTrue(os.path.exists(training.artifacts.repair_utility_path))
             self.assertTrue(os.path.isdir(training.artifacts.continuous_learning_bundle_dir))
             self.assertGreater(training.graph_supervision.get('exported_examples', 0), 0)
             self.assertGreater(training.multimodal_alignment.get('retained_alignment_count', 0), 0)
             self.assertGreater(training.continuous_learning_bundle.get('trace_count', 0), 0)
             self.assertGreater(training.repair_policy.get('trained_on_examples', 0), 0)
             self.assertGreater(training.retained_repair_programs.get('retained_program_count', 0), 0)
+            self.assertGreater(training.repair_utility.get('trained_on_examples', 0), 0)
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
             if os.path.exists(output_dir):
                 shutil.rmtree(output_dir)
 
+    def test_unified_semop_trainer_reinjects_repair_trace_graphs(self) -> None:
+        from semop import UnifiedSemOpTrainer
+        from semop.structures import SymbolicResult
+
+        db_path = os.path.join(os.path.dirname(__file__), 'repair_trace_reinject_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'repair_trace_reinject_artifacts')
+        for path in [db_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            store = CorpusMemoryStore(db_path)
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first and inspect the hidden sensor.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            store.upsert_graph(graph, source='repair_trace_demo', split='train')
+            training = UnifiedSemOpTrainer().train_from_store(db_path, output_dir, source='repair_trace_demo')
+            self.assertTrue(os.path.exists(training.artifacts.repair_utility_path))
+            self.assertGreater(training.repair_trace_graph_count, 0)
+            self.assertGreater(training.augmented_graph_count, training.trained_on_graphs)
+            self.assertGreater(training.repair_utility.get('trained_on_examples', 0), 0)
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
     def test_multimodal_alignment_memory_projects_visual_goal_constraints(self) -> None:
         from semop import MultimodalAlignmentTrainer
 
@@ -4277,16 +4566,899 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             store.update_status(item_id, 'approved', 'validated by reviewer')
             summary = ContinuousLearningBundleBuilder().build_from_graphs([graph], output_dir, review_store_path=review_db)
             self.assertEqual(summary.trace_count, 1)
+            self.assertEqual(summary.approved_review_count, 1)
+            self.assertEqual(summary.promoted_review_count, 1)
+            self.assertEqual(summary.filtered_review_count, 0)
             self.assertGreaterEqual(summary.sft_record_count, 2)
             self.assertTrue(os.path.exists(os.path.join(output_dir, 'teacher_traces.jsonl')))
             self.assertTrue(os.path.exists(os.path.join(output_dir, 'graph_supervision.jsonl')))
             self.assertTrue(os.path.exists(os.path.join(output_dir, 'continuous_learning_sft.jsonl')))
+            self.assertTrue(os.path.exists(os.path.join(output_dir, 'review_promotion_manifest.json')))
         finally:
             if os.path.exists(review_db):
                 os.remove(review_db)
             if os.path.exists(output_dir):
                 shutil.rmtree(output_dir)
 
+    def test_review_promotion_policy_blocks_invalid_advice_without_override(self) -> None:
+        from semop import evaluate_review_promotion
+
+        blocked = evaluate_review_promotion({
+            'id': 1,
+            'domain': 'general',
+            'query': 'Unsafe case',
+            'reasons': ['invalid_advice_rate'],
+            'answer_text': 'Do not proceed.',
+            'resolution_note': 'Reviewed.',
+            'status': 'approved',
+        })
+        allowed = evaluate_review_promotion({
+            'id': 2,
+            'domain': 'general',
+            'query': 'Grounded case',
+            'reasons': ['grounding_review'],
+            'answer_text': 'Open the drawer first.',
+            'resolution_note': 'Evidence attached.',
+            'status': 'approved',
+        })
+        override = evaluate_review_promotion({
+            'id': 3,
+            'domain': 'general',
+            'query': 'Corrected unsafe case',
+            'reasons': ['invalid_advice_rate', 'approved_training_trace'],
+            'answer_text': 'Stop and escalate.',
+            'resolution_note': 'Manually approved safe trace.',
+            'status': 'approved',
+        })
+        self.assertFalse(blocked.promotable)
+        self.assertTrue(any(item == 'invalid_advice_rate' for item in blocked.blocked_reasons))
+        self.assertTrue(allowed.promotable)
+        self.assertTrue(override.promotable)
+        self.assertTrue(any(item == 'approved_training_trace' for item in override.override_reasons))
+
+    def test_continuous_learning_bundle_filters_non_promoted_reviews(self) -> None:
+        from semop import ContinuousLearningBundleBuilder
+
+        review_db = os.path.join(os.path.dirname(__file__), 'continuous_review_filter.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'continuous_bundle_filter_artifacts')
+        if os.path.exists(review_db):
+            os.remove(review_db)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run('The drawer is closed and I need the folder inside. Should I pull the folder out right now?')
+            store = __import__('semop').ReviewQueueStore(review_db)
+            blocked_id = store.enqueue(domain='general', scenario='unsafe', query='Unsafe case', reasons=['invalid_advice_rate'], answer_text='Do not proceed.', kpis={'invalid_advice_rate': 0.4}, audit_items=[{'stage': 'safety', 'detail': 'unsafe answer corrected'}])
+            allowed_id = store.enqueue(domain='general', scenario='grounding', query=graph.query, reasons=['grounding_review'], answer_text='Open the drawer first.', kpis={'clarification_need_rate': 0.0}, audit_items=[{'stage': 'evidence', 'detail': 'drawer access required'}])
+            store.update_status(blocked_id, 'approved', 'reviewed but not training-safe by default')
+            store.update_status(allowed_id, 'approved', 'accepted for retraining')
+            summary = ContinuousLearningBundleBuilder().build_from_graphs([graph], output_dir, review_store_path=review_db)
+            self.assertEqual(summary.approved_review_count, 2)
+            self.assertEqual(summary.promoted_review_count, 1)
+            self.assertEqual(summary.filtered_review_count, 1)
+            manifest = json.loads(Path(os.path.join(output_dir, 'review_promotion_manifest.json')).read_text(encoding='utf-8'))
+            self.assertEqual(len(manifest), 2)
+            self.assertTrue(any(not item['promotable'] and 'invalid_advice_rate' in item['blocked_reasons'] for item in manifest))
+        finally:
+            if os.path.exists(review_db):
+                os.remove(review_db)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_domain_copilot_enqueues_review_with_severity(self) -> None:
+        from semop import OpsKpiReport
+
+        review_db = os.path.join(os.path.dirname(__file__), 'domain_copilot_severity_review.db')
+        if os.path.exists(review_db):
+            os.remove(review_db)
+        try:
+            copilot = DomainCopilot(review_queue_path=review_db)
+            request = CopilotRequest(
+                query='The aisle is blocked and approval is missing. Should I move the forklift anyway?',
+                domain='warehouse_exception',
+                scenario='exception_response',
+            )
+            graph = StructuredMeaningPipeline(mode='heuristic').run(request.query)
+            result = __import__('semop').CopilotResult(
+                request=request,
+                graph=graph,
+                answer_text='Move it anyway.',
+                kpis=OpsKpiReport(
+                    invalid_advice_rate=0.5,
+                    plan_executability=0.4,
+                    missing_prerequisite_rate=0.6,
+                    context_misread_rate=0.3,
+                    relation_recovery=0.4,
+                    human_audit_usefulness=0.5,
+                    clarification_need_rate=0.0,
+                    notes=['unsafe case'],
+                ),
+                audit_items=[],
+            )
+            copilot._enqueue_review_if_needed(result)
+            self.assertTrue(result.queued_for_review)
+            self.assertEqual(result.review_severity, 'critical')
+            detail = copilot.review_queue.fetch_item_detail(1)
+            self.assertIsNotNone(detail)
+            assert detail is not None
+            self.assertEqual(detail['severity'], 'critical')
+            self.assertAlmostEqual(detail['severity_weight'], 2.25, places=2)
+        finally:
+            if os.path.exists(review_db):
+                os.remove(review_db)
+
+    def test_continuous_learning_bundle_exports_review_severity_weights(self) -> None:
+        from semop import ContinuousLearningBundleBuilder
+
+        review_db = os.path.join(os.path.dirname(__file__), 'continuous_review_severity.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'continuous_bundle_severity_artifacts')
+        if os.path.exists(review_db):
+            os.remove(review_db)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            context = 'Manual:\nOpen the drawer before retrieving the folder.'
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query, source_context=context)
+            store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = store.enqueue(
+                domain='warehouse_exception',
+                scenario='exception_response',
+                query=query,
+                reasons=['grounding_review', 'compiler_validity_gap'],
+                answer_text='Open the drawer first.',
+                kpis={'clarification_need_rate': 0.0},
+                audit_items=[{'stage': 'review', 'detail': 'high-risk correction'}],
+                context_text=context,
+                graph_payload=graph.model_dump(),
+                severity='critical',
+            )
+            store.update_status(item_id, 'approved', 'accepted for high-risk retraining')
+            summary = ContinuousLearningBundleBuilder().build_from_graphs([graph], output_dir, review_store_path=review_db)
+            self.assertEqual(summary.promoted_review_count, 1)
+            self.assertAlmostEqual(summary.promoted_training_weight_total, 2.25, places=2)
+            manifest = json.loads(Path(os.path.join(output_dir, 'review_promotion_manifest.json')).read_text(encoding='utf-8'))
+            promoted = [item for item in manifest if item['promotable']]
+            self.assertEqual(len(promoted), 1)
+            self.assertEqual(promoted[0]['severity'], 'critical')
+            self.assertGreater(promoted[0]['training_weight'], 1.0)
+            rows = [json.loads(line) for line in Path(os.path.join(output_dir, 'continuous_learning_sft.jsonl')).read_text(encoding='utf-8').splitlines() if line.strip()]
+            review_rows = [row for row in rows if row.get('task') == 'continuous_review_correction']
+            self.assertEqual(len(review_rows), 1)
+            self.assertEqual(review_rows[0]['metadata']['severity'], 'critical')
+            self.assertGreater(review_rows[0]['metadata']['training_weight'], 1.0)
+        finally:
+            if os.path.exists(review_db):
+                os.remove(review_db)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_continuous_learning_bundle_exports_claim_grounding_metadata(self) -> None:
+        from semop import ContinuousLearningBundleBuilder
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        review_db = os.path.join(os.path.dirname(__file__), 'continuous_review_claim_grounding.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'continuous_bundle_claim_grounding_artifacts')
+        for path in [review_db]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first and inspect the hidden sensor.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            graph = compile_and_execute(graph)
+            store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = store.enqueue(
+                domain='general',
+                scenario='qa',
+                query=graph.query,
+                reasons=['claim_grounding_review'],
+                answer_text='Open the drawer first.',
+                kpis={'clarification_need_rate': 0.0},
+                audit_items=[{'stage': 'claim_grounding', 'detail': 'unsupported sensor clause removed'}],
+                context_text=graph.source_context,
+                graph_payload=graph.model_dump(),
+                severity='high',
+            )
+            store.update_status(item_id, 'approved', 'accepted for claim grounding retraining')
+            summary = ContinuousLearningBundleBuilder().build_from_graphs([graph], output_dir, review_store_path=review_db)
+            self.assertEqual(summary.promoted_review_count, 1)
+            rows = [json.loads(line) for line in Path(os.path.join(output_dir, 'continuous_learning_sft.jsonl')).read_text(encoding='utf-8').splitlines() if line.strip()]
+            review_rows = [row for row in rows if row.get('task') == 'continuous_review_correction']
+            self.assertEqual(len(review_rows), 1)
+            self.assertGreater(review_rows[0]['metadata']['unsupported_claim_count'], 0)
+            self.assertLess(review_rows[0]['metadata']['claim_grounding_score'], 1.0)
+            self.assertIn('Unsupported claims', review_rows[0]['prompt'])
+            traces = [json.loads(line) for line in Path(os.path.join(output_dir, 'teacher_traces.jsonl')).read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertGreater(traces[0]['metadata']['unsupported_claim_count'], 0)
+        finally:
+            if os.path.exists(review_db):
+                os.remove(review_db)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_continuous_learning_bundle_exports_repair_program_metadata(self) -> None:
+        from semop import ContinuousLearningBundleBuilder, OperatorRepairEngine
+        from semop.structures import SymbolicResult
+
+        output_dir = os.path.join(os.path.dirname(__file__), 'continuous_bundle_repair_program_artifacts')
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first and inspect the hidden sensor.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            repaired = OperatorRepairEngine().run(graph)
+            ContinuousLearningBundleBuilder().build_from_graphs([repaired], output_dir)
+            traces = [json.loads(line) for line in Path(os.path.join(output_dir, 'teacher_traces.jsonl')).read_text(encoding='utf-8').splitlines() if line.strip()]
+            self.assertIn('typed_claim_grounding_repair', traces[0]['teacher_trace']['repair_programs']['applied_programs'])
+            self.assertIn('trim_unsupported_claims', traces[0]['completion_payload']['repair_actions_applied'])
+            self.assertGreater(traces[0]['metadata']['repair_program_count'], 0)
+            rows = [json.loads(line) for line in Path(os.path.join(output_dir, 'continuous_learning_sft.jsonl')).read_text(encoding='utf-8').splitlines() if line.strip()]
+            graph_rows = [row for row in rows if row.get('task') == 'continuous_graph_slots']
+            self.assertEqual(len(graph_rows), 1)
+            self.assertIn('repair_programs_applied', graph_rows[0]['completion'])
+        finally:
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+    def test_benchmark_gated_continuous_trainer_derives_claim_grounding_benchmarks(self) -> None:
+        from semop import BenchmarkGatedContinuousTrainer
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_claim_grounding_review.db')
+        if os.path.exists(review_db):
+            os.remove(review_db)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first and inspect the hidden sensor.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            graph = compile_and_execute(graph)
+            store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = store.enqueue(
+                domain='general',
+                scenario='qa',
+                query=graph.query,
+                reasons=['claim_grounding_review'],
+                answer_text='Open the drawer first.',
+                kpis={'clarification_need_rate': 0.0},
+                audit_items=[{'stage': 'claim_grounding', 'detail': 'unsupported sensor clause removed'}],
+                context_text=graph.source_context,
+                graph_payload=graph.model_dump(),
+                severity='high',
+            )
+            store.update_status(item_id, 'approved', 'accepted for claim grounding benchmark')
+            derived = BenchmarkGatedContinuousTrainer()._derive_promoted_review_benchmarks(review_db)
+            self.assertTrue(derived.grounding_cases)
+            self.assertTrue(any('open the drawer' in item for item in derived.grounding_cases[0].expected_claim_terms))
+            self.assertTrue(any('sensor' in item for item in derived.grounding_cases[0].forbidden_unsupported_claim_terms))
+            self.assertIn('trim_unsupported_claims', derived.compiler_cases[0].expected_repair_terms)
+        finally:
+            if os.path.exists(review_db):
+                os.remove(review_db)
+
+    def test_unified_benchmark_scores_claim_level_grounding_fidelity(self) -> None:
+        from semop import GroundedExplanationEvalCase, UnifiedBenchmarkHarness
+
+        score = UnifiedBenchmarkHarness._evaluate_grounded_case(
+            StructuredMeaningPipeline(mode='heuristic'),
+            GroundedExplanationEvalCase(
+                query='What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+                expected_claim_terms=['open the drawer'],
+                forbidden_unsupported_claim_terms=['hidden sensor'],
+            ),
+        )
+        self.assertGreaterEqual(score, 0.9)
+
+    def test_unified_benchmark_weights_grounding_cases_by_severity(self) -> None:
+        from semop import GroundedExplanationEvalCase, UnifiedBenchmarkHarness, UnifiedSemOpTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_severity_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_severity_artifacts')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            context = 'Manual:\nOpen the drawer before retrieving the folder.'
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query, source_context=context)
+            store = CorpusMemoryStore(db_path)
+            store.upsert_graph(graph, source='severity_benchmark', split='train')
+            training = UnifiedSemOpTrainer().train_from_store(db_path, output_dir, source='severity_benchmark')
+            benchmark = UnifiedBenchmarkHarness().evaluate(
+                training.artifacts,
+                grounding_cases=[
+                    GroundedExplanationEvalCase(
+                        query=query,
+                        source_context=context,
+                        expected_evidence_terms=['open the drawer'],
+                        severity='low',
+                    ),
+                    GroundedExplanationEvalCase(
+                        query=query,
+                        source_context=context,
+                        expected_evidence_terms=['impossible grounding phrase'],
+                        severity='critical',
+                    ),
+                ],
+            )
+            self.assertGreater(benchmark.grounded_explanation_fidelity, 0.25)
+            self.assertLess(benchmark.grounded_explanation_fidelity, 0.4)
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+    def test_benchmark_gated_continuous_trainer_accepts_review_filtered_candidate(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_runtime.db')
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_gate_review.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_artifacts')
+        for path in [db_path, review_db]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            approved_query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            store = CorpusMemoryStore(db_path)
+            pipeline = StructuredMeaningPipeline(mode='heuristic')
+            for query in [
+                approved_query,
+                'I am going to the car wash and traffic is bad, should I walk there?',
+            ]:
+                store.upsert_graph(pipeline.run(query), source='gate_demo', split='train')
+            review_store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = review_store.enqueue(domain='access', scenario='drawer', query=approved_query, reasons=['approved_training_trace'], answer_text='Open the drawer first.', kpis={'clarification_need_rate': 0.0}, audit_items=[{'stage': 'approval', 'detail': 'use as accepted training trace'}])
+            review_store.update_status(item_id, 'approved', 'accepted for retraining')
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='gate_demo',
+                review_store_path=review_db,
+                approved_queries_only=True,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+            )
+            self.assertTrue(summary.gate.accepted)
+            self.assertEqual(summary.training.trained_on_graphs, 1)
+            payload = json.loads(Path(os.path.join(output_dir, 'benchmark_gate.json')).read_text(encoding='utf-8'))
+            self.assertTrue(payload['gate']['accepted'])
+            self.assertEqual(payload['training']['trained_on_graphs'], 1)
+            self.assertTrue(os.path.exists(os.path.join(output_dir, 'accepted_benchmark_summary.json')))
+        finally:
+            for path in [db_path, review_db]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_benchmark_gated_continuous_trainer_derives_benchmarks_from_promoted_reviews(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_promoted_runtime.db')
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_gate_promoted_review.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_promoted_artifacts')
+        for path in [db_path, review_db]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            context = 'Manual:\nOpen the drawer before retrieving the folder.'
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query, source_context=context)
+            store = CorpusMemoryStore(db_path)
+            store.upsert_graph(graph, source='gate_promoted', split='train')
+            review_store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = review_store.enqueue(
+                domain='general',
+                scenario='qa',
+                query=query,
+                reasons=['grounding_review', 'compiler_validity_gap'],
+                answer_text='Open the drawer first.',
+                kpis={'clarification_need_rate': 0.0, 'context_misread_rate': 0.0, 'relation_recovery': 1.0},
+                audit_items=[{'stage': 'evidence', 'detail': 'drawer access required'}],
+                context_text=context,
+                graph_payload=graph.model_dump(),
+            )
+            review_store.update_status(item_id, 'approved', 'accepted for benchmark and retraining')
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='gate_promoted',
+                review_store_path=review_db,
+                approved_queries_only=True,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+            )
+            self.assertEqual(summary.promoted_review_benchmarks['promoted_review_count'], 1)
+            self.assertGreaterEqual(summary.promoted_review_benchmarks['hidden_premise_case_count'], 1)
+            self.assertGreaterEqual(summary.promoted_review_benchmarks['grounding_case_count'], 1)
+            self.assertGreaterEqual(summary.promoted_review_benchmarks['compiler_case_count'], 1)
+            payload = json.loads(Path(os.path.join(output_dir, 'promoted_review_benchmark_cases.json')).read_text(encoding='utf-8'))
+            self.assertEqual(payload['promoted_review_count'], 1)
+            self.assertTrue(payload['grounding_cases'])
+            self.assertTrue(payload['compiler_cases'])
+            self.assertEqual(payload['grounding_cases'][0]['domain'], 'general')
+            self.assertEqual(payload['grounding_cases'][0]['scenario'], 'qa')
+            self.assertEqual(payload['compiler_cases'][0]['domain'], 'general')
+            self.assertEqual(payload['compiler_cases'][0]['scenario'], 'qa')
+        finally:
+            for path in [db_path, review_db]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_benchmark_gated_continuous_trainer_persists_and_reuses_benchmark_corpus(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_corpus_runtime.db')
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_gate_corpus_review.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_corpus_artifacts')
+        second_output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_corpus_artifacts_round2')
+        corpus_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_corpus.json')
+        for path in [db_path, review_db, corpus_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        for path in [output_dir, second_output_dir]:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+        try:
+            query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            context = 'Manual:\nOpen the drawer before retrieving the folder.'
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query, source_context=context)
+            store = CorpusMemoryStore(db_path)
+            store.upsert_graph(graph, source='gate_corpus', split='train')
+            review_store = __import__('semop').ReviewQueueStore(review_db)
+            item_id = review_store.enqueue(
+                domain='general',
+                scenario='qa',
+                query=query,
+                reasons=['grounding_review', 'compiler_validity_gap'],
+                answer_text='Open the drawer first.',
+                kpis={'clarification_need_rate': 0.0, 'context_misread_rate': 0.0, 'relation_recovery': 1.0},
+                audit_items=[{'stage': 'evidence', 'detail': 'drawer access required'}],
+                context_text=context,
+                graph_payload=graph.model_dump(),
+            )
+            review_store.update_status(item_id, 'approved', 'accepted for persistent benchmark corpus')
+            thresholds = BenchmarkGateThresholds(
+                minimum_unseen_transfer=0.0,
+                minimum_analogy_usefulness=0.0,
+                minimum_compiler_validity=0.0,
+                minimum_grounded_explanation_fidelity=0.0,
+                minimum_repair_success_rate=0.0,
+                require_improvement_if_baseline=False,
+            )
+            trainer = BenchmarkGatedContinuousTrainer()
+            first = trainer.train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='gate_corpus',
+                review_store_path=review_db,
+                approved_queries_only=True,
+                thresholds=thresholds,
+                benchmark_corpus_path=corpus_path,
+            )
+            self.assertTrue(os.path.exists(corpus_path))
+            self.assertGreaterEqual(first.benchmark_corpus['added_case_count'], 1)
+            if os.path.exists(review_db):
+                os.remove(review_db)
+            second = trainer.train_evaluate_and_gate(
+                db_path,
+                second_output_dir,
+                source='gate_corpus',
+                thresholds=thresholds,
+                benchmark_corpus_path=corpus_path,
+            )
+            self.assertEqual(second.promoted_review_benchmarks['promoted_review_count'], 0)
+            self.assertGreaterEqual(second.benchmark_corpus['loaded_case_count'], 1)
+            self.assertGreater(second.benchmark.grounded_explanation_fidelity, 0.0)
+            persisted = json.loads(Path(corpus_path).read_text(encoding='utf-8'))
+            self.assertTrue(persisted['grounding_cases'])
+            self.assertTrue(persisted['compiler_cases'])
+        finally:
+            for path in [db_path, review_db, corpus_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            for path in [output_dir, second_output_dir]:
+                if os.path.exists(path):
+                    shutil.rmtree(path)
+
+    def test_benchmark_gated_continuous_trainer_blocks_low_exception_slice(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer, GroundedExplanationEvalCase
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_slice_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_slice_artifacts')
+        for path in [db_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            query = 'The aisle is blocked and approval is still missing. What should I do with the forklift move?'
+            context = (
+                'Exception SOP\n'
+                '- Stop forklift movement when the aisle is blocked.\n'
+                '- Do not rack-load without supervisor approval and safety clearance.\n'
+                '- If not urgent, use the staging area and file an incident report.'
+            )
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query, source_context=context)
+            store = CorpusMemoryStore(db_path)
+            store.upsert_graph(graph, source='slice_gate', split='train')
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='slice_gate',
+                operating_domain='warehouse_exception',
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+                grounding_cases=[
+                    GroundedExplanationEvalCase(
+                        query='What should I do first?',
+                        source_context=context,
+                        expected_evidence_terms=['impossible grounding phrase'],
+                        domain='warehouse_exception',
+                        scenario='exception_response',
+                    )
+                ],
+            )
+            self.assertFalse(summary.gate.accepted)
+            self.assertFalse(summary.gate.blocking_reasons)
+            self.assertTrue(any('warehouse_exception::exception_response' in reason for reason in summary.gate.slice_blocking_reasons))
+            self.assertIn('warehouse_exception::exception_response', summary.benchmark.slice_metrics)
+            self.assertEqual(summary.benchmark.slice_metrics['warehouse_exception::exception_response']['scenario'], 'exception_response')
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+    def test_benchmark_gated_continuous_trainer_uses_domain_threshold_policy(self) -> None:
+        from semop import BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_domain_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_domain_artifacts')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            store = CorpusMemoryStore(db_path)
+            pipeline = StructuredMeaningPipeline(mode='heuristic')
+            store.upsert_graph(
+                pipeline.run('The drawer is closed and I need the folder inside. Should I pull the folder out right now?'),
+                source='gate_demo',
+                split='train',
+            )
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='gate_demo',
+                operating_domain='warehouse_exception',
+            )
+            self.assertEqual(summary.gate.operating_domain, 'warehouse_exception')
+            self.assertAlmostEqual(summary.gate.applied_thresholds['minimum_compiler_validity'], 0.74, places=2)
+            self.assertFalse(summary.gate.accepted)
+            self.assertTrue(any('compiler_validity below threshold' in item for item in summary.gate.blocking_reasons))
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_benchmark_gated_continuous_trainer_rejects_regressing_baseline(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_reject_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_reject_artifacts')
+        baseline_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_baseline.json')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        if os.path.exists(baseline_path):
+            os.remove(baseline_path)
+        try:
+            store = CorpusMemoryStore(db_path)
+            pipeline = StructuredMeaningPipeline(mode='heuristic')
+            store.upsert_graph(
+                pipeline.run('The drawer is closed and I need the folder inside. Should I pull the folder out right now?'),
+                source='gate_demo',
+                split='train',
+            )
+            Path(baseline_path).write_text(
+                json.dumps(
+                    {
+                        'benchmark': {
+                            'unseen_transfer': 0.95,
+                            'analogy_usefulness': 0.95,
+                            'compiler_validity': 0.95,
+                            'grounded_explanation_fidelity': 0.95,
+                            'repair_success_rate': 0.95,
+                        }
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding='utf-8',
+            )
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='gate_demo',
+                baseline_summary_path=baseline_path,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=True,
+                ),
+            )
+            self.assertFalse(summary.gate.accepted)
+            self.assertTrue(summary.gate.regressed_axes)
+            self.assertTrue(any('regressed against baseline' in item for item in summary.gate.blocking_reasons))
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+            if os.path.exists(baseline_path):
+                os.remove(baseline_path)
+
+    def test_benchmark_gated_continuous_trainer_blocks_slice_regression_against_baseline(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer, CompilerRepairEvalCase
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_slice_regression_runtime.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_slice_regression_artifacts')
+        baseline_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_slice_regression_baseline.json')
+        for path in [db_path, baseline_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+            graph = StructuredMeaningPipeline(mode='heuristic').run(query)
+            store = CorpusMemoryStore(db_path)
+            store.upsert_graph(graph, source='slice_regression_gate', split='train')
+            Path(baseline_path).write_text(
+                json.dumps(
+                    {
+                        'benchmark': {
+                            'slice_metrics': {
+                                'general::qa': {
+                                    'domain': 'general',
+                                    'scenario': 'qa',
+                                    'grounded_explanation_fidelity': 0.0,
+                                    'grounding_case_count': 0,
+                                    'compiler_validity': 0.95,
+                                    'compiler_case_count': 1,
+                                    'repair_success_rate': 0.0,
+                                    'hidden_premise_quality': 0.0,
+                                    'hidden_premise_case_count': 0,
+                                }
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding='utf-8',
+            )
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='slice_regression_gate',
+                operating_domain='general',
+                baseline_summary_path=baseline_path,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+                compiler_cases=[CompilerRepairEvalCase(graph=graph, domain='general', scenario='qa')],
+            )
+            self.assertFalse(summary.gate.accepted)
+            self.assertTrue(any('compiler_validity regressed against baseline' in item for item in summary.gate.slice_blocking_reasons))
+            self.assertEqual(summary.gate.baseline_slice_metrics['general::qa']['compiler_validity'], 0.95)
+        finally:
+            for path in [db_path, baseline_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+
+    def test_benchmark_gated_continuous_trainer_uses_scenario_slice_balance_limit(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_exception_balance_runtime.db')
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_gate_exception_balance_review.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_exception_balance_artifacts')
+        corpus_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_exception_balance_corpus.json')
+        for path in [db_path, review_db, corpus_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            pipeline = StructuredMeaningPipeline(mode='heuristic')
+            store = CorpusMemoryStore(db_path)
+            review_store = __import__('semop').ReviewQueueStore(review_db)
+            context = (
+                'Exception SOP\n'
+                '- Stop forklift movement when the aisle is blocked.\n'
+                '- Do not rack-load without supervisor approval and safety clearance.\n'
+                '- If not urgent, use the staging area and file an incident report.'
+            )
+            for index in range(7):
+                query = f'Exception case {index}: The aisle is blocked and approval is still missing. What should I do with the forklift move?'
+                graph = pipeline.run(query, source_context=context)
+                store.upsert_graph(graph, source='exception_slice_balance_gate', split='train')
+                item_id = review_store.enqueue(
+                    domain='warehouse_exception',
+                    scenario='exception_response',
+                    query=query,
+                    reasons=['grounding_review', 'compiler_validity_gap'],
+                    answer_text='Stop forklift movement and escalate for approval.',
+                    kpis={'clarification_need_rate': 0.0, 'context_misread_rate': 0.0, 'relation_recovery': 1.0},
+                    audit_items=[{'stage': 'evidence', 'detail': f'exception response #{index}'}],
+                    context_text=context,
+                    graph_payload=graph.model_dump(),
+                    severity='critical',
+                )
+                review_store.update_status(item_id, 'approved', 'accepted for exception slice benchmark corpus')
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='exception_slice_balance_gate',
+                review_store_path=review_db,
+                approved_queries_only=True,
+                benchmark_corpus_path=corpus_path,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+            )
+            persisted = json.loads(Path(corpus_path).read_text(encoding='utf-8'))
+            self.assertEqual(len(persisted['hidden_premise_cases']), 6)
+            self.assertEqual(len(persisted['grounding_cases']), 6)
+            self.assertEqual(len(persisted['compiler_cases']), 6)
+            self.assertEqual(summary.benchmark_corpus['slice_balance_limit'], 6)
+            self.assertEqual(summary.benchmark_corpus['slice_balance_limits']['warehouse_exception::exception_response'], 6)
+        finally:
+            for path in [db_path, review_db, corpus_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
+    def test_benchmark_gated_continuous_trainer_balances_dense_slice_corpus(self) -> None:
+        from semop import BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer
+
+        db_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_balance_runtime.db')
+        review_db = os.path.join(os.path.dirname(__file__), 'benchmark_gate_balance_review.db')
+        output_dir = os.path.join(os.path.dirname(__file__), 'benchmark_gate_balance_artifacts')
+        corpus_path = os.path.join(os.path.dirname(__file__), 'benchmark_gate_balance_corpus.json')
+        for path in [db_path, review_db, corpus_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        try:
+            pipeline = StructuredMeaningPipeline(mode='heuristic')
+            store = CorpusMemoryStore(db_path)
+            review_store = __import__('semop').ReviewQueueStore(review_db)
+            for index in range(6):
+                query = f'Case {index}: The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
+                context = f'Manual {index}:\nOpen the drawer before retrieving the folder.'
+                graph = pipeline.run(query, source_context=context)
+                store.upsert_graph(graph, source='slice_balance_gate', split='train')
+                severity = 'critical' if index < 4 else 'low'
+                item_id = review_store.enqueue(
+                    domain='general',
+                    scenario='qa',
+                    query=query,
+                    reasons=['grounding_review', 'compiler_validity_gap'],
+                    answer_text='Open the drawer first.',
+                    kpis={'clarification_need_rate': 0.0, 'context_misread_rate': 0.0, 'relation_recovery': 1.0},
+                    audit_items=[{'stage': 'evidence', 'detail': f'drawer access required #{index}'}],
+                    context_text=context,
+                    graph_payload=graph.model_dump(),
+                    severity=severity,
+                )
+                review_store.update_status(item_id, 'approved', 'accepted for balanced benchmark corpus')
+            summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
+                db_path,
+                output_dir,
+                source='slice_balance_gate',
+                review_store_path=review_db,
+                approved_queries_only=True,
+                benchmark_corpus_path=corpus_path,
+                thresholds=BenchmarkGateThresholds(
+                    minimum_unseen_transfer=0.0,
+                    minimum_analogy_usefulness=0.0,
+                    minimum_compiler_validity=0.0,
+                    minimum_grounded_explanation_fidelity=0.0,
+                    minimum_repair_success_rate=0.0,
+                    require_improvement_if_baseline=False,
+                ),
+            )
+            persisted = json.loads(Path(corpus_path).read_text(encoding='utf-8'))
+            self.assertEqual(len(persisted['hidden_premise_cases']), 4)
+            self.assertEqual(len(persisted['grounding_cases']), 4)
+            self.assertEqual(len(persisted['compiler_cases']), 4)
+            self.assertTrue(all(item['severity'] == 'critical' for item in persisted['grounding_cases']))
+            self.assertTrue(all(item['severity'] == 'critical' for item in persisted['compiler_cases']))
+            self.assertGreater(summary.benchmark_corpus['trimmed_case_count'], 0)
+            self.assertEqual(summary.benchmark_corpus['slice_balance_limit'], 4)
+        finally:
+            for path in [db_path, review_db, corpus_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir)
     def test_retained_repair_program_trainer_guides_runtime_repair(self) -> None:
         from semop import OperatorRepairEngine, RetainedRepairProgramTrainer
         from semop.structures import StructuredMeaningGraph
@@ -4313,6 +5485,122 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
+    def test_retained_repair_program_trainer_harvests_multi_step_repair_trace(self) -> None:
+        from semop import OperatorRepairEngine, RetainedRepairProgramTrainer
+        from semop.structures import StructuredMeaningGraph
+
+        output_path = os.path.join(os.path.dirname(__file__), 'retained_repair_programs_trace_test.json')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        try:
+            broken = StructuredMeaningGraph(query='repair trace case', intent='goal_directed_reasoning')
+            broken.hidden_goals = ['clean_car_goal']
+            broken.required_premises = ['vehicle_present']
+            repaired = OperatorRepairEngine().run(broken)
+            summary = RetainedRepairProgramTrainer().train_from_graphs([repaired], output_path)
+            self.assertTrue(any(item.get('sequence_length', 0) >= 2 for item in summary.model['records']))
+            self.assertTrue(any(item.get('utility_delta', 0.0) >= 0.0 for item in summary.model['records']))
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+    def test_operator_repair_engine_trims_unsupported_document_claim(self) -> None:
+        from semop import OperatorRepairEngine
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        graph = StructuredMeaningPipeline(mode='heuristic').run(
+            'What should I do first?',
+            source_context='Manual:\nOpen the drawer before retrieval.',
+        )
+        graph.symbolic_results = [
+            SymbolicResult(
+                domain='document_grounding',
+                answer='Open the drawer first and inspect the hidden sensor.',
+                evidence=['Open the drawer before retrieval.'],
+                confidence=0.92,
+                source='unit_test',
+            )
+        ]
+        repaired = OperatorRepairEngine().run(graph)
+        document_result = next(result for result in repaired.symbolic_results if result.domain == 'document_grounding')
+        self.assertNotIn('hidden sensor', document_result.answer.lower())
+        self.assertTrue(any(item.startswith('repair_applied:trim_unsupported_claims') for item in repaired.operator_execution.derived_decisions))
+
+    def test_operator_repair_engine_records_typed_claim_repair_program(self) -> None:
+        from semop import OperatorRepairEngine
+        from semop.structures import SymbolicResult
+
+        graph = StructuredMeaningPipeline(mode='heuristic').run(
+            'What should I do first?',
+            source_context='Manual:\nOpen the drawer before retrieval.',
+        )
+        graph.symbolic_results = [
+            SymbolicResult(
+                domain='document_grounding',
+                answer='Open the drawer first and inspect the hidden sensor.',
+                evidence=['Open the drawer before retrieval.'],
+                confidence=0.92,
+                source='unit_test',
+            )
+        ]
+        repaired = OperatorRepairEngine().run(graph)
+        self.assertIn('repair_program:typed_claim_grounding_repair', repaired.operator_execution.derived_decisions)
+        self.assertTrue(any('repair synthesis: typed_claim_grounding_repair' in item for item in repaired.audit_trace))
+
+    def test_operator_repair_engine_rejects_unsafe_claim_trim_without_grounded_fallback(self) -> None:
+        from semop import OperatorRepairEngine
+        from semop.structures import SymbolicResult
+
+        graph = StructuredMeaningPipeline(mode='heuristic').run(
+            'What should I do first?',
+            source_context='Manual:\nOpen the drawer before retrieval.',
+        )
+        graph.symbolic_results = [
+            SymbolicResult(
+                domain='document_grounding',
+                answer='Inspect the hidden sensor.',
+                evidence=['Open the drawer before retrieval.'],
+                confidence=0.92,
+                source='unit_test',
+            )
+        ]
+        repaired = OperatorRepairEngine().run(graph)
+        document_result = next(result for result in repaired.symbolic_results if result.domain == 'document_grounding')
+        self.assertIn('hidden sensor', document_result.answer.lower())
+        self.assertIn('repair_rejected:trim_unsupported_claims', repaired.operator_execution.derived_decisions)
+        self.assertTrue(any('unsafe_claim_trim' in item for item in repaired.audit_trace))
+    def test_retained_repair_program_trainer_retains_claim_trim_program(self) -> None:
+        from semop import OperatorRepairEngine, RetainedRepairProgramTrainer
+        from semop.structures import StructuredMeaningGraph, SymbolicResult
+
+        output_path = os.path.join(os.path.dirname(__file__), 'retained_repair_programs_claim_test.json')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        try:
+            graph = StructuredMeaningPipeline(mode='heuristic').run(
+                'What should I do first?',
+                source_context='Manual:\nOpen the drawer before retrieval.',
+            )
+            graph.symbolic_results = [
+                SymbolicResult(
+                    domain='document_grounding',
+                    answer='Open the drawer first.',
+                    evidence=['Open the drawer before retrieval.'],
+                    confidence=0.92,
+                    source='unit_test',
+                )
+            ]
+            summary = RetainedRepairProgramTrainer().train_from_graphs([graph], output_path)
+            self.assertTrue(any('trim_unsupported_claims' in item.get('actions', []) for item in summary.model['records']))
+            broken = StructuredMeaningGraph.from_dict(graph.model_dump())
+            broken.symbolic_results[0].answer = 'Open the drawer first and inspect the hidden sensor.'
+            repaired = OperatorRepairEngine(repair_program_path=output_path).run(broken)
+            document_result = next(result for result in repaired.symbolic_results if result.domain == 'document_grounding')
+            self.assertNotIn('hidden sensor', document_result.answer.lower())
+            self.assertTrue(any(item.startswith('repair_program:') for item in repaired.operator_execution.derived_decisions))
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
     def test_operator_repair_engine_recovers_missing_goal_preservation_program(self) -> None:
         from semop import OperatorRepairEngine
         from semop.structures import StructuredMeaningGraph
@@ -4327,6 +5615,37 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(any(item.startswith('repair_applied:') for item in graph.operator_execution.derived_decisions))
 if __name__ == "__main__":
     unittest.main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
