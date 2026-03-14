@@ -1,4 +1,4 @@
-# Usage Manual
+﻿# Usage Manual
 
 Code layout reference:
 - `docs/project_structure.md`
@@ -17,11 +17,25 @@ Then open:
 - `http://127.0.0.1:8780`
 
 `semop_studio_gui.py` is the friendlier default surface for:
+- one-click beginner setup, training, and testing
 - context reasoning
 - vision-grounded reasoning
 - unified artifact training
 - benchmark-gated learning
 - compact result inspection
+
+If you are starting from scratch, use the `One-click setup + train + test` button in `One-click mode` first. It seeds built-in hidden-premise, transfer, and starter vision examples, writes approved grounded review traces, trains the unified artifact bundle, then runs the benchmark gate and beginner smoke tests in one pass.
+
+Long actions now run in the background. Watch the `Live jobs` card in the GUI while they run; the page refreshes automatically every few seconds until the active job finishes.
+
+You can cancel a queued or running background job from the same card, retry a finished job, and reload a saved result later. Each job now keeps a small step log, and failed or blocked jobs show suggested recovery buttons such as `Guided starter loop` or `One-click setup`. Completed, failed, and cancelled jobs are saved automatically to `studio_job_history.json` under the current output directory.
+
+Finished jobs also show up in the `Completion alerts` card. That card keeps unread notifications in `studio_notifications.json`, so you can come back later and still see which run finished, failed, or was cancelled without reading the full log again.
+
+If you want to inspect how two runs differ, use the `Artifact compare` card. It can compare two files such as `benchmark_gate.json` and `accepted_benchmark_summary.json`, or compare two whole output directories and list changed, left-only, and right-only artifacts.
+
+
+If you already have a store and just want to re-check the current bundle, use `One-click test current bundle`.
 
 If the benchmark gate is blocked with `0.0` on analogy, grounding, or repair, use the GUI button `Guided starter loop` once. It seeds starter graphs, writes approved review traces, and reruns training plus the gate automatically.
 
@@ -218,7 +232,7 @@ Use one of these flows.
 Use this if you want to inspect the structured meaning graph directly.
 
 ```bash
-.\.venv312\Scripts\python.exe app.py --mode heuristic --query "세차장이 멀고 길이 막히는데 어떻게 가야 할까요?"
+.\.venv312\Scripts\python.exe app.py --mode heuristic --query "?몄감?μ씠 硫怨?湲몄씠 留됲엳?붾뜲 ?대뼸寃?媛???좉퉴??"
 ```
 
 ### Product copilot flow
@@ -228,7 +242,7 @@ Use this if you want warehouse or operations answers with KPI and audit trace.
 .\.venv312\Scripts\python.exe ops_copilot.py ^
   --domain warehouse_exception ^
   --scenario exception_response ^
-  --query "지게차로 팔레트를 랙에 올리려는데 통로가 막혀 있고 아직 승인도 안 났습니다. 어떻게 해야 하나요?" ^
+  --query "吏寃뚯감濡??붾젅?몃? ?숈뿉 ?щ━?ㅻ뒗???듬줈媛 留됲? ?덇퀬 ?꾩쭅 ?뱀씤?????ъ뒿?덈떎. ?대뼸寃??댁빞 ?섎굹??" ^
   --context-file examples\customer_sop_sample.md
 ```
 
@@ -1028,3 +1042,4 @@ Run the broad understanding check across hidden-premise reasoning, CP structurin
 ```
 
 In the easy GUI, use `5. Geometry starter tools -> Evaluation shortcuts -> Run overall understanding benchmark`.
+

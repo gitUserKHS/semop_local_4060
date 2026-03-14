@@ -68,6 +68,10 @@ artifacts/
 *.h5
 
 # Runtime data and local experiment outputs
+# SemOp Studio local runtime history
+**/studio_job_history.json
+**/studio_notifications.json
+
 data/**/*.db
 data/**/*.sqlite
 data/**/*.sqlite3

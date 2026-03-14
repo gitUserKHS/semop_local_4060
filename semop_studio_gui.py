@@ -6,9 +6,12 @@ import html
 import json
 import mimetypes
 import os
+import queue
 import re
 import sys
-from dataclasses import dataclass, replace
+import threading
+import time
+from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,7 @@ from semop import (
     OperatorTransferEvalCase,
     ReviewQueueStore,
     SemOpUnderstandingEvaluator,
+    StructuredMeaningPipeline,
     UnifiedSemOpTrainer,
     VLSOReasoner,
     VlsoGroundedEvaluator,
@@ -54,7 +58,7 @@ UNIFIED_EXAMPLE = {
     'review_queue': 'data/ops_review_queue.db',
     'source': '',
     'split': 'train',
-    'operating_domain': 'general',
+    'operating_domain': OPS_EXAMPLE['domain'],
     'baseline_summary': '',
     'benchmark_corpus': 'data/unified_semop_gui_run/persistent_benchmark_corpus.json',
     'transfer_input': 'examples/operator_transfer_eval.jsonl',
@@ -71,6 +75,7 @@ VISION_STORE_EXAMPLE = {
     'review_path': 'data/vlso_download_pipeline_gui/manual_label_reviews.json',
 }
 GUIDED_BOOTSTRAP_SOURCE = 'studio_bootstrap'
+BEGINNER_AUTOPILOT_SOURCE = 'studio_beginner_autopilot'
 GUIDED_BOOTSTRAP_VARIANTS = (
     'The route is blocked and approval has not arrived yet. What should I verify before moving?',
     'Manager approval is still pending. Do I continue the task or stop first?',
@@ -79,6 +84,22 @@ GUIDED_BOOTSTRAP_VARIANTS = (
 SPLIT_OPTIONS = ('train', 'val', 'test')
 VISION_MODE_OPTIONS = ('deep', 'hybrid', 'heuristic')
 VISION_ANSWER_MODE_OPTIONS = ('structured', 'llm')
+ACTION_TIME_HINTS = {
+    'run_unified_training': 'about 10-30 seconds',
+    'run_unified_benchmark_gate': 'about 20-60 seconds',
+    'run_guided_learning': 'about 20-60 seconds',
+    'run_beginner_autopilot': 'about 30-90 seconds',
+    'run_beginner_test': 'about 15-45 seconds',
+    'run_understanding_eval': 'about 10-25 seconds',
+}
+ACTION_TIME_SECONDS = {
+    'run_unified_training': 25,
+    'run_unified_benchmark_gate': 45,
+    'run_guided_learning': 50,
+    'run_beginner_autopilot': 75,
+    'run_beginner_test': 35,
+    'run_understanding_eval': 20,
+}
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,8 @@ class StudioState:
     understanding_hidden_input: str = UNDERSTANDING_EXAMPLE['hidden']
     understanding_vlso_input: str = UNDERSTANDING_EXAMPLE['vlso']
     understanding_vlso_real_input: str = UNDERSTANDING_EXAMPLE['vlso_real']
+    compare_left_path: str = ''
+    compare_right_path: str = ''
 
     @classmethod
     def from_form(cls, form: dict[str, list[str]]) -> 'StudioState':
@@ -137,6 +160,8 @@ class StudioState:
             understanding_hidden_input=_first(form, 'understanding_hidden_input', cls.understanding_hidden_input),
             understanding_vlso_input=_first(form, 'understanding_vlso_input', cls.understanding_vlso_input),
             understanding_vlso_real_input=_first(form, 'understanding_vlso_real_input', cls.understanding_vlso_real_input),
+            compare_left_path=_first(form, 'compare_left_path', cls.compare_left_path),
+            compare_right_path=_first(form, 'compare_right_path', cls.compare_right_path),
         )
 
 
@@ -146,6 +171,37 @@ class ActionOutcome:
     flash_tone: str = 'neutral'
     result_kind: str = ''
     result_payload: dict[str, object] | None = None
+
+
+@dataclass
+class BackgroundJob:
+    job_id: str
+    action: str
+    label: str
+    state: StudioState
+    status: str = 'queued'
+    detail: str = 'Waiting to start.'
+    progress: float = 0.0
+    created_at: float = field(default_factory=time.time)
+    started_at: float | None = None
+    finished_at: float | None = None
+    result_kind: str = ''
+    result_payload: dict[str, object] | None = None
+    flash: str = ''
+    flash_tone: str = 'neutral'
+    error_text: str = ''
+    cancel_requested: bool = False
+    events: list[dict[str, Any]] = field(default_factory=list)
+
+
+JOB_HISTORY_FILENAME = 'studio_job_history.json'
+NOTIFICATION_FILENAME = 'studio_notifications.json'
+MAX_JOB_HISTORY = 24
+MAX_NOTIFICATIONS = 32
+
+
+class JobCancelledError(RuntimeError):
+    pass
 
 
 def _first(form: dict[str, list[str]], key: str, default: str = '') -> str:
@@ -186,6 +242,37 @@ def _metric_card(label: str, value: object) -> str:
 
 def _info_block(label: str, value: object) -> str:
     return f"<div class='info-block'><small>{html.escape(label)}</small><div>{html.escape(_render_value(value))}</div></div>"
+
+
+def _action_time_hint(action: str) -> str:
+    return ACTION_TIME_HINTS.get(str(action).strip(), 'varies by local data size')
+
+
+def _action_estimated_seconds(action: str) -> int | None:
+    value = ACTION_TIME_SECONDS.get(str(action).strip())
+    return int(value) if value is not None else None
+
+
+def _remaining_eta_label(action: str, progress: float) -> str:
+    total = _action_estimated_seconds(action)
+    if total is None:
+        return _action_time_hint(action)
+    remaining = max(0, int(total * (1.0 - max(0.0, min(1.0, float(progress))))))
+    return _format_elapsed(float(remaining))
+
+
+def _file_size_label(path_value: str) -> str:
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return '-'
+    size = path.stat().st_size
+    units = ['B', 'KB', 'MB', 'GB']
+    value = float(size)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            return f'{value:.1f} {unit}' if unit != 'B' else f'{int(value)} {unit}'
+        value /= 1024.0
+    return '-'
 
 
 def _raw_details(payload: dict[str, object]) -> str:
@@ -489,6 +576,16 @@ def _unique_texts(items: list[str]) -> list[str]:
     return ordered
 
 
+def _resolve_operating_domain(state: StudioState) -> str:
+    configured = str(state.unified_operating_domain or '').strip()
+    ops_domain = str(state.ops_domain or '').strip()
+    if configured and configured != 'general':
+        return configured
+    if ops_domain and ops_domain != 'general':
+        return ops_domain
+    return configured or 'general'
+
+
 def _guided_bootstrap_requests(state: StudioState) -> list[CopilotRequest]:
     context = state.ops_context.strip() or OPS_EXAMPLE['context']
     domain = state.ops_domain.strip() or OPS_EXAMPLE['domain']
@@ -503,6 +600,525 @@ def _bootstrap_review_reasons(graph: StructuredMeaningGraph, kpis: dict[str, Any
         reasons.append('grounding_review')
     reasons.append('approved_training_trace')
     return _unique_texts(reasons)
+
+
+def _grounded_review_answer(context: str, fallback: str) -> str:
+    normalized_context = re.sub(r'\s+', ' ', str(context).strip())
+    if normalized_context:
+        for chunk in re.split(r'(?<=[.!?])\s+|\n+', normalized_context):
+            line = str(chunk).strip(' -')
+            if len(line) >= 12:
+                return line
+        return normalized_context
+    return str(fallback).strip()
+
+
+def _persist_graph(store: CorpusMemoryStore, graph: StructuredMeaningGraph, source: str, split: str = 'train') -> None:
+    store.upsert_graph(graph, source=source, split=split)
+    store.upsert_premise_operator_memory(graph, source=source, split=split)
+
+
+def _seed_builtin_corpus(state: StudioState, source_used: str, split: str = 'train') -> dict[str, Any]:
+    store = CorpusMemoryStore(state.unified_store_path)
+    pipeline = StructuredMeaningPipeline(mode='heuristic')
+    existing_queries = {str(query).strip() for query in store.fetch_queries(split=split, source=source_used)}
+    summary: dict[str, Any] = {
+        'hidden_cases_loaded': 0,
+        'hidden_seeded': 0,
+        'transfer_cases_loaded': 0,
+        'transfer_seeded': 0,
+        'visual_seeded': 0,
+        'skipped_existing': 0,
+        'errors': [],
+    }
+
+    hidden_cases = _load_hidden_premise_cases(state.understanding_hidden_input)
+    summary['hidden_cases_loaded'] = len(hidden_cases)
+    for case in hidden_cases:
+        query = str(case.query).strip()
+        if not query:
+            continue
+        if query in existing_queries:
+            summary['skipped_existing'] += 1
+            continue
+        try:
+            graph = pipeline.run(query)
+            graph.domain = str(case.domain or 'general').strip() or 'general'
+            _persist_graph(store, graph, source_used, split)
+            existing_queries.add(query)
+            summary['hidden_seeded'] += 1
+        except Exception as exc:
+            summary['errors'].append(f'hidden case failed: {query[:60]} ({exc})')
+
+    transfer_cases = _load_operator_transfer_cases(state.unified_transfer_input)
+    summary['transfer_cases_loaded'] = len(transfer_cases)
+    for case in transfer_cases:
+        query = str(case.query).strip()
+        if not query:
+            continue
+        if query in existing_queries:
+            summary['skipped_existing'] += 1
+            continue
+        try:
+            graph = pipeline.run(query)
+            graph.domain = str(getattr(case, 'domain', 'general') or 'general').strip() or 'general'
+            _persist_graph(store, graph, source_used, split)
+            existing_queries.add(query)
+            summary['transfer_seeded'] += 1
+        except Exception as exc:
+            summary['errors'].append(f'transfer case failed: {query[:60]} ({exc})')
+
+    image_path = Path(state.vision_image)
+    visual_query = str(state.vision_query).strip() or VISION_EXAMPLE['query']
+    if image_path.exists() and visual_query not in existing_queries:
+        try:
+            graph = pipeline.run(
+                visual_query,
+                visual_input={'image_path': str(image_path), 'metadata': {'image_path': str(image_path)}},
+            )
+            graph.domain = 'vlso'
+            _persist_graph(store, graph, source_used, split)
+            existing_queries.add(visual_query)
+            summary['visual_seeded'] += 1
+        except Exception as exc:
+            summary['errors'].append(f'visual seed failed: {exc}')
+
+    summary['total_seeded'] = int(summary['hidden_seeded']) + int(summary['transfer_seeded']) + int(summary['visual_seeded'])
+    return summary
+
+
+def _load_gate_payload(output_dir: str) -> dict[str, Any]:
+    gate_path = Path(output_dir) / 'benchmark_gate.json'
+    if not gate_path.exists():
+        return {}
+    try:
+        return json.loads(gate_path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _state_to_payload(state: StudioState) -> dict[str, Any]:
+    return {name: getattr(state, name) for name in StudioState.__dataclass_fields__}
+
+
+def _state_from_payload(payload: dict[str, Any] | None, fallback: StudioState | None = None) -> StudioState:
+    if not isinstance(payload, dict):
+        return fallback or StudioState()
+    values = {name: payload.get(name, getattr(StudioState, name)) for name in StudioState.__dataclass_fields__}
+    try:
+        return StudioState(**values)
+    except Exception:
+        return fallback or StudioState()
+
+
+def _job_history_path(output_dir: str) -> Path:
+    base = Path(output_dir or UNIFIED_EXAMPLE['output_dir'])
+    return base / JOB_HISTORY_FILENAME
+
+
+def _read_job_history(output_dir: str) -> list[dict[str, Any]]:
+    path = _job_history_path(output_dir)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _write_job_history(output_dir: str, entries: list[dict[str, Any]]) -> None:
+    path = _job_history_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries[:MAX_JOB_HISTORY], ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _notification_history_path(output_dir: str) -> Path:
+    base = Path(output_dir or UNIFIED_EXAMPLE['output_dir'])
+    return base / NOTIFICATION_FILENAME
+
+
+def _read_notifications(output_dir: str) -> list[dict[str, Any]]:
+    path = _notification_history_path(output_dir)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _write_notifications(output_dir: str, entries: list[dict[str, Any]]) -> None:
+    path = _notification_history_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries[:MAX_NOTIFICATIONS], ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _notification_snapshot(output_dir: str) -> dict[str, Any]:
+    entries = _read_notifications(output_dir)
+    unread = [item for item in entries if isinstance(item, dict) and not bool(item.get('read'))]
+    return {
+        'unread_count': len(unread),
+        'recent': entries[:8],
+        'path': str(_notification_history_path(output_dir)),
+    }
+
+
+def _build_notification(job: BackgroundJob) -> dict[str, Any]:
+    level = 'success'
+    title = f"{job.label} finished"
+    if job.status == 'failed':
+        level = 'error'
+        title = f"{job.label} failed"
+    elif job.status == 'cancelled':
+        level = 'neutral'
+        title = f"{job.label} cancelled"
+    return {
+        'id': f"note-{job.job_id}",
+        'job_id': job.job_id,
+        'created_at': time.time(),
+        'level': level,
+        'title': title,
+        'body': job.detail,
+        'read': False,
+        'result_kind': job.result_kind,
+        'action': job.action,
+    }
+
+
+def _upsert_notification(output_dir: str, entry: dict[str, Any]) -> None:
+    notifications = [item for item in _read_notifications(output_dir) if str(item.get('id', '')) != str(entry.get('id', ''))]
+    notifications.insert(0, entry)
+    _write_notifications(output_dir, notifications)
+
+
+def _mark_notification(output_dir: str, notification_id: str, *, read: bool = True) -> None:
+    notifications = _read_notifications(output_dir)
+    changed = False
+    for item in notifications:
+        if str(item.get('id', '')) != notification_id:
+            continue
+        item['read'] = read
+        changed = True
+        break
+    if changed:
+        _write_notifications(output_dir, notifications)
+
+
+def _mark_all_notifications(output_dir: str, *, read: bool = True) -> None:
+    notifications = _read_notifications(output_dir)
+    changed = False
+    for item in notifications:
+        if not isinstance(item, dict):
+            continue
+        if bool(item.get('read')) == read:
+            continue
+        item['read'] = read
+        changed = True
+    if changed:
+        _write_notifications(output_dir, notifications)
+
+
+def _history_to_snapshot(entry: dict[str, Any]) -> dict[str, Any]:
+    created_at = float(entry.get('created_at') or 0.0)
+    started_at = float(entry.get('started_at') or 0.0)
+    finished_at = float(entry.get('finished_at') or time.time())
+    baseline = started_at or created_at or finished_at
+    status = str(entry.get('status', 'completed'))
+    return {
+        'job_id': str(entry.get('job_id', '')),
+        'label': str(entry.get('label', '-')),
+        'status': status,
+        'detail': str(entry.get('detail', '-')),
+        'progress': float(entry.get('progress', 0.0) or 0.0),
+        'elapsed_seconds': max(0.0, finished_at - baseline),
+        'result_kind': str(entry.get('result_kind', '')),
+        'action': str(entry.get('action', '')),
+        'can_cancel': False,
+        'can_retry': bool(entry.get('action')),
+        'can_load': bool(entry.get('result_kind')),
+        'persisted': True,
+        'output_dir': str(entry.get('output_dir', '')),
+        'events': entry.get('events', []) if isinstance(entry.get('events'), list) else [],
+        'gate_accepted': entry.get('gate_accepted'),
+        'time_hint': _action_time_hint(str(entry.get('action', ''))),
+        'remaining_eta': '-',
+    }
+
+
+def _output_file_action_form(path_value: str, label: str) -> str:
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return ''
+    return ''.join([
+        "<form method='post' class='mini-form'>",
+        "<input type='hidden' name='action' value='load_output_file'>",
+        f"<input type='hidden' name='file_path' value='{html.escape(str(path))}'>",
+        f"<button class='secondary compact' type='submit'>{html.escape(label)}</button>",
+        "</form>",
+    ])
+
+
+def _render_output_quick_actions(candidates: list[tuple[str, str]]) -> str:
+    controls = [_output_file_action_form(path_value, label) for label, path_value in candidates if path_value]
+    controls = [control for control in controls if control]
+    if not controls:
+        return ''
+    return "<div class='job-recovery'><small>Quick file preview</small><div class='job-actions'>" + ''.join(controls) + "</div></div>"
+
+
+def _preview_output_file(file_path: str) -> dict[str, Any]:
+    path = Path(file_path)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f'Output file not found: {file_path}')
+    suffix = path.suffix.lower()
+    if suffix in {'.json', '.jsonl'}:
+        try:
+            content = path.read_text(encoding='utf-8')
+            payload = json.loads(content) if suffix == '.json' else [json.loads(line) for line in content.splitlines() if line.strip()][:20]
+            preview_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception:
+            preview_text = path.read_text(encoding='utf-8', errors='replace')[:12000]
+    else:
+        preview_text = path.read_text(encoding='utf-8', errors='replace')[:12000]
+    return {
+        'path': str(path),
+        'filename': path.name,
+        'size_label': _file_size_label(str(path)),
+        'modified_at': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(path.stat().st_mtime)),
+        'preview_text': preview_text,
+    }
+
+
+def _default_compare_paths(state: StudioState) -> tuple[str, str]:
+    left = str(state.compare_left_path or '').strip()
+    right = str(state.compare_right_path or '').strip()
+    if not left:
+        left = str(Path(state.unified_output_dir) / 'benchmark_gate.json')
+    if not right:
+        baseline = str(state.unified_baseline_summary_path or '').strip()
+        accepted = str(Path(state.unified_output_dir) / 'accepted_benchmark_summary.json')
+        parser = str(Path(state.unified_output_dir) / 'unified_parser.json')
+        if baseline:
+            right = baseline
+        elif Path(accepted).exists():
+            right = accepted
+        else:
+            right = parser
+    return left, right
+
+
+def _load_text_for_compare(path: Path) -> str:
+    if path.is_dir():
+        rows: list[str] = []
+        for child in sorted(p for p in path.rglob('*') if p.is_file()):
+            rel = child.relative_to(path)
+            rows.append(f"{rel} | {_file_size_label(str(child))}")
+        return '\n'.join(rows)
+    return path.read_text(encoding='utf-8', errors='replace')
+
+
+def _flatten_compare_value(value: Any, prefix: str = '$') -> dict[str, str]:
+    flattened: dict[str, str] = {}
+    if isinstance(value, dict):
+        if not value:
+            flattened[prefix] = '{}'
+        for key in sorted(value):
+            flattened.update(_flatten_compare_value(value[key], f'{prefix}.{key}'))
+        return flattened
+    if isinstance(value, list):
+        if not value:
+            flattened[prefix] = '[]'
+        for index, item in enumerate(value):
+            flattened.update(_flatten_compare_value(item, f'{prefix}[{index}]'))
+        return flattened
+    flattened[prefix] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return flattened
+
+
+def _compare_paths(left_path_value: str, right_path_value: str) -> dict[str, Any]:
+    left = Path(left_path_value)
+    right = Path(right_path_value)
+    if not left.exists():
+        raise FileNotFoundError(f'Left compare path not found: {left}')
+    if not right.exists():
+        raise FileNotFoundError(f'Right compare path not found: {right}')
+    if left.is_dir() and right.is_dir():
+        left_files = {str(path.relative_to(left)): path for path in left.rglob('*') if path.is_file()}
+        right_files = {str(path.relative_to(right)): path for path in right.rglob('*') if path.is_file()}
+        left_only = sorted(set(left_files) - set(right_files))
+        right_only = sorted(set(right_files) - set(left_files))
+        changed: list[str] = []
+        same = 0
+        diff_preview = ''
+        for rel in sorted(set(left_files) & set(right_files)):
+            left_text = _load_text_for_compare(left_files[rel])
+            right_text = _load_text_for_compare(right_files[rel])
+            if left_text == right_text:
+                same += 1
+                continue
+            changed.append(rel)
+            if not diff_preview:
+                diff_preview = '\n'.join(list(__import__('difflib').unified_diff(
+                    left_text.splitlines(),
+                    right_text.splitlines(),
+                    fromfile=f'left/{rel}',
+                    tofile=f'right/{rel}',
+                    lineterm='',
+                ))[:200])
+        return {
+            'compare_mode': 'directory',
+            'left_path': str(left),
+            'right_path': str(right),
+            'left_size_label': f"{len(left_files)} files",
+            'right_size_label': f"{len(right_files)} files",
+            'changed_count': len(changed),
+            'left_only_count': len(left_only),
+            'right_only_count': len(right_only),
+            'same_count': same,
+            'changed_items': changed[:40],
+            'left_only_items': left_only[:40],
+            'right_only_items': right_only[:40],
+            'diff_preview': diff_preview or 'No textual diff preview was needed. Files are identical where both sides overlap.',
+            'identical': not changed and not left_only and not right_only,
+        }
+    if left.is_dir() != right.is_dir():
+        raise ValueError('Compare both paths as files or both as directories.')
+    left_text = _load_text_for_compare(left)
+    right_text = _load_text_for_compare(right)
+    changed_paths: list[str] = []
+    left_only_paths: list[str] = []
+    right_only_paths: list[str] = []
+    same_count = 0
+    if left.suffix.lower() == '.json' and right.suffix.lower() == '.json':
+        left_payload = json.loads(left_text)
+        right_payload = json.loads(right_text)
+        left_flat = _flatten_compare_value(left_payload)
+        right_flat = _flatten_compare_value(right_payload)
+        for key in sorted(set(left_flat) | set(right_flat)):
+            if key not in right_flat:
+                left_only_paths.append(key)
+            elif key not in left_flat:
+                right_only_paths.append(key)
+            elif left_flat[key] != right_flat[key]:
+                changed_paths.append(key)
+            else:
+                same_count += 1
+    diff_preview = '\n'.join(list(__import__('difflib').unified_diff(
+        left_text.splitlines(),
+        right_text.splitlines(),
+        fromfile=left.name,
+        tofile=right.name,
+        lineterm='',
+    ))[:220])
+    return {
+        'compare_mode': 'file',
+        'left_path': str(left),
+        'right_path': str(right),
+        'left_size_label': _file_size_label(str(left)),
+        'right_size_label': _file_size_label(str(right)),
+        'left_format': left.suffix.lower() or 'text',
+        'right_format': right.suffix.lower() or 'text',
+        'changed_count': len(changed_paths),
+        'left_only_count': len(left_only_paths),
+        'right_only_count': len(right_only_paths),
+        'same_count': same_count,
+        'changed_items': changed_paths[:40],
+        'left_only_items': left_only_paths[:40],
+        'right_only_items': right_only_paths[:40],
+        'diff_preview': diff_preview or 'No line-level difference detected.',
+        'identical': left_text == right_text,
+    }
+def _job_action_form(action: str, job_id: str, label: str, tone: str = 'secondary') -> str:
+    if not job_id:
+        return ''
+    return ''.join([
+        "<form method='post' class='mini-form'>",
+        f"<input type='hidden' name='action' value='{html.escape(action)}'>",
+        f"<input type='hidden' name='job_id' value='{html.escape(job_id)}'>",
+        f"<button class='{html.escape(tone)} compact' type='submit'>{html.escape(label)}</button>",
+        "</form>",
+    ])
+
+
+def _render_job_action_bar(item: dict[str, Any]) -> str:
+    controls: list[str] = []
+    if item.get('can_cancel'):
+        controls.append(_job_action_form('cancel_job', str(item.get('job_id', '')), 'Cancel'))
+    if item.get('can_retry'):
+        controls.append(_job_action_form('retry_job', str(item.get('job_id', '')), 'Retry'))
+    if item.get('can_load'):
+        controls.append(_job_action_form('load_job_result', str(item.get('job_id', '')), 'Load result'))
+    if not controls:
+        return ''
+    return f"<div class='job-actions'>{''.join(controls)}</div>"
+
+
+def _job_recovery_form(job_id: str, recovery_action: str, label: str) -> str:
+    if not job_id or not recovery_action:
+        return ''
+    return ''.join([
+        "<form method='post' class='mini-form'>",
+        "<input type='hidden' name='action' value='run_recovery_action'>",
+        f"<input type='hidden' name='job_id' value='{html.escape(job_id)}'>",
+        f"<input type='hidden' name='recovery_action' value='{html.escape(recovery_action)}'>",
+        f"<button class='secondary compact' type='submit'>{html.escape(label)}</button>",
+        "</form>",
+    ])
+
+
+def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
+    status = str(item.get('status', '')).strip().lower()
+    action = str(item.get('action', '')).strip()
+    gate_accepted = item.get('gate_accepted')
+    detail = str(item.get('detail', '')).lower()
+    specs: list[tuple[str, str]] = []
+    if status in {'failed', 'cancelled'}:
+        if action in {'run_unified_benchmark_gate', 'run_unified_training'} or 'no graphs were found' in detail:
+            specs.append(('run_beginner_autopilot', 'Beginner setup'))
+            specs.append(('run_guided_learning', 'Guided starter loop'))
+        elif action in {'run_beginner_test', 'run_beginner_autopilot'}:
+            specs.append(('run_beginner_test', 'One-click test'))
+            specs.append(('run_beginner_autopilot', 'One-click setup'))
+        else:
+            specs.append(('run_understanding_eval', 'Understanding benchmark'))
+    if gate_accepted is False:
+        specs.append(('run_guided_learning', 'Bootstrap gate'))
+        specs.append(('run_beginner_autopilot', 'One-click recovery'))
+    ordered: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for recovery_action, label in specs:
+        if recovery_action in seen:
+            continue
+        seen.add(recovery_action)
+        ordered.append((recovery_action, label))
+    return ordered[:3]
+
+
+def _render_job_recovery_bar(item: dict[str, Any]) -> str:
+    job_id = str(item.get('job_id', ''))
+    controls = [_job_recovery_form(job_id, action, label) for action, label in _job_recovery_specs(item)]
+    controls = [control for control in controls if control]
+    if not controls:
+        return ''
+    return "<div class='job-recovery'><small>Suggested recovery</small><div class='job-actions'>" + ''.join(controls) + "</div></div>"
+
+
+def _render_job_log(item: dict[str, Any]) -> str:
+    events = item.get('events', []) if isinstance(item.get('events'), list) else []
+    if not events:
+        return ''
+    lines: list[str] = []
+    for event in events[-8:]:
+        if not isinstance(event, dict):
+            continue
+        stamp = time.strftime('%H:%M:%S', time.localtime(float(event.get('at', time.time()) or time.time())))
+        message = str(event.get('message', '-'))
+        lines.append(f"<div class='job-log-line'><span>{html.escape(stamp)}</span><code>{html.escape(message)}</code></div>")
+    if not lines:
+        return ''
+    return "<details class='job-log'><summary>Step log</summary>" + ''.join(lines) + "</details>"
 
 
 def _gate_diagnosis(payload: dict[str, object] | None) -> dict[str, list[str]]:
@@ -610,7 +1226,13 @@ def _render_unified_training_summary(payload: dict[str, object]) -> str:
         _info_block('Repair utility', artifacts.get('repair_utility_path') or '-'),
         _info_block('Continuous learning bundle', artifacts.get('continuous_learning_bundle_dir') or '-'),
     ])
-    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+    quick_actions = _render_output_quick_actions([
+        ('Analogy policy', str(artifacts.get('analogy_policy_path') or '')),
+        ('Unified parser', str(artifacts.get('unified_parser_path') or '')),
+        ('Repair utility', str(artifacts.get('repair_utility_path') or '')),
+        ('Retained algebra', str(artifacts.get('retained_operator_algebra_path') or '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
 
 
 def _render_unified_gate_summary(payload: dict[str, object]) -> str:
@@ -637,8 +1259,13 @@ def _render_unified_gate_summary(payload: dict[str, object]) -> str:
         _info_block('Guided source', guided.get('source_used') or '-'),
         _info_block('Persistent corpus added', corpus.get('added_case_count') or '-'),
     ])
+    quick_actions = _render_output_quick_actions([
+        ('Gate decision', str(gate.get('decision_path') or '')),
+        ('Accepted summary', str(gate.get('accepted_summary_path') or '')),
+        ('Benchmark corpus', str(corpus.get('benchmark_corpus_path') or payload.get('benchmark_corpus_path') or '')),
+    ])
     diagnosis = _render_diagnosis_blocks(payload)
-    return f"<div class='summary-grid'>{metrics}</div>{details}{diagnosis}{_raw_details(payload)}"
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{diagnosis}{_raw_details(payload)}"
 
 
 def _render_understanding_summary(payload: dict[str, object]) -> str:
@@ -659,6 +1286,126 @@ def _render_understanding_summary(payload: dict[str, object]) -> str:
     ])
     return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
 
+
+def _render_beginner_suite_summary(payload: dict[str, object]) -> str:
+    setup = payload.get('autopilot_setup', {}) if isinstance(payload.get('autopilot_setup'), dict) else {}
+    benchmark = payload.get('benchmark', {}) if isinstance(payload.get('benchmark'), dict) else {}
+    gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
+    understanding = payload.get('understanding', {}) if isinstance(payload.get('understanding'), dict) else {}
+    ops = payload.get('ops', {}) if isinstance(payload.get('ops'), dict) else {}
+    vision = payload.get('vision', {}) if isinstance(payload.get('vision'), dict) else {}
+    progress = understanding.get('progress', {}) if isinstance(understanding.get('progress'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Seeded graphs', setup.get('total_seeded') or 0),
+        _metric_card('Approved traces', setup.get('approved_review_count') or 0),
+        _metric_card('Gate accepted', gate.get('accepted')),
+        _metric_card('Analogy usefulness', benchmark.get('analogy_usefulness')),
+        _metric_card('Grounded fidelity', benchmark.get('grounded_explanation_fidelity')),
+        _metric_card('Understanding', progress.get('robust_general_intelligence_overall') or '-'),
+    ])
+    details = ''.join([
+        _info_block('Setup summary', [
+            f"hidden seeded: {setup.get('hidden_seeded', 0)}",
+            f"transfer seeded: {setup.get('transfer_seeded', 0)}",
+            f"visual seeded: {setup.get('visual_seeded', 0)}",
+            f"promotable reviews: {setup.get('promotable_review_count', 0)}",
+        ]),
+        _info_block('Context smoke test', ops.get('answer_text') or ops.get('summary') or '-'),
+        _info_block('Vision smoke test', (vision.get('answer', {}) if isinstance(vision.get('answer'), dict) else {}).get('answer_text') or '-'),
+        _info_block('Gate diagnosis', gate.get('blocking_reasons') or gate.get('slice_blocking_reasons') or 'ready'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Gate decision', str(gate.get('decision_path') or '')),
+        ('Accepted summary', str(gate.get('accepted_summary_path') or '')),
+        ('Understanding report', str(payload.get('understanding_report_path') or '')),
+    ])
+    diagnosis = _render_diagnosis_blocks(payload)
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{diagnosis}{_raw_details(payload)}"
+
+def _render_file_preview_summary(payload: dict[str, object]) -> str:
+    metrics = ''.join([
+        _metric_card('Filename', payload.get('filename')),
+        _metric_card('Size', payload.get('size_label')),
+        _metric_card('Modified', payload.get('modified_at')),
+    ])
+    details = ''.join([
+        _info_block('Path', payload.get('path') or '-'),
+    ])
+    preview = html.escape(str(payload.get('preview_text', '')))
+    return f"<div class='summary-grid'>{metrics}</div>{details}<details class='raw-json' open><summary>File preview</summary><pre>{preview}</pre></details>"
+
+
+def _render_artifact_compare_summary(payload: dict[str, object]) -> str:
+    metrics = ''.join([
+        _metric_card('Mode', payload.get('compare_mode')),
+        _metric_card('Changed', payload.get('changed_count')),
+        _metric_card('Left only', payload.get('left_only_count')),
+        _metric_card('Right only', payload.get('right_only_count')),
+        _metric_card('Same', payload.get('same_count')),
+        _metric_card('Identical', payload.get('identical')),
+    ])
+    details = ''.join([
+        _info_block('Left', payload.get('left_path') or '-'),
+        _info_block('Right', payload.get('right_path') or '-'),
+        _info_block('Left size', payload.get('left_size_label') or '-'),
+        _info_block('Right size', payload.get('right_size_label') or '-'),
+        _info_block('Changed items', payload.get('changed_items') or '-'),
+        _info_block('Left-only items', payload.get('left_only_items') or '-'),
+        _info_block('Right-only items', payload.get('right_only_items') or '-'),
+    ])
+    diff_preview = html.escape(str(payload.get('diff_preview', '')))
+    return f"<div class='summary-grid'>{metrics}</div>{details}<details class='raw-json' open><summary>Diff preview</summary><pre>{diff_preview}</pre></details>{_raw_details(payload)}"
+
+
+def _render_notification_panel(snapshot: dict[str, object]) -> str:
+    recent = snapshot.get('recent', []) if isinstance(snapshot.get('recent'), list) else []
+    unread_count = int(snapshot.get('unread_count', 0) or 0)
+    metrics = ''.join([
+        _metric_card('Unread alerts', unread_count),
+        _metric_card('Saved alerts', len(recent)),
+        _metric_card('Notification file', Path(str(snapshot.get('path', '-'))).name if snapshot.get('path') else '-'),
+    ])
+    controls = ''.join([
+        "<form method='post' class='mini-form'><input type='hidden' name='action' value='mark_all_notifications_read'><button class='secondary compact' type='submit'>Mark all read</button></form>",
+    ])
+    rows: list[str] = []
+    for item in recent[:6]:
+        if not isinstance(item, dict):
+            continue
+        note_id = str(item.get('id', ''))
+        level = str(item.get('level', 'neutral'))
+        read = bool(item.get('read'))
+        tone = 'unread' if not read else 'read'
+        dismiss = ''
+        if note_id and not read:
+            dismiss = ''.join([
+                "<form method='post' class='mini-form'>",
+                "<input type='hidden' name='action' value='dismiss_notification'>",
+                f"<input type='hidden' name='notification_id' value='{html.escape(note_id)}'>",
+                "<button class='secondary compact' type='submit'>Dismiss</button>",
+                "</form>",
+            ])
+        rows.append(
+            "".join([
+                f"<div class='notification-row {tone} {html.escape(level)}'>",
+                f"<div class='job-row-head'><strong>{html.escape(str(item.get('title', '-')))}</strong><span class='status-chip'>{html.escape(level)}</span></div>",
+                f"<div>{html.escape(str(item.get('body', '-')))}</div>",
+                f"<div class='job-meta'>Time: {html.escape(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(item.get('created_at', time.time()) or time.time()))))}</div>",
+                dismiss,
+                "</div>",
+            ])
+        )
+    rows_html = ''.join(rows) or "<div class='empty'>No saved notifications yet.</div>"
+    return (
+        "<section class='card' id='notification-panel' style='margin-bottom:20px;'>"
+        "<div class='section-head'><div><small class='eyebrow'>Notifications</small><h2>Completion alerts</h2><p>Finished, failed, and cancelled background jobs show up here so a beginner can tell what changed without scanning the full log.</p></div>"
+        f"<div class='job-actions'>{controls}</div></div>"
+        f"<div class='summary-grid'>{metrics}</div>"
+        f"<div class='job-list'>{rows_html}</div>"
+        "</section>"
+    )
+
+
 def render_result(kind: str, payload: dict[str, object] | None) -> str:
     if payload is None:
         return "<div class='empty'>Run one of the actions above. The result console will summarize the latest answer or training run here.</div>"
@@ -668,7 +1415,11 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         'unified_training': 'Unified SemOp training result',
         'unified_benchmark_gate': 'Unified benchmark gate result',
         'guided_learning': 'Guided starter learning result',
+        'beginner_autopilot': 'One-click beginner setup result',
+        'beginner_test': 'One-click beginner test result',
         'understanding_eval': 'Overall understanding benchmark',
+        'file_preview': 'Output file preview',
+        'artifact_compare': 'Artifact comparison',
     }
     if kind == 'ops':
         body = _render_ops_summary(payload)
@@ -678,8 +1429,14 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         body = _render_unified_training_summary(payload)
     elif kind in {'unified_benchmark_gate', 'guided_learning'}:
         body = _render_unified_gate_summary(payload)
+    elif kind in {'beginner_autopilot', 'beginner_test'}:
+        body = _render_beginner_suite_summary(payload)
     elif kind == 'understanding_eval':
         body = _render_understanding_summary(payload)
+    elif kind == 'file_preview':
+        body = _render_file_preview_summary(payload)
+    elif kind == 'artifact_compare':
+        body = _render_artifact_compare_summary(payload)
     else:
         body = f"<div class='summary-grid'>{_metric_card('Status', 'completed')}</div>{_raw_details(payload)}"
     return f"<h3>{html.escape(titles.get(kind, kind or 'Result'))}</h3>{body}"
@@ -707,7 +1464,7 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
     ]
     benchmark_ready = sum(1 for path in benchmark_inputs if Path(path).exists())
     store_graphs = _store_graph_count(state.unified_store_path, state.unified_source, state.unified_split)
-    review_snapshot = _review_queue_snapshot(state.unified_review_queue_path, state.unified_operating_domain)
+    review_snapshot = _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state))
     cards = [
         (
             'Unified trainer lane',
@@ -777,6 +1534,76 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
     return ''.join(rendered)
 
 
+def _format_elapsed(seconds: float | None) -> str:
+    if seconds is None:
+        return '-'
+    total = max(0, int(seconds))
+    if total < 60:
+        return f'{total}s'
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f'{minutes}m {secs:02d}s'
+    hours, minutes = divmod(minutes, 60)
+    return f'{hours}h {minutes:02d}m'
+
+
+def _render_job_queue_panel(snapshot: dict[str, object]) -> str:
+    active = snapshot.get('active', {}) if isinstance(snapshot.get('active'), dict) else {}
+    recent = snapshot.get('recent', []) if isinstance(snapshot.get('recent'), list) else []
+    active_eta = active.get('remaining_eta') if isinstance(active, dict) else ''
+    metrics = ''.join([
+        _metric_card('Running jobs', snapshot.get('running_count', 0)),
+        _metric_card('Queued jobs', snapshot.get('queued_count', 0)),
+        _metric_card('Completed jobs', snapshot.get('completed_count', 0)),
+        _metric_card('Saved history', snapshot.get('saved_history_count', 0)),
+        _metric_card('Current ETA', active_eta or '-'),
+        _metric_card('Auto refresh', 'on' if snapshot.get('has_active') else 'idle'),
+    ])
+    if active:
+        progress = max(0, min(100, int((float(active.get('progress', 0.0) or 0.0)) * 100)))
+        progress_label = f'{progress}%'
+        active_html = ''.join([
+            "<div class='info-block'><small>Active job</small>",
+            f"<div class='job-row-head'><strong>{html.escape(str(active.get('label', '-')))}</strong><span class='status-chip'>{html.escape(str(active.get('status', '-')))}</span></div>",
+            f"<div>{html.escape(str(active.get('detail', '-')))}</div>",
+            f"<div class='job-progress'><span style='width:{progress}%;'></span></div>",
+            f"<div class='job-meta'>Elapsed: {html.escape(_format_elapsed(active.get('elapsed_seconds')))} | Progress: {html.escape(progress_label)} | ETA: {html.escape(str(active.get('remaining_eta', '-')))} | Job id: {html.escape(str(active.get('job_id', '-')))}</div>",
+            _render_job_action_bar(active),
+            _render_job_recovery_bar(active),
+            _render_job_log(active),
+            "</div>",
+        ])
+    else:
+        active_html = "<div class='empty'>No background job is running right now. Queue one of the training or one-click actions and this panel will start tracking it automatically.</div>"
+    recent_rows: list[str] = []
+    for item in recent[:8]:
+        if not isinstance(item, dict):
+            continue
+        recent_rows.append(
+            "".join([
+                "<div class='job-row'>",
+                f"<div class='job-row-head'><strong>{html.escape(str(item.get('label', '-')))}</strong><span class='status-chip'>{html.escape(str(item.get('status', '-')))}</span></div>",
+                f"<div>{html.escape(str(item.get('detail', '-')))}</div>",
+                f"<div class='job-meta'>Elapsed: {html.escape(_format_elapsed(item.get('elapsed_seconds')))} | Progress: {html.escape(str(max(0, min(100, int((float(item.get('progress', 0.0) or 0.0)) * 100)))) + '%')} | ETA: {html.escape(str(item.get('remaining_eta', '-')))}</div>",
+                _render_job_action_bar(item),
+                _render_job_recovery_bar(item),
+                _render_job_log(item),
+                "</div>",
+            ])
+        )
+    recent_html = ''.join(recent_rows) or "<div class='empty'>No background job history yet.</div>"
+    history_path = snapshot.get('history_path') or '-'
+    return (
+        "<section class='card' id='job-panel' style='margin-bottom:20px;'>"
+        "<div class='section-head'><div><small class='eyebrow'>Live jobs</small><h2>Background queue and progress</h2><p>Long training and beginner flows now run in the background. Keep this page open; it refreshes automatically while a job is active.</p></div></div>"
+        f"<div class='summary-grid'>{metrics}</div>"
+        f"{active_html}"
+        f"<div class='info-block'><small>Saved history file</small><div>{html.escape(str(history_path))}</div></div>"
+        f"<div class='info-block'><small>Recent jobs</small><div class='job-list'>{recent_html}</div></div>"
+        "</section>"
+    )
+
+
 def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str:
     if payload is None:
         tips = ''.join(f'<li>{html.escape(item)}</li>' for item in [
@@ -803,6 +1630,23 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
         notes.extend(diagnosis.get('actions', [])[:2])
         if gate.get('blocking_reasons'):
             notes.extend(str(item) for item in gate.get('blocking_reasons', [])[:2])
+    elif kind in {'beginner_autopilot', 'beginner_test'}:
+        gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
+        benchmark = payload.get('benchmark', {}) if isinstance(payload.get('benchmark'), dict) else {}
+        understanding = payload.get('understanding', {}) if isinstance(payload.get('understanding'), dict) else {}
+        progress = understanding.get('progress', {}) if isinstance(understanding.get('progress'), dict) else {}
+        setup = payload.get('autopilot_setup', {}) if isinstance(payload.get('autopilot_setup'), dict) else {}
+        title = 'One-click beginner flow finished.' if kind == 'beginner_autopilot' else 'One-click beginner test finished.'
+        notes = [
+            f"Seeded graphs: {_render_value(setup.get('total_seeded'))}",
+            f"Approved traces: {_render_value(setup.get('approved_review_count'))}",
+            f"Gate accepted: {_render_value(gate.get('accepted'))}",
+            f"Understanding: {_render_value(progress.get('robust_general_intelligence_overall'))}",
+        ]
+        diagnosis = _gate_diagnosis(payload)
+        notes.extend(diagnosis.get('actions', [])[:2])
+        if not gate.get('accepted') and gate.get('blocking_reasons'):
+            notes.extend(str(item) for item in gate.get('blocking_reasons', [])[:2])
     elif kind == 'unified_training':
         title = 'Unified artifacts were exported successfully.'
         notes = [
@@ -825,6 +1669,21 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             str(answer.get('answer_text') or '-'),
             f"Opening candidates: {_render_value(_opening_candidates(world))}",
             'If this looks right, keep the same stores for the unified benchmark gate.',
+        ]
+    elif kind == 'artifact_compare':
+        title = 'Artifact comparison finished.'
+        notes = [
+            f"Mode: {_render_value(payload.get('compare_mode'))}",
+            f"Changed: {_render_value(payload.get('changed_count'))}",
+            f"Left only: {_render_value(payload.get('left_only_count'))}",
+            f"Right only: {_render_value(payload.get('right_only_count'))}",
+        ]
+    elif kind == 'file_preview':
+        title = 'Output file preview loaded.'
+        notes = [
+            str(payload.get('filename') or '-'),
+            f"Size: {_render_value(payload.get('size_label'))}",
+            'Use Compare artifacts to inspect changes across two runs or two files.',
         ]
     else:
         title = 'The last run finished.'
@@ -893,6 +1752,26 @@ def _render_reasoning_section(state: StudioState) -> str:
   </section>
 """
 
+def _render_beginner_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="beginner-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Beginner Mode</small><h2>One-click setup, training, and testing</h2><p>Use the built-in example corpora to seed memory, create approved traces, train the core SemOp artifacts, and run a beginner-friendly smoke test without hand-assembling data first.</p></div></div>
+    <form method="post">
+      {_render_unified_scope_fields(state)}
+      <div class="mini-grid">
+        <div><label>Transfer eval JSONL</label><input name="unified_transfer_input" value="{html.escape(state.unified_transfer_input)}"></div>
+        <div><label>Hidden premise eval JSONL</label><input name="understanding_hidden_input" value="{html.escape(state.understanding_hidden_input)}"></div>
+        <div><label>VLSO eval JSONL</label><input name="understanding_vlso_input" value="{html.escape(state.understanding_vlso_input)}"></div>
+        <div><label>VLSO real-image eval JSONL</label><input name="understanding_vlso_real_input" value="{html.escape(state.understanding_vlso_real_input)}"></div>
+      </div>
+      <div class="info-block"><small>What happens</small>1. Built-in hidden-premise, transfer, and starter vision examples are stored into your corpus DB. 2. Grounded starter reviews are approved automatically. 3. The unified artifact bundle is trained. 4. The benchmark gate and beginner smoke tests are run.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_beginner_autopilot'))} for full setup, or {html.escape(_action_time_hint('run_beginner_test'))} to re-check the current bundle.</div>
+      <div class="actions"><button class="primary" name="action" value="run_beginner_autopilot">One-click setup + train + test</button><button class="secondary" name="action" value="run_beginner_test">One-click test current bundle</button></div>
+    </form>
+  </section>
+"""
+
+
 def _render_training_section(state: StudioState) -> str:
     return f"""
   <section class="card" id="training-lab" style="margin-top:20px;">
@@ -900,6 +1779,7 @@ def _render_training_section(state: StudioState) -> str:
     <form method="post">
       {_render_unified_scope_fields(state)}
       <div class="info-block"><small>Beginner shortcut</small>If the benchmark gate is stuck at 0.0 for analogy, grounding, or repair, use the guided starter loop once. It seeds approved traces, stores starter graphs, then runs training and the benchmark gate in one pass.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_unified_training'))} for artifacts only, or {html.escape(_action_time_hint('run_guided_learning'))} if you include starter seeding and a gate rerun.</div>
       <div class="actions"><button class="primary" name="action" value="run_unified_training">Run unified trainer</button><button class="secondary" name="action" value="run_guided_learning">Guided starter loop</button></div>
     </form>
   </section>
@@ -921,6 +1801,7 @@ def _render_benchmark_section(state: StudioState) -> str:
         <div><label>VLSO real-image eval JSONL</label><input name="understanding_vlso_real_input" value="{html.escape(state.understanding_vlso_real_input)}"></div>
       </div>
       <div class="actions"><button class="primary" name="action" value="run_unified_benchmark_gate">Train + benchmark gate</button><button class="secondary" name="action" value="run_guided_learning">Bootstrap + train + gate</button><button class="secondary" name="action" value="run_understanding_eval">Run overall understanding benchmark</button></div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_unified_benchmark_gate'))} for the gate, or {html.escape(_action_time_hint('run_understanding_eval'))} for the understanding benchmark alone.</div>
       <small>The benchmark gate will also derive starter analogy, grounding, and repair cases from the selected corpus store, so you do not have to hand-author every case first.</small>
     </form>
   </section>
@@ -935,24 +1816,102 @@ def _render_notes_section() -> str:
 """
 
 
+def _render_compare_section(state: StudioState) -> str:
+    left, right = _default_compare_paths(state)
+    return f"""
+  <section class="card" id="compare-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Compare</small><h2>Artifact compare</h2><p>Compare two files or two output directories to see what changed across runs. This is useful for `benchmark_gate.json`, `unified_parser.json`, or two whole output bundles.</p></div></div>
+    <form method="post">
+      <div class="mini-grid">
+        <div><label>Left file or dir</label><input name="compare_left_path" value="{html.escape(left)}"></div>
+        <div><label>Right file or dir</label><input name="compare_right_path" value="{html.escape(right)}"></div>
+      </div>
+      <div class="info-block"><small>Starter suggestion</small>Use the current output dir's `benchmark_gate.json` on the left and either `accepted_benchmark_summary.json`, another run folder, or a second artifact file on the right.</div>
+      <div class="actions"><button class="primary" name="action" value="run_artifact_compare">Compare artifacts</button><button class="secondary" name="action" value="load_compare_example">Use output defaults</button></div>
+    </form>
+  </section>
+"""
+
+
 class StudioApp:
+    LONG_ACTIONS = {
+        'run_unified_training',
+        'run_unified_benchmark_gate',
+        'run_guided_learning',
+        'run_beginner_autopilot',
+        'run_beginner_test',
+        'run_understanding_eval',
+    }
+    ACTION_LABELS = {
+        'run_unified_training': 'Unified trainer',
+        'run_unified_benchmark_gate': 'Benchmark gate',
+        'run_guided_learning': 'Guided starter loop',
+        'run_beginner_autopilot': 'One-click setup + train + test',
+        'run_beginner_test': 'One-click test current bundle',
+        'run_understanding_eval': 'Overall understanding benchmark',
+    }
+
     def __init__(self) -> None:
-        pass
+        self._last_state = StudioState()
+        self._last_outcome = ActionOutcome()
+        self._job_lock = threading.Lock()
+        self._job_queue: queue.Queue[str] = queue.Queue()
+        self._jobs: dict[str, BackgroundJob] = {}
+        self._job_order: list[str] = []
+        self._job_counter = 0
+        self._worker = threading.Thread(target=self._job_worker, name='semop-studio-worker', daemon=True)
+        self._worker.start()
 
     @staticmethod
     def _copilot(review_queue_path: str | None = None) -> DomainCopilot:
         return DomainCopilot(mode='heuristic', review_queue_path=review_queue_path or None)
 
     def handle(self, form: dict[str, list[str]]) -> str:
-        action = _first(form, 'action', '')
-        state = StudioState.from_form(form)
-        try:
-            state, outcome = self._run_action(action, state)
-        except Exception as exc:
-            outcome = ActionOutcome(flash=f'Action failed: {exc}', flash_tone='error')
-        return render_page(state, outcome)
+        if form:
+            action = _first(form, 'action', '')
+            job_id = _first(form, 'job_id', '')
+            notification_id = _first(form, 'notification_id', '')
+            recovery_action = _first(form, 'recovery_action', '')
+            file_path = _first(form, 'file_path', '')
+            state = StudioState.from_form(form)
+            try:
+                state, outcome = self._run_action(
+                    action,
+                    state,
+                    job_id=job_id,
+                    notification_id=notification_id,
+                    recovery_action=recovery_action,
+                    file_path=file_path,
+                )
+            except Exception as exc:
+                outcome = ActionOutcome(
+                    flash=f'Action failed: {exc}',
+                    flash_tone='error',
+                    result_kind=self._last_outcome.result_kind,
+                    result_payload=self._last_outcome.result_payload,
+                )
+            self._last_state = state
+            self._last_outcome = outcome
+        else:
+            state = self._last_state
+            outcome = self._last_outcome
+        return render_page(
+            state,
+            outcome,
+            self._job_snapshot(state.unified_output_dir),
+            _notification_snapshot(state.unified_output_dir),
+        )
 
-    def _run_action(self, action: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+    def _run_action(
+        self,
+        action: str,
+        state: StudioState,
+        *,
+        job_id: str = '',
+        notification_id: str = '',
+        recovery_action: str = '',
+        file_path: str = '',
+    ) -> tuple[StudioState, ActionOutcome]:
         if action == 'load_ops_example':
             state = replace(
                 state,
@@ -960,28 +1919,492 @@ class StudioApp:
                 ops_context=OPS_EXAMPLE['context'],
                 ops_domain=OPS_EXAMPLE['domain'],
                 ops_scenario=OPS_EXAMPLE['scenario'],
+                unified_operating_domain=OPS_EXAMPLE['domain'],
             )
-            return state, ActionOutcome(flash='Loaded the default context-reasoning example.')
+            return state, ActionOutcome(flash='Loaded the default context-reasoning example.', result_kind=self._last_outcome.result_kind, result_payload=self._last_outcome.result_payload)
         if action == 'load_vision_example':
             state = replace(
                 state,
                 vision_query=VISION_EXAMPLE['query'],
                 vision_image=VISION_EXAMPLE['image_path'],
             )
-            return state, ActionOutcome(flash='Loaded the default vision example.')
+            return state, ActionOutcome(flash='Loaded the default vision example.', result_kind=self._last_outcome.result_kind, result_payload=self._last_outcome.result_payload)
+        if action == 'load_compare_example':
+            left, right = _default_compare_paths(state)
+            state = replace(state, compare_left_path=left, compare_right_path=right)
+            return state, ActionOutcome(
+                flash='Loaded compare defaults from the current output directory.',
+                flash_tone='success',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        if action == 'dismiss_notification':
+            return self._dismiss_notification(notification_id, state)
+        if action == 'mark_all_notifications_read':
+            return self._mark_all_notifications_read(state)
+        if action == 'cancel_job':
+            return self._cancel_background_job(job_id, state)
+        if action == 'retry_job':
+            return self._retry_background_job(job_id, state)
+        if action == 'load_job_result':
+            return self._load_job_result(job_id, state)
+        if action == 'load_output_file':
+            return self._load_output_file(file_path, state)
+        if action == 'run_recovery_action':
+            return self._run_recovery_action(job_id, recovery_action, state)
+        if action == 'run_artifact_compare':
+            left, right = _default_compare_paths(state)
+            state = replace(state, compare_left_path=left, compare_right_path=right)
+            return state, self._run_artifact_compare(state)
         if action == 'run_ops':
             return state, self._run_ops(state)
         if action == 'run_vision':
             return state, self._run_vision(state)
-        if action == 'run_unified_training':
-            return state, self._run_unified_training(state)
-        if action == 'run_unified_benchmark_gate':
-            return state, self._run_unified_benchmark_gate(state)
-        if action == 'run_guided_learning':
-            return self._run_guided_learning(state)
-        if action == 'run_understanding_eval':
-            return state, self._run_understanding_eval(state)
-        return state, ActionOutcome()
+        if action in self.LONG_ACTIONS:
+            return self._enqueue_background_action(action, state)
+        return state, ActionOutcome(result_kind=self._last_outcome.result_kind, result_payload=self._last_outcome.result_payload)
+
+    def _enqueue_background_action(self, action: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        label = self.ACTION_LABELS.get(action, action)
+        with self._job_lock:
+            self._job_counter += 1
+            job_id = f"job-{time.strftime('%Y%m%d%H%M%S')}-{self._job_counter:04d}"
+            job = BackgroundJob(job_id=job_id, action=action, label=label, state=state)
+            self._append_job_event(job, f'{label} queued.')
+            self._jobs[job_id] = job
+            self._job_order.append(job_id)
+            ahead = sum(1 for item in self._jobs.values() if item.status in {'queued', 'running', 'cancelling'}) - 1
+        self._job_queue.put(job_id)
+        queue_note = 'Starting now.' if ahead <= 0 else f'{ahead} job(s) ahead in the queue.'
+        return state, ActionOutcome(
+            flash=f'{label} queued in the background. {queue_note} This page refreshes automatically while it runs.',
+            flash_tone='success',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _job_worker(self) -> None:
+        while True:
+            job_id = self._job_queue.get()
+            try:
+                self._execute_job(job_id)
+            finally:
+                self._job_queue.task_done()
+
+    def _execute_job(self, job_id: str) -> None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            if job.status == 'cancelled':
+                return
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                job.detail = 'Cancelled before the job started.'
+                job.finished_at = time.time()
+                job.progress = 0.0
+                job.flash = job.detail
+                job.flash_tone = 'neutral'
+                self._append_job_event(job, job.detail)
+                cancelled_job = job
+            else:
+                job.status = 'running'
+                job.started_at = time.time()
+                job.progress = 0.05
+                job.detail = 'Starting background work.'
+                self._append_job_event(job, job.detail)
+                state = job.state
+                action = job.action
+                cancelled_job = None
+        if cancelled_job is not None:
+            self._persist_job_history(cancelled_job)
+            self._emit_job_notification(cancelled_job)
+            return
+        try:
+            if action == 'run_unified_training':
+                outcome = self._run_unified_training(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            elif action == 'run_unified_benchmark_gate':
+                outcome = self._run_unified_benchmark_gate(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            elif action == 'run_guided_learning':
+                final_state, outcome = self._run_guided_learning(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_beginner_autopilot':
+                final_state, outcome = self._run_beginner_autopilot(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_beginner_test':
+                final_state, outcome = self._run_beginner_test(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_understanding_eval':
+                outcome = self._run_understanding_eval(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            else:
+                raise ValueError(f'Unknown background action: {action}')
+            self._complete_job(job_id, final_state, outcome)
+        except JobCancelledError:
+            self._mark_job_cancelled(job_id, 'Background job cancelled at the next safe checkpoint.')
+        except Exception as exc:
+            self._fail_job(job_id, exc)
+
+    def _append_job_event(self, job: BackgroundJob, message: str) -> None:
+        normalized = str(message).strip()
+        if not normalized:
+            return
+        if job.events and job.events[-1].get('message') == normalized:
+            return
+        job.events.append({'at': time.time(), 'message': normalized})
+        if len(job.events) > 40:
+            del job.events[:-40]
+
+    def _update_job(self, job_id: str, *, progress: float | None = None, detail: str | None = None) -> None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            if progress is not None:
+                job.progress = max(0.0, min(1.0, float(progress)))
+            if detail is not None:
+                job.detail = str(detail)
+                self._append_job_event(job, job.detail)
+            cancel_requested = job.cancel_requested
+        if cancel_requested:
+            raise JobCancelledError('Cancellation requested.')
+
+    def _run_recovery_action(self, job_id: str, recovery_action: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        record = self._find_job_record(job_id, state.unified_output_dir)
+        if not record:
+            return state, ActionOutcome(
+                flash='No saved job record was found for that recovery action.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        job_state = _state_from_payload(record.get('state'), fallback=state)
+        if recovery_action not in self.LONG_ACTIONS:
+            return job_state, ActionOutcome(
+                flash='That recovery action is not available.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        return self._enqueue_background_action(recovery_action, job_state)
+
+    def _complete_job(self, job_id: str, state: StudioState, outcome: ActionOutcome) -> None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                job.progress = min(job.progress, 0.99)
+                job.detail = 'Cancellation was requested. Any partially written artifacts were left on disk.'
+                job.finished_at = time.time()
+                job.flash = job.detail
+                job.flash_tone = 'neutral'
+                self._append_job_event(job, job.detail)
+                cancelled_job = job
+                completed_job = None
+            else:
+                job.status = 'completed'
+                job.progress = 1.0
+                job.detail = outcome.flash or 'Completed.'
+                job.finished_at = time.time()
+                job.result_kind = outcome.result_kind
+                job.result_payload = outcome.result_payload
+                job.flash = outcome.flash
+                job.flash_tone = outcome.flash_tone
+                self._append_job_event(job, job.detail)
+                completed_job = job
+                cancelled_job = None
+        if cancelled_job is not None:
+            self._persist_job_history(cancelled_job)
+            self._emit_job_notification(cancelled_job)
+            self._last_outcome = ActionOutcome(
+                flash=cancelled_job.detail,
+                flash_tone='neutral',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+            return
+        if completed_job is not None:
+            self._persist_job_history(completed_job)
+            self._emit_job_notification(completed_job)
+            self._last_state = state
+            self._last_outcome = outcome
+
+    def _mark_job_cancelled(self, job_id: str, detail: str) -> None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.status = 'cancelled'
+            job.finished_at = time.time()
+            job.detail = detail
+            job.flash = detail
+            job.flash_tone = 'neutral'
+            self._append_job_event(job, detail)
+        self._persist_job_history(job)
+        self._emit_job_notification(job)
+        self._last_outcome = ActionOutcome(
+            flash=detail,
+            flash_tone='neutral',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _fail_job(self, job_id: str, exc: Exception) -> None:
+        message = f'Background job failed: {exc}'
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.status = 'failed'
+            job.finished_at = time.time()
+            job.detail = message
+            job.error_text = str(exc)
+            job.flash = message
+            job.flash_tone = 'error'
+            self._append_job_event(job, message)
+        self._persist_job_history(job)
+        self._emit_job_notification(job)
+        self._last_outcome = ActionOutcome(
+            flash=message,
+            flash_tone='error',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _cancel_background_job(self, job_id: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return state, ActionOutcome(
+                    flash='That job could not be found in the current queue or history.',
+                    flash_tone='error',
+                    result_kind=self._last_outcome.result_kind,
+                    result_payload=self._last_outcome.result_payload,
+                )
+            job_state = job.state
+            if job.status == 'queued':
+                job.cancel_requested = True
+                job.status = 'cancelled'
+                job.detail = 'Cancelled before the job started.'
+                job.finished_at = time.time()
+                job.flash = job.detail
+                job.flash_tone = 'neutral'
+                self._append_job_event(job, job.detail)
+                cancelled_now = True
+                message = job.detail
+            elif job.status in {'running', 'cancelling'}:
+                job.cancel_requested = True
+                job.status = 'cancelling'
+                job.detail = 'Cancel requested. The current phase will stop at the next safe checkpoint.'
+                self._append_job_event(job, job.detail)
+                cancelled_now = False
+                message = job.detail
+            else:
+                cancelled_now = False
+                message = f"This job is already {job.status}."
+        if cancelled_now:
+            self._persist_job_history(job)
+            self._emit_job_notification(job)
+        return job_state, ActionOutcome(
+            flash=message,
+            flash_tone='success' if 'Cancel requested' in message or 'Cancelled' in message else 'neutral',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _retry_background_job(self, job_id: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        record = self._find_job_record(job_id, state.unified_output_dir)
+        if not record:
+            return state, ActionOutcome(
+                flash='No saved job record was found for retry.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        action = str(record.get('action', '')).strip()
+        job_state = _state_from_payload(record.get('state'), fallback=state)
+        if action not in self.LONG_ACTIONS:
+            return job_state, ActionOutcome(
+                flash='This saved job cannot be retried automatically.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        return self._enqueue_background_action(action, job_state)
+
+    def _load_job_result(self, job_id: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        record = self._find_job_record(job_id, state.unified_output_dir)
+        if not record:
+            return state, ActionOutcome(
+                flash='No saved job result was found.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        result_kind = str(record.get('result_kind', '')).strip()
+        result_payload = record.get('result_payload')
+        job_state = _state_from_payload(record.get('state'), fallback=state)
+        if not result_kind or not isinstance(result_payload, dict):
+            return job_state, ActionOutcome(
+                flash='This job does not have a saved structured result yet.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        return job_state, ActionOutcome(
+            flash=f"Loaded saved result for {record.get('label', 'background job')}.",
+            flash_tone='success',
+            result_kind=result_kind,
+            result_payload=result_payload,
+        )
+
+    def _load_output_file(self, file_path: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        preview = _preview_output_file(file_path)
+        return self._last_state, ActionOutcome(
+            flash=f"Loaded file preview for {preview.get('filename', 'output file')}.",
+            flash_tone='success',
+            result_kind='file_preview',
+            result_payload=preview,
+        )
+
+    def _dismiss_notification(self, notification_id: str, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        if notification_id:
+            _mark_notification(state.unified_output_dir, notification_id, read=True)
+        return state, ActionOutcome(
+            flash='Notification marked as read.',
+            flash_tone='success',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _mark_all_notifications_read(self, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        _mark_all_notifications(state.unified_output_dir, read=True)
+        return state, ActionOutcome(
+            flash='All notifications were marked as read.',
+            flash_tone='success',
+            result_kind=self._last_outcome.result_kind,
+            result_payload=self._last_outcome.result_payload,
+        )
+
+    def _run_artifact_compare(self, state: StudioState) -> ActionOutcome:
+        left = str(state.compare_left_path or '').strip()
+        right = str(state.compare_right_path or '').strip()
+        summary = _compare_paths(left, right)
+        return ActionOutcome(
+            flash='Artifact comparison finished.',
+            flash_tone='success',
+            result_kind='artifact_compare',
+            result_payload=summary,
+        )
+
+    def _emit_job_notification(self, job: BackgroundJob) -> None:
+        _upsert_notification(job.state.unified_output_dir, _build_notification(job))
+
+    def _find_job_record(self, job_id: str, output_dir: str) -> dict[str, Any] | None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                return self._history_record(job)
+        for entry in _read_job_history(output_dir):
+            if str(entry.get('job_id', '')) == job_id:
+                return entry
+        return None
+
+    def _history_record(self, job: BackgroundJob) -> dict[str, Any]:
+        gate_payload = job.result_payload.get('gate') if isinstance(job.result_payload, dict) else {}
+        gate_accepted = gate_payload.get('accepted') if isinstance(gate_payload, dict) else None
+        return {
+            'job_id': job.job_id,
+            'label': job.label,
+            'action': job.action,
+            'status': job.status,
+            'detail': job.detail,
+            'progress': job.progress,
+            'created_at': job.created_at,
+            'started_at': job.started_at,
+            'finished_at': job.finished_at,
+            'result_kind': job.result_kind,
+            'result_payload': job.result_payload,
+            'flash': job.flash,
+            'flash_tone': job.flash_tone,
+            'error_text': job.error_text,
+            'events': job.events,
+            'gate_accepted': gate_accepted,
+            'state': _state_to_payload(job.state),
+            'output_dir': job.state.unified_output_dir,
+        }
+
+    def _persist_job_history(self, job: BackgroundJob) -> None:
+        output_dir = job.state.unified_output_dir
+        history = _read_job_history(output_dir)
+        record = self._history_record(job)
+        history = [item for item in history if str(item.get('job_id', '')) != job.job_id]
+        history.insert(0, record)
+        _write_job_history(output_dir, history)
+
+    @staticmethod
+    def _serialize_job(job: BackgroundJob) -> dict[str, Any]:
+        end_time = job.finished_at or time.time()
+        baseline = job.started_at or job.created_at
+        status = job.status
+        gate_payload = job.result_payload.get('gate') if isinstance(job.result_payload, dict) else {}
+        gate_accepted = gate_payload.get('accepted') if isinstance(gate_payload, dict) else None
+        return {
+            'job_id': job.job_id,
+            'label': job.label,
+            'status': status,
+            'detail': job.detail,
+            'progress': job.progress,
+            'elapsed_seconds': max(0.0, end_time - baseline),
+            'result_kind': job.result_kind,
+            'action': job.action,
+            'time_hint': _action_time_hint(job.action),
+            'remaining_eta': _remaining_eta_label(job.action, job.progress),
+            'can_cancel': status in {'queued', 'running', 'cancelling'},
+            'can_retry': status in {'completed', 'failed', 'cancelled'} and bool(job.action),
+            'can_load': bool(job.result_kind and isinstance(job.result_payload, dict)),
+            'persisted': False,
+            'output_dir': job.state.unified_output_dir,
+            'events': job.events[-8:],
+            'gate_accepted': gate_accepted,
+        }
+
+    def _job_snapshot(self, output_dir: str) -> dict[str, Any]:
+        with self._job_lock:
+            jobs = [self._jobs[job_id] for job_id in self._job_order]
+        running = [job for job in jobs if job.status in {'running', 'cancelling'}]
+        queued = [job for job in jobs if job.status == 'queued']
+        completed = [job for job in jobs if job.status == 'completed']
+        failed = [job for job in jobs if job.status == 'failed']
+        active = running[0] if running else (queued[0] if queued else None)
+        recent: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for job in reversed(jobs[-8:]):
+            snapshot = self._serialize_job(job)
+            recent.append(snapshot)
+            seen_ids.add(snapshot['job_id'])
+        history_entries = _read_job_history(output_dir)
+        for entry in history_entries:
+            snapshot = _history_to_snapshot(entry)
+            job_id = str(snapshot.get('job_id', ''))
+            if not job_id or job_id in seen_ids:
+                continue
+            recent.append(snapshot)
+            seen_ids.add(job_id)
+            if len(recent) >= 8:
+                break
+        return {
+            'has_active': active is not None,
+            'running_count': len(running),
+            'queued_count': len(queued),
+            'completed_count': len(completed),
+            'failed_count': len(failed),
+            'saved_history_count': len(history_entries),
+            'history_path': str(_job_history_path(output_dir)),
+            'active': self._serialize_job(active) if active is not None else {},
+            'recent': recent,
+        }
 
     def _run_ops(self, state: StudioState) -> ActionOutcome:
         request = CopilotRequest(
@@ -1017,7 +2440,9 @@ class StudioApp:
         )
 
     @staticmethod
-    def _run_unified_training(state: StudioState) -> ActionOutcome:
+    def _run_unified_training(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
+        if progress_callback:
+            progress_callback(0.15, 'Scanning the corpus store and approved review traces.')
         summary = UnifiedSemOpTrainer().train_from_store(
             state.unified_store_path,
             state.unified_output_dir,
@@ -1025,8 +2450,10 @@ class StudioApp:
             split=state.unified_split,
             review_store_path=state.unified_review_queue_path or None,
             approved_queries_only=state.unified_approved_queries_only,
-            operating_domain=state.unified_operating_domain or None,
+            operating_domain=_resolve_operating_domain(state),
         )
+        if progress_callback:
+            progress_callback(0.92, 'Artifact bundle exported. Finalizing the result card.')
         return ActionOutcome(
             flash='Unified trainer finished and exported a fresh artifact bundle.',
             flash_tone='success',
@@ -1035,10 +2462,14 @@ class StudioApp:
         )
 
     @staticmethod
-    def _run_unified_benchmark_gate(state: StudioState) -> ActionOutcome:
+    def _run_unified_benchmark_gate(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
+        if progress_callback:
+            progress_callback(0.12, 'Loading seed graphs from the selected corpus store.')
         graphs = _load_store_graphs(state.unified_store_path, state.unified_source, state.unified_split)
         if not graphs:
             raise FileNotFoundError('No graphs were found in the selected store and split.')
+        if progress_callback:
+            progress_callback(0.3, 'Deriving starter analogy, grounding, and repair benchmark cases.')
         summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
             state.unified_store_path,
             state.unified_output_dir,
@@ -1053,9 +2484,11 @@ class StudioApp:
             compiler_cases=_derive_starter_compiler_cases(graphs),
             vlso_cases=_load_vlso_cases(state.understanding_vlso_input),
             baseline_summary_path=state.unified_baseline_summary_path or None,
-            operating_domain=state.unified_operating_domain or None,
+            operating_domain=_resolve_operating_domain(state),
             benchmark_corpus_path=state.unified_benchmark_corpus_path or None,
         )
+        if progress_callback:
+            progress_callback(0.94, 'Benchmark gate summary written. Preparing the result card.')
         return ActionOutcome(
             flash=f'Unified trainer and benchmark gate finished on {len(graphs)} seed graphs.',
             flash_tone='success',
@@ -1063,43 +2496,27 @@ class StudioApp:
             result_payload=summary.model_dump(),
         )
 
-    def _run_guided_learning(self, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+    def _run_guided_learning(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
         source_used = (state.unified_source or GUIDED_BOOTSTRAP_SOURCE).strip() or GUIDED_BOOTSTRAP_SOURCE
-        seeded_state = replace(state, unified_source=source_used, unified_split='train', unified_approved_queries_only=True)
-        store = CorpusMemoryStore(seeded_state.unified_store_path)
-        review_store = ReviewQueueStore(seeded_state.unified_review_queue_path)
-        existing_approved = {
-            (item.domain, item.scenario, item.query)
-            for item in review_store.fetch_items(status='approved', limit=500)
-        }
-        seeded_queries: list[str] = []
-        approved_items = 0
-        for request in _guided_bootstrap_requests(seeded_state):
-            result = self._copilot(None).run(request)
-            store.upsert_graph(result.graph, source=source_used, split='train')
-            store.upsert_premise_operator_memory(result.graph, source=source_used, split='train')
-            seeded_queries.append(request.query)
-            reasons = _bootstrap_review_reasons(result.graph, result.kpis.model_dump())
-            severity = infer_review_severity(request.domain, request.scenario, reasons, result.kpis.model_dump())
-            key = (request.domain, request.scenario, request.query)
-            if key in existing_approved:
-                continue
-            item_id = review_store.enqueue(
-                domain=request.domain,
-                scenario=request.scenario,
-                query=request.query,
-                reasons=reasons,
-                answer_text=result.answer_text,
-                kpis=result.kpis.model_dump(),
-                audit_items=[{'stage': item.stage, 'detail': item.detail} for item in result.audit_items],
-                context_text=request.context,
-                graph_payload=result.graph.model_dump(),
-                severity=severity,
-            )
-            review_store.update_status(item_id, 'approved', 'SemOp Studio guided starter trace.')
-            existing_approved.add(key)
-            approved_items += 1
+        seeded_state = replace(
+            state,
+            unified_source=source_used,
+            unified_split='train',
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        if progress_callback:
+            progress_callback(0.15, 'Generating starter reasoning traces and approving grounded reviews.')
+        guided_summary = self._seed_guided_reviews(
+            seeded_state,
+            source_used,
+            resolution_note='SemOp Studio guided starter trace.',
+        )
+        if progress_callback:
+            progress_callback(0.4, 'Loading starter graphs and building gate inputs.')
         graphs = _load_store_graphs(seeded_state.unified_store_path, seeded_state.unified_source, seeded_state.unified_split)
+        if progress_callback:
+            progress_callback(0.62, 'Training the artifact bundle and rerunning the benchmark gate.')
         summary = BenchmarkGatedContinuousTrainer().train_evaluate_and_gate(
             seeded_state.unified_store_path,
             seeded_state.unified_output_dir,
@@ -1114,26 +2531,199 @@ class StudioApp:
             compiler_cases=_derive_starter_compiler_cases(graphs),
             vlso_cases=_load_vlso_cases(seeded_state.understanding_vlso_input),
             baseline_summary_path=seeded_state.unified_baseline_summary_path or None,
-            operating_domain=seeded_state.unified_operating_domain or None,
+            operating_domain=_resolve_operating_domain(seeded_state),
             benchmark_corpus_path=seeded_state.unified_benchmark_corpus_path or None,
         )
+        if progress_callback:
+            progress_callback(0.94, 'Guided starter loop finished. Preparing the report.')
         payload = summary.model_dump()
         payload['guided_bootstrap'] = {
             'source_used': source_used,
             'split_used': seeded_state.unified_split,
-            'seeded_query_count': len(_unique_texts(seeded_queries)),
-            'approved_review_count': approved_items,
-            'queries': _unique_texts(seeded_queries),
+            **guided_summary,
         }
         return seeded_state, ActionOutcome(
-            flash=f'Guided starter loop seeded {len(_unique_texts(seeded_queries))} starter traces and approved {approved_items} reviews before rerunning the gate.',
+            flash=(
+                f"Guided starter loop seeded {guided_summary.get('guided_query_count', 0)} starter traces "
+                f"and approved {guided_summary.get('approved_review_count', 0)} reviews before rerunning the gate."
+            ),
             flash_tone='success',
             result_kind='guided_learning',
             result_payload=payload,
         )
 
+    def _seed_guided_reviews(
+        self,
+        state: StudioState,
+        source_used: str,
+        *,
+        allow_duplicate_reviews: bool = False,
+        resolution_note: str,
+    ) -> dict[str, Any]:
+        store = CorpusMemoryStore(state.unified_store_path)
+        review_store = ReviewQueueStore(state.unified_review_queue_path)
+        existing_approved = {
+            (item.domain, item.scenario, item.query)
+            for item in review_store.fetch_items(status='approved', limit=500)
+        }
+        seeded_queries: list[str] = []
+        approved_items = 0
+        for request in _guided_bootstrap_requests(state):
+            result = self._copilot(None).run(request)
+            _persist_graph(store, result.graph, source_used, 'train')
+            seeded_queries.append(request.query)
+            reasons = _bootstrap_review_reasons(result.graph, result.kpis.model_dump())
+            severity = infer_review_severity(request.domain, request.scenario, reasons, result.kpis.model_dump())
+            corrected_answer = _grounded_review_answer(request.context, result.answer_text)
+            key = (request.domain, request.scenario, request.query)
+            if key in existing_approved and not allow_duplicate_reviews:
+                continue
+            item_id = review_store.enqueue(
+                domain=request.domain,
+                scenario=request.scenario,
+                query=request.query,
+                reasons=reasons,
+                answer_text=corrected_answer,
+                kpis=result.kpis.model_dump(),
+                audit_items=[{'stage': item.stage, 'detail': item.detail} for item in result.audit_items],
+                context_text=request.context,
+                graph_payload=result.graph.model_dump(),
+                severity=severity,
+            )
+            review_store.update_status(item_id, 'approved', resolution_note)
+            existing_approved.add(key)
+            approved_items += 1
+        snapshot = _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state))
+        return {
+            'guided_queries': _unique_texts(seeded_queries),
+            'guided_query_count': len(_unique_texts(seeded_queries)),
+            'approved_review_count': approved_items,
+            'promotable_review_count': snapshot.get('promotable', 0),
+            'approved_total': snapshot.get('approved', 0),
+        }
+
+    def _run_beginner_autopilot(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        source_used = (state.unified_source or BEGINNER_AUTOPILOT_SOURCE).strip() or BEGINNER_AUTOPILOT_SOURCE
+        seeded_state = replace(
+            state,
+            unified_source=source_used,
+            unified_split='train',
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        if progress_callback:
+            progress_callback(0.08, 'Seeding built-in hidden-premise, transfer, and starter vision examples.')
+        setup_summary = _seed_builtin_corpus(seeded_state, source_used, 'train')
+        if progress_callback:
+            progress_callback(0.24, 'Creating grounded starter reviews and approving them automatically.')
+        guided_summary = self._seed_guided_reviews(
+            seeded_state,
+            source_used,
+            allow_duplicate_reviews=True,
+            resolution_note='SemOp Studio one-click beginner trace.',
+        )
+        if progress_callback:
+            progress_callback(0.46, 'Training the unified artifact bundle and running the benchmark gate.')
+        gate_outcome = self._run_unified_benchmark_gate(
+            seeded_state,
+            progress_callback=(lambda p, d: progress_callback(min(0.78, 0.46 + (float(p) * 0.32)), d)) if progress_callback else None,
+        )
+        payload = dict(gate_outcome.result_payload or {})
+        payload['autopilot_setup'] = {
+            **setup_summary,
+            **guided_summary,
+            'source_used': source_used,
+            'split_used': seeded_state.unified_split,
+        }
+        if progress_callback:
+            progress_callback(0.82, 'Running the overall understanding benchmark for the fresh bundle.')
+        payload['understanding'] = self._run_understanding_eval(
+            seeded_state,
+            progress_callback=(lambda p, d: progress_callback(min(0.9, 0.82 + (float(p) * 0.08)), d)) if progress_callback else None,
+        ).result_payload
+        if progress_callback:
+            progress_callback(0.92, 'Running context and vision smoke tests for the beginner report.')
+        payload['ops'] = self._run_ops(seeded_state).result_payload
+        try:
+            payload['vision'] = self._run_vision(seeded_state).result_payload
+        except Exception as exc:
+            payload['vision'] = {'error': str(exc)}
+        return seeded_state, ActionOutcome(
+            flash=(
+                f"One-click beginner flow seeded {payload['autopilot_setup'].get('total_seeded', 0)} graphs, "
+                f"approved {payload['autopilot_setup'].get('approved_review_count', 0)} traces, and ran training plus tests."
+            ),
+            flash_tone='success',
+            result_kind='beginner_autopilot',
+            result_payload=payload,
+        )
+
+    def _run_beginner_test(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        test_state = replace(
+            state,
+            unified_source=(state.unified_source or BEGINNER_AUTOPILOT_SOURCE).strip() or BEGINNER_AUTOPILOT_SOURCE,
+            unified_split='train',
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        if progress_callback:
+            progress_callback(0.12, 'Checking whether a beginner-ready bundle already exists for this source.')
+        autopilot_ran = False
+        source_graphs = _load_store_graphs(test_state.unified_store_path, test_state.unified_source, test_state.unified_split)
+        if not source_graphs:
+            if progress_callback:
+                progress_callback(0.2, 'No beginner bundle exists yet. Running one-click setup first.')
+            test_state, outcome = self._run_beginner_autopilot(
+                test_state,
+                progress_callback=(lambda p, d: progress_callback(min(0.72, 0.2 + (float(p) * 0.52)), d)) if progress_callback else None,
+            )
+            payload = dict(outcome.result_payload or {})
+            autopilot_ran = True
+        else:
+            payload = _load_gate_payload(test_state.unified_output_dir)
+            if not payload or not isinstance(payload.get('benchmark'), dict) or not isinstance(payload.get('gate'), dict):
+                if progress_callback:
+                    progress_callback(0.32, 'Refreshing the benchmark gate because no cached decision was found.')
+                gate_outcome = self._run_unified_benchmark_gate(
+                    test_state,
+                    progress_callback=(lambda p, d: progress_callback(min(0.68, 0.32 + (float(p) * 0.36)), d)) if progress_callback else None,
+                )
+                payload = dict(gate_outcome.result_payload or {})
+            payload.setdefault(
+                'autopilot_setup',
+                {
+                    'source_used': test_state.unified_source,
+                    'split_used': test_state.unified_split,
+                    'total_seeded': len(source_graphs),
+                    'approved_review_count': _review_queue_snapshot(
+                        test_state.unified_review_queue_path,
+                        _resolve_operating_domain(test_state),
+                    ).get('approved', 0),
+                },
+            )
+        if progress_callback:
+            progress_callback(0.76, 'Running context, understanding, and vision smoke tests.')
+        payload['ops'] = self._run_ops(test_state).result_payload
+        payload['understanding'] = self._run_understanding_eval(
+            test_state,
+            progress_callback=(lambda p, d: progress_callback(min(0.9, 0.76 + (float(p) * 0.14)), d)) if progress_callback else None,
+        ).result_payload
+        try:
+            payload['vision'] = self._run_vision(test_state).result_payload
+        except Exception as exc:
+            payload['vision'] = {'error': str(exc)}
+        payload['autopilot_ran'] = autopilot_ran
+        return test_state, ActionOutcome(
+            flash='One-click beginner test ran the current bundle and refreshed the starter diagnostics.',
+            flash_tone='success',
+            result_kind='beginner_test',
+            result_payload=payload,
+        )
+
     @staticmethod
-    def _run_understanding_eval(state: StudioState) -> ActionOutcome:
+    def _run_understanding_eval(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
+        if progress_callback:
+            progress_callback(0.18, 'Loading hidden-premise and VLSO evaluation files.')
         summary = SemOpUnderstandingEvaluator().evaluate(
             hidden_premise_cases=_load_hidden_premise_cases(state.understanding_hidden_input),
             cp_examples=None,
@@ -1142,6 +2732,8 @@ class StudioApp:
             vlso_real_image_cases=_load_vlso_cases(state.understanding_vlso_real_input) or None,
             cp_mode='heuristic',
         )
+        if progress_callback:
+            progress_callback(0.94, 'Overall understanding benchmark finished. Packaging the score summary.')
         return ActionOutcome(
             flash='Overall understanding benchmark finished.',
             flash_tone='success',
@@ -1149,13 +2741,23 @@ class StudioApp:
             result_payload=summary.model_dump(),
         )
 
-def render_page(state: StudioState, outcome: ActionOutcome) -> str:
+def render_page(
+    state: StudioState,
+    outcome: ActionOutcome,
+    job_snapshot: dict[str, object],
+    notification_snapshot: dict[str, object],
+) -> str:
     flash_html = ''
     if outcome.flash:
         flash_html = f"<div class='flash {html.escape(outcome.flash_tone)}'>{html.escape(outcome.flash)}</div>"
     result_html = render_result(outcome.result_kind, outcome.result_payload)
     snapshot_html = render_workspace_snapshot(state, outcome.result_kind)
     spotlight_html = render_result_spotlight(outcome.result_kind, outcome.result_payload)
+    job_panel_html = _render_job_queue_panel(job_snapshot)
+    notification_panel_html = _render_notification_panel(notification_snapshot)
+    refresh_html = "<meta http-equiv='refresh' content='2'>" if job_snapshot.get('has_active') else ''
+    unread_count = int(notification_snapshot.get('unread_count', 0) or 0)
+    title_prefix = f'({unread_count}) ' if unread_count else ''
     vision_preview = _local_image_data_uri(state.vision_image)
     vision_preview_html = "<div class='empty'>Set a local image path to preview it here.</div>"
     if vision_preview:
@@ -1166,7 +2768,8 @@ def render_page(state: StudioState, outcome: ActionOutcome) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SemOp Studio</title>
+{refresh_html}
+<title>{html.escape(title_prefix)}SemOp Studio</title>
 <style>
 :root {{ --bg:#f3eee4; --card:rgba(255,252,246,.92); --line:#d4d8cf; --ink:#17241d; --muted:#58685f; --accent:#245842; --soft:#eef5ef; --ok:#266747; --warn:#a5542d; --shadow:0 18px 44px rgba(23,36,29,.09); }}
 * {{ box-sizing:border-box; }}
@@ -1217,6 +2820,28 @@ pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; over
 .empty {{ border:1px dashed var(--line); border-radius:16px; padding:20px; color:var(--muted); }}
 .inline {{ display:flex; align-items:center; gap:8px; margin-top:12px; }}
 .inline input {{ width:auto; }}
+.status-chip {{ display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:999px; background:var(--soft); color:var(--accent); font-size:12px; font-weight:700; text-transform:capitalize; }}
+.job-progress {{ margin-top:10px; height:10px; border-radius:999px; background:#dfe8df; overflow:hidden; }}
+.job-progress span {{ display:block; height:100%; background:linear-gradient(90deg, #245842, #d4862e); border-radius:999px; }}
+.job-row {{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#f7faf6; margin-top:10px; }}
+.job-row-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; }}
+.job-meta {{ margin-top:8px; color:var(--muted); font-size:13px; }}
+.job-list {{ margin-top:8px; }}
+.job-actions {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }}
+.job-recovery {{ margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); }}
+.job-recovery small {{ display:block; margin-bottom:6px; }}
+.job-log {{ margin-top:10px; }}
+.job-log summary {{ cursor:pointer; color:var(--accent); font-weight:700; }}
+.job-log-line {{ display:flex; gap:10px; align-items:flex-start; margin-top:8px; font-size:13px; }}
+.job-log-line span {{ color:var(--muted); min-width:56px; }}
+.job-log-line code {{ white-space:pre-wrap; background:#f2f6f1; border-radius:10px; padding:4px 8px; color:var(--ink); flex:1; }}
+.notification-row {{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#f7faf6; margin-top:10px; }}
+.notification-row.unread {{ border-color:#d4862e; background:#fff8ef; }}
+.notification-row.error {{ background:#fff3ec; }}
+.notification-row.success {{ background:#eef8f0; }}
+.notification-row.neutral {{ background:#f5f7f5; }}
+.mini-form {{ margin:0; }}
+button.compact {{ padding:8px 12px; font-size:13px; }}
 @media (max-width:1080px) {{ .hero, .grid, .mini-grid {{ grid-template-columns:1fr; }} }}
 </style>
 </head>
@@ -1229,8 +2854,12 @@ pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; over
       <p>This studio is the product-facing entry point for context reasoning, visual grounding, unified artifact training, and benchmark-gated learning. Keep the older GUIs for power-user data operations; stay here for the main loop.</p>
       <div class="hero-actions">
         <a class="nav-pill" href="#reasoning-lab">Try reasoning</a>
+        <a class="nav-pill" href="#beginner-lab">One-click mode</a>
         <a class="nav-pill" href="#training-lab">Train artifacts</a>
         <a class="nav-pill" href="#benchmark-lab">Benchmark gate</a>
+        <a class="nav-pill" href="#compare-lab">Compare outputs</a>
+        <a class="nav-pill" href="#notification-panel">Alerts</a>
+        <a class="nav-pill" href="#job-panel">Live jobs</a>
         <a class="nav-pill" href="#result-panel">See results</a>
       </div>
     </div>
@@ -1238,9 +2867,9 @@ pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; over
       <small class="eyebrow">Starter flow</small>
       <h2>Use the same order every time.</h2>
       <ol>
-        <li>Run the ops or vision example to confirm local reasoning works.</li>
+        <li>For the easiest path, start with One-click setup + train + test.</li>
+        <li>Watch the Live jobs card while long tasks run in the background.</li>
         <li>If the gate is blocked at 0.0, use Guided starter loop once.</li>
-        <li>Then rerun Train + benchmark gate on the same store.</li>
         <li>Inspect the diagnosis and keep only accepted bundles.</li>
       </ol>
       <div class="hero-preview-wrap">{vision_preview_html}</div>
@@ -1249,9 +2878,13 @@ pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; over
   {flash_html}
   <section class="dashboard-grid">{snapshot_html}</section>
   <section style="margin-bottom:20px;">{spotlight_html}</section>
+  {notification_panel_html}
+  {job_panel_html}
+  {_render_beginner_section(state)}
   {_render_reasoning_section(state)}
   {_render_training_section(state)}
   {_render_benchmark_section(state)}
+  {_render_compare_section(state)}
   {_render_notes_section()}
   <section class="card" id="result-panel" style="margin-top:20px;"><div class="section-head"><div><small class="eyebrow">Result console</small><h2>Latest run</h2><p>Every action returns a compact summary first and the full structured payload below it.</p></div></div>{result_html}</section>
 </main>
@@ -1304,3 +2937,5 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
+
