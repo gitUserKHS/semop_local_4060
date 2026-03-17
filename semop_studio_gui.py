@@ -26,6 +26,7 @@ from semop import (
     CorpusMemoryStore,
     CopilotRequest,
     DomainCopilot,
+    GeneralizationProofHarness,
     GroundedExplanationEvalCase,
     HiddenPremiseEvalCase,
     OperatorTransferEvalCase,
@@ -76,6 +77,51 @@ VISION_STORE_EXAMPLE = {
 }
 GUIDED_BOOTSTRAP_SOURCE = 'studio_bootstrap'
 BEGINNER_AUTOPILOT_SOURCE = 'studio_beginner_autopilot'
+AUTOPILOT_PROOF_ROUNDS = 3
+PROOF_CURRICULUM_ROUNDS = (
+    {
+        'domain': 'warehouse_exception',
+        'scenario': 'exception_response',
+        'context': 'If the lane is blocked, access is uncertain, or approval is missing, stop first and verify the safe alternative path and approval before moving.',
+        'queries': (
+            'The lane is partly blocked and the approval token is missing. What do I verify before continuing?',
+            'An access door is closed and the route is narrow. Do I force it open or confirm the safe path first?',
+            'The item is urgent but the zone is blocked. What checks come before movement?',
+        ),
+        'visual_queries': (
+            'What objects or openings are visible here?',
+            'Which openings or reachable objects should be checked first here?',
+        ),
+    },
+    {
+        'domain': 'warehouse_onboarding',
+        'scenario': 'guided_walkthrough',
+        'context': 'For onboarding, confirm the item identity, access path, and allowed opening before touching storage or moving through a boundary.',
+        'queries': (
+            'I am new to this aisle. What should I confirm before opening the cabinet and reaching for the item?',
+            'Before I take the tote from the shelf, what access and identity checks come first?',
+            'The drawer looks available, but I am not sure the item is correct. What do I verify first?',
+        ),
+        'visual_queries': (
+            'What access points or containers are visible in this scene?',
+            'Which container or opening in this scene looks reachable?',
+        ),
+    },
+    {
+        'domain': 'general',
+        'scenario': 'access_reasoning',
+        'context': 'When access is uncertain, identify the target, opening state, and safety constraints before forcing movement or reaching into a container.',
+        'queries': (
+            'The pouch might contain the tool, but I cannot tell if it is safely accessible. What should I check first?',
+            'Before I open the box and pull something out, what hidden requirements should I verify?',
+            'I can see a door and a container. Which access constraints matter before acting?',
+        ),
+        'visual_queries': (
+            'What openings, containers, or reachable objects are visible here?',
+            'Which visible object here looks like an access path or container?',
+        ),
+    },
+)
 GUIDED_BOOTSTRAP_VARIANTS = (
     'The route is blocked and approval has not arrived yet. What should I verify before moving?',
     'Manager approval is still pending. Do I continue the task or stop first?',
@@ -90,6 +136,8 @@ ACTION_TIME_HINTS = {
     'run_guided_learning': 'about 20-60 seconds',
     'run_beginner_autopilot': 'about 30-90 seconds',
     'run_beginner_test': 'about 15-45 seconds',
+    'run_generalization_proof': 'about 45-120 seconds',
+    'run_autopilot_coach': 'about 1-3 minutes',
     'run_understanding_eval': 'about 10-25 seconds',
 }
 ACTION_TIME_SECONDS = {
@@ -98,6 +146,8 @@ ACTION_TIME_SECONDS = {
     'run_guided_learning': 50,
     'run_beginner_autopilot': 75,
     'run_beginner_test': 35,
+    'run_generalization_proof': 90,
+    'run_autopilot_coach': 150,
     'run_understanding_eval': 20,
 }
 
@@ -594,6 +644,69 @@ def _guided_bootstrap_requests(state: StudioState) -> list[CopilotRequest]:
     return [CopilotRequest(query=query, context=context, domain=domain, scenario=scenario) for query in queries]
 
 
+def _proof_round_spec(state: StudioState, round_index: int) -> dict[str, Any]:
+    template = PROOF_CURRICULUM_ROUNDS[min(max(0, round_index), len(PROOF_CURRICULUM_ROUNDS) - 1)]
+    if round_index == 0:
+        return {
+            'domain': str(state.ops_domain or template['domain']).strip() or template['domain'],
+            'scenario': str(state.ops_scenario or template['scenario']).strip() or template['scenario'],
+            'context': str(state.ops_context or template['context']).strip() or template['context'],
+            'queries': _unique_texts([state.ops_query.strip() or OPS_EXAMPLE['query'], *GUIDED_BOOTSTRAP_VARIANTS, *template['queries']]),
+            'visual_queries': _unique_texts([state.vision_query.strip() or VISION_EXAMPLE['query'], *template['visual_queries']]),
+        }
+    return {
+        'domain': template['domain'],
+        'scenario': template['scenario'],
+        'context': template['context'],
+        'queries': _unique_texts(list(template['queries'])),
+        'visual_queries': _unique_texts(list(template['visual_queries'])),
+    }
+
+
+def _proof_round_requests(state: StudioState, round_index: int) -> list[CopilotRequest]:
+    spec = _proof_round_spec(state, round_index)
+    return [
+        CopilotRequest(
+            query=query,
+            context=spec['context'],
+            domain=spec['domain'],
+            scenario=spec['scenario'],
+        )
+        for query in spec['queries']
+    ]
+
+
+def _seed_visual_curriculum(state: StudioState, source_used: str, queries: list[str] | tuple[str, ...], split: str = 'train') -> dict[str, Any]:
+    image_path = Path(state.vision_image)
+    summary = {
+        'visual_seeded': 0,
+        'visual_skipped': 0,
+        'visual_queries': _unique_texts(list(queries)),
+        'errors': [],
+    }
+    if not image_path.exists():
+        summary['errors'].append(f'missing image: {image_path}')
+        return summary
+    store = CorpusMemoryStore(state.unified_store_path)
+    pipeline = StructuredMeaningPipeline(mode='heuristic')
+    existing_queries = {str(query).strip() for query in store.fetch_queries(split=split, source=source_used)}
+    for query in summary['visual_queries']:
+        if query in existing_queries:
+            summary['visual_skipped'] += 1
+            continue
+        try:
+            graph = pipeline.run(
+                query,
+                visual_input={'image_path': str(image_path), 'metadata': {'image_path': str(image_path)}},
+            )
+            graph.domain = 'vlso'
+            _persist_graph(store, graph, source_used, split)
+            existing_queries.add(query)
+            summary['visual_seeded'] += 1
+        except Exception as exc:
+            summary['errors'].append(f'{query[:60]} ({exc})')
+    return summary
+
 def _bootstrap_review_reasons(graph: StructuredMeaningGraph, kpis: dict[str, Any]) -> list[str]:
     reasons = review_reasons_from_graph_and_kpis(graph, kpis)
     if graph.source_context.strip() and 'grounding_review' not in reasons:
@@ -1075,7 +1188,8 @@ def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
     detail = str(item.get('detail', '')).lower()
     specs: list[tuple[str, str]] = []
     if status in {'failed', 'cancelled'}:
-        if action in {'run_unified_benchmark_gate', 'run_unified_training'} or 'no graphs were found' in detail:
+        if action in {'run_unified_benchmark_gate', 'run_unified_training', 'run_generalization_proof'} or 'no graphs were found' in detail:
+            specs.append(('run_autopilot_coach', 'Do everything for me'))
             specs.append(('run_beginner_autopilot', 'Beginner setup'))
             specs.append(('run_guided_learning', 'Guided starter loop'))
         elif action in {'run_beginner_test', 'run_beginner_autopilot'}:
@@ -1084,6 +1198,7 @@ def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
         else:
             specs.append(('run_understanding_eval', 'Understanding benchmark'))
     if gate_accepted is False:
+        specs.append(('run_autopilot_coach', 'Do everything for me'))
         specs.append(('run_guided_learning', 'Bootstrap gate'))
         specs.append(('run_beginner_autopilot', 'One-click recovery'))
     ordered: list[tuple[str, str]] = []
@@ -1322,6 +1437,72 @@ def _render_beginner_suite_summary(payload: dict[str, object]) -> str:
     diagnosis = _render_diagnosis_blocks(payload)
     return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{diagnosis}{_raw_details(payload)}"
 
+def _render_generalization_proof_summary(payload: dict[str, object]) -> str:
+    proof = payload.get('proof', {}) if isinstance(payload.get('proof'), dict) else payload
+    evidence = proof.get('evidence', {}) if isinstance(proof.get('evidence'), dict) else {}
+    goal_tracker = proof.get('goal_tracker', {}) if isinstance(proof.get('goal_tracker'), dict) else {}
+    rounds = proof.get('rounds', []) if isinstance(proof.get('rounds'), list) else []
+    last_round = rounds[-1] if rounds else {}
+    last_benchmark = last_round.get('benchmark', {}) if isinstance(last_round, dict) and isinstance(last_round.get('benchmark'), dict) else {}
+    last_understanding = last_round.get('understanding', {}) if isinstance(last_round, dict) and isinstance(last_round.get('understanding'), dict) else {}
+    progress = last_understanding.get('progress', {}) if isinstance(last_understanding.get('progress'), dict) else {}
+    curriculum_rounds = payload.get('curriculum_rounds', []) if isinstance(payload.get('curriculum_rounds'), list) else []
+    tracker_axes = goal_tracker.get('axes', []) if isinstance(goal_tracker.get('axes'), list) else []
+    axis_lines = [
+        f"{item.get('label', item.get('key', 'axis'))}: {float(item.get('score', 0.0) or 0.0):.3f}/{float(item.get('target', 0.0) or 0.0):.3f} ({'ready' if item.get('verified') else 'pending'})"
+        for item in tracker_axes
+        if isinstance(item, dict)
+    ]
+    metrics = ''.join([
+        _metric_card('Rounds', len(rounds)),
+        _metric_card('Accepted rounds', proof.get('accepted_rounds', 0)),
+        _metric_card('Learned generalization', evidence.get('learned_generalization_score')),
+        _metric_card('Corpus growth', evidence.get('reviewed_corpus_growth_score')),
+        _metric_card('Multimodal transfer', evidence.get('multimodal_transfer_score')),
+        _metric_card('Domain coverage', evidence.get('domain_coverage_score')),
+        _metric_card('Strong model score', evidence.get('strong_model_score')),
+        _metric_card('Goal readiness', f"{goal_tracker.get('readiness_percent', 0)}%"),
+        _metric_card('Robust understanding', progress.get('robust_general_intelligence_overall') or '-'),
+    ])
+    curriculum_summary = [
+        f"round {item.get('round_index', '?')}: {item.get('approved_review_count', 0)} approved reviews, {item.get('visual_seeded', 0)} visual graphs"
+        for item in curriculum_rounds
+        if isinstance(item, dict)
+    ]
+    details = ''.join([
+        _info_block('Headline', evidence.get('headline') or '-'),
+        _info_block('Ultimate goal tracker', [
+            f"ready axes: {goal_tracker.get('ready_axes', 0)}/{goal_tracker.get('total_axes', 0)}",
+            f"priority focus: {goal_tracker.get('priority_focus') or '-'}",
+        ]),
+        _info_block('Completed axes', goal_tracker.get('completed_items') or '-'),
+        _info_block('Remaining axes', goal_tracker.get('remaining_items') or '-'),
+        _info_block('Coverage', [
+            f"domains: {', '.join(goal_tracker.get('domains_seen', []) or []) or '-'}",
+            f"scenarios: {', '.join(goal_tracker.get('scenarios_seen', []) or []) or '-'}",
+        ]),
+        _info_block('Axis detail', axis_lines or '-'),
+        _info_block('Strengths', evidence.get('strengths') or '-'),
+        _info_block('Risks', evidence.get('risks') or '-'),
+        _info_block('Next steps', evidence.get('next_steps') or '-'),
+        _info_block('Latest benchmark', [
+            f"unseen transfer: {last_benchmark.get('unseen_transfer', 0.0)}",
+            f"analogy usefulness: {last_benchmark.get('analogy_usefulness', 0.0)}",
+            f"compiler validity: {last_benchmark.get('compiler_validity', 0.0)}",
+            f"grounded fidelity: {last_benchmark.get('grounded_explanation_fidelity', 0.0)}",
+            f"repair success: {last_benchmark.get('repair_success_rate', 0.0)}",
+        ]),
+        _info_block('Curriculum rounds', curriculum_summary or '-'),
+    ])
+    report_path = str(proof.get('report_path') or payload.get('proof_report_path') or '')
+    round_output_dir = str(last_round.get('output_dir') or '') if isinstance(last_round, dict) else ''
+    quick_actions = _render_output_quick_actions([
+        ('Proof report', report_path),
+        ('Last gate decision', str(Path(round_output_dir) / 'benchmark_gate.json') if round_output_dir else ''),
+        ('Last accepted summary', str(Path(round_output_dir) / 'accepted_benchmark_summary.json') if round_output_dir else ''),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
 def _render_file_preview_summary(payload: dict[str, object]) -> str:
     metrics = ''.join([
         _metric_card('Filename', payload.get('filename')),
@@ -1417,6 +1598,8 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         'guided_learning': 'Guided starter learning result',
         'beginner_autopilot': 'One-click beginner setup result',
         'beginner_test': 'One-click beginner test result',
+        'generalization_proof': 'Generalization proof result',
+        'autopilot_coach': 'Autopilot coach result',
         'understanding_eval': 'Overall understanding benchmark',
         'file_preview': 'Output file preview',
         'artifact_compare': 'Artifact comparison',
@@ -1431,6 +1614,8 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         body = _render_unified_gate_summary(payload)
     elif kind in {'beginner_autopilot', 'beginner_test'}:
         body = _render_beginner_suite_summary(payload)
+    elif kind in {'generalization_proof', 'autopilot_coach'}:
+        body = _render_generalization_proof_summary(payload)
     elif kind == 'understanding_eval':
         body = _render_understanding_summary(payload)
     elif kind == 'file_preview':
@@ -1465,6 +1650,9 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
     benchmark_ready = sum(1 for path in benchmark_inputs if Path(path).exists())
     store_graphs = _store_graph_count(state.unified_store_path, state.unified_source, state.unified_split)
     review_snapshot = _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state))
+    proof_report_path = unified_output_dir / 'generalization_proof' / 'generalization_proof_report.json'
+    proof_snapshot = _read_json_dict(str(proof_report_path))
+    proof_goal_tracker = proof_snapshot.get('goal_tracker', {}) if isinstance(proof_snapshot.get('goal_tracker'), dict) else {}
     cards = [
         (
             'Unified trainer lane',
@@ -1476,10 +1664,14 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
                 _metric_card('Promotable reviews', review_snapshot.get('promotable', 0)),
                 _metric_card('Artifacts ready', f'{artifact_ready}/{len(unified_artifacts)}'),
                 _metric_card('Gate summary', _status_text(str(unified_output_dir / 'benchmark_gate.json'), 'ready', 'not run')),
+                _metric_card('Proof report', _status_text(str(proof_report_path), 'ready', 'not run')),
+                _metric_card('Proof readiness', f"{proof_goal_tracker.get('readiness_percent', 0)}%" if proof_goal_tracker else 'not run'),
             ],
             [
                 _info_block('Output dir', state.unified_output_dir),
                 _info_block('Persistent benchmark corpus', state.unified_benchmark_corpus_path),
+                _info_block('Proof report', str(proof_report_path)),
+                _info_block('Proof priority focus', proof_goal_tracker.get('priority_focus') or '-'),
             ],
         ),
         (
@@ -1678,6 +1870,18 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             f"Left only: {_render_value(payload.get('left_only_count'))}",
             f"Right only: {_render_value(payload.get('right_only_count'))}",
         ]
+    elif kind in {'generalization_proof', 'autopilot_coach'}:
+        proof = payload.get('proof', {}) if isinstance(payload.get('proof'), dict) else payload
+        evidence = proof.get('evidence', {}) if isinstance(proof.get('evidence'), dict) else {}
+        goal_tracker = proof.get('goal_tracker', {}) if isinstance(proof.get('goal_tracker'), dict) else {}
+        title = 'The stronger proof loop cleared the current bar.' if evidence.get('strong_model_ready') else 'The stronger proof loop still shows remaining gaps.'
+        notes = [
+            f"Goal readiness: {_render_value(goal_tracker.get('readiness_percent'))}%",
+            f"Ready axes: {_render_value(goal_tracker.get('ready_axes'))}/{_render_value(goal_tracker.get('total_axes'))}",
+            f"Priority focus: {goal_tracker.get('priority_focus') or '-'}",
+            f"Strong model score: {_render_value(evidence.get('strong_model_score'))}",
+        ]
+        notes.extend(str(item) for item in (goal_tracker.get('remaining_items') or [])[:2])
     elif kind == 'file_preview':
         title = 'Output file preview loaded.'
         notes = [
@@ -1703,6 +1907,17 @@ def _render_select(name: str, current: str, options: tuple[str, ...]) -> str:
 def _render_checkbox(name: str, checked: bool, label: str) -> str:
     return f"<input type='hidden' name='{html.escape(name)}' value='0'><label class='inline'><input type='checkbox' name='{html.escape(name)}' value='1'{_checked(checked)}> {html.escape(label)}</label>"
 
+
+def _render_hidden_state_inputs(state: StudioState) -> str:
+    controls: list[str] = []
+    for name in StudioState.__dataclass_fields__:
+        value = getattr(state, name)
+        if isinstance(value, bool):
+            encoded = '1' if value else '0'
+        else:
+            encoded = str(value)
+        controls.append(f"<input type='hidden' name='{html.escape(name)}' value='{html.escape(encoded)}'>")
+    return ''.join(controls)
 
 def _render_unified_scope_fields(state: StudioState) -> str:
     return "".join([
@@ -1748,6 +1963,19 @@ def _render_reasoning_section(state: StudioState) -> str:
       <label>Affordance weights</label><input name="vision_weights" value="{html.escape(state.vision_weights)}">
       <label>Downloaded-label review file</label><input name="vision_review_path" value="{html.escape(state.vision_review_path)}">
       <div class="actions"><button class="secondary" name="action" value="load_vision_example">Load example</button><button class="primary" name="action" value="run_vision">Run vision reasoning</button></div>
+    </form>
+  </section>
+"""
+
+def _render_autopilot_coach_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="autopilot-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Zero-brain mode</small><h2>Autopilot coach</h2><p>Use one button to seed starter data, grow a small reviewed curriculum, rerun benchmark-gated learning across multiple rounds, and write a plain-language proof report.</p></div></div>
+    <form method="post">
+      {_render_hidden_state_inputs(state)}
+      <div class="info-block"><small>What happens</small>1. Beginner setup seeds starter graphs and approved traces. 2. Three curriculum rounds add nearby text and visual cases. 3. The benchmark gate reruns across repeated rounds. 4. A proof report explains whether generalization, multimodal transfer, and reviewed-corpus growth are actually improving.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_autopilot_coach'))} for the full coach, or {html.escape(_action_time_hint('run_generalization_proof'))} to re-check the proof on the current store.</div>
+      <div class="actions"><button class="primary" name="action" value="run_autopilot_coach">Do everything for me</button><button class="secondary" name="action" value="run_generalization_proof">Re-check proof on current data</button></div>
     </form>
   </section>
 """
@@ -1840,6 +2068,8 @@ class StudioApp:
         'run_guided_learning',
         'run_beginner_autopilot',
         'run_beginner_test',
+        'run_generalization_proof',
+        'run_autopilot_coach',
         'run_understanding_eval',
     }
     ACTION_LABELS = {
@@ -1848,6 +2078,8 @@ class StudioApp:
         'run_guided_learning': 'Guided starter loop',
         'run_beginner_autopilot': 'One-click setup + train + test',
         'run_beginner_test': 'One-click test current bundle',
+        'run_generalization_proof': 'Generalization proof',
+        'run_autopilot_coach': 'Autopilot coach',
         'run_understanding_eval': 'Overall understanding benchmark',
     }
 
@@ -2033,6 +2265,10 @@ class StudioApp:
                 final_state, outcome = self._run_beginner_autopilot(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
             elif action == 'run_beginner_test':
                 final_state, outcome = self._run_beginner_test(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_generalization_proof':
+                final_state, outcome = self._run_generalization_proof(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_autopilot_coach':
+                final_state, outcome = self._run_autopilot_coach(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
             elif action == 'run_understanding_eval':
                 outcome = self._run_understanding_eval(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
                 final_state = state
@@ -2559,6 +2795,7 @@ class StudioApp:
         *,
         allow_duplicate_reviews: bool = False,
         resolution_note: str,
+        requests: list[CopilotRequest] | None = None,
     ) -> dict[str, Any]:
         store = CorpusMemoryStore(state.unified_store_path)
         review_store = ReviewQueueStore(state.unified_review_queue_path)
@@ -2568,7 +2805,8 @@ class StudioApp:
         }
         seeded_queries: list[str] = []
         approved_items = 0
-        for request in _guided_bootstrap_requests(state):
+        request_list = requests or _guided_bootstrap_requests(state)
+        for request in request_list:
             result = self._copilot(None).run(request)
             _persist_graph(store, result.graph, source_used, 'train')
             seeded_queries.append(request.query)
@@ -2720,6 +2958,146 @@ class StudioApp:
             result_payload=payload,
         )
 
+    def _run_generalization_proof_loop(
+        self,
+        state: StudioState,
+        *,
+        source_prefix: str,
+        progress_callback: Any = None,
+    ) -> tuple[StudioState, ActionOutcome]:
+        proof_state = replace(
+            state,
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        curriculum_rounds: list[dict[str, Any]] = []
+        source_schedule: list[str] = []
+        all_graphs: list[StructuredMeaningGraph] = []
+        for round_index in range(AUTOPILOT_PROOF_ROUNDS):
+            if progress_callback:
+                progress_callback(0.08 + (round_index * 0.12), f'Seeding proof curriculum round {round_index + 1}/{AUTOPILOT_PROOF_ROUNDS}.')
+            source_used = f'{source_prefix}_round_{round_index + 1:02d}'
+            spec = _proof_round_spec(proof_state, round_index)
+            guided_summary = self._seed_guided_reviews(
+                proof_state,
+                source_used,
+                allow_duplicate_reviews=True,
+                resolution_note=f'SemOp Studio proof round {round_index + 1}.',
+                requests=_proof_round_requests(proof_state, round_index),
+            )
+            visual_summary = _seed_visual_curriculum(
+                proof_state,
+                source_used,
+                spec['visual_queries'],
+                split=proof_state.unified_split,
+            )
+            curriculum_rounds.append({
+                'round_index': round_index + 1,
+                'source_used': source_used,
+                'domain': spec['domain'],
+                'scenario': spec['scenario'],
+                'approved_review_count': guided_summary.get('approved_review_count', 0),
+                'promotable_review_count': guided_summary.get('promotable_review_count', 0),
+                'visual_seeded': visual_summary.get('visual_seeded', 0),
+                'visual_skipped': visual_summary.get('visual_skipped', 0),
+                'visual_queries': visual_summary.get('visual_queries', []),
+                'errors': visual_summary.get('errors', []),
+            })
+            source_schedule.append(source_used)
+            all_graphs.extend(_load_store_graphs(proof_state.unified_store_path, source_used, proof_state.unified_split))
+        if progress_callback:
+            progress_callback(0.5, 'Running repeated benchmark-gated proof rounds.')
+        proof = GeneralizationProofHarness().run(
+            proof_state.unified_store_path,
+            proof_state.unified_output_dir,
+            source_schedule=source_schedule,
+            split=proof_state.unified_split,
+            rounds=len(source_schedule),
+            review_store_path=proof_state.unified_review_queue_path or None,
+            approved_queries_only=True,
+            hidden_premise_cases=_load_hidden_premise_cases(proof_state.understanding_hidden_input),
+            transfer_cases=_load_operator_transfer_cases(proof_state.unified_transfer_input),
+            analogy_cases=_derive_starter_analogy_cases(all_graphs),
+            grounding_cases=_derive_starter_grounding_cases(all_graphs),
+            compiler_cases=_derive_starter_compiler_cases(all_graphs),
+            vlso_cases=_load_vlso_cases(proof_state.understanding_vlso_input),
+            vlso_real_image_cases=_load_vlso_cases(proof_state.understanding_vlso_real_input),
+            operating_domain=_resolve_operating_domain(proof_state),
+            benchmark_corpus_path=proof_state.unified_benchmark_corpus_path or None,
+            progress_callback=(lambda p, d: progress_callback(min(0.95, 0.5 + (float(p) * 0.42)), d)) if progress_callback else None,
+        )
+        proof_payload = proof.model_dump()
+        last_round = proof_payload.get('rounds', [])[-1] if proof_payload.get('rounds') else {}
+        payload = {
+            'proof': proof_payload,
+            'curriculum_rounds': curriculum_rounds,
+            'proof_report_path': proof_payload.get('report_path', ''),
+            'gate': last_round.get('gate', {}) if isinstance(last_round, dict) else {},
+            'benchmark': last_round.get('benchmark', {}) if isinstance(last_round, dict) else {},
+            'understanding': last_round.get('understanding', {}) if isinstance(last_round, dict) else {},
+            'autopilot_setup': {
+                'source_prefix': source_prefix,
+                'approved_review_count': sum(int(item.get('approved_review_count', 0) or 0) for item in curriculum_rounds),
+                'visual_seeded': sum(int(item.get('visual_seeded', 0) or 0) for item in curriculum_rounds),
+                'total_seeded': sum(int(item.get('approved_review_count', 0) or 0) + int(item.get('visual_seeded', 0) or 0) for item in curriculum_rounds),
+            },
+        }
+        evidence = proof_payload.get('evidence', {}) if isinstance(proof_payload.get('evidence'), dict) else {}
+        flash = (
+            f"Generalization proof finished. Strong model score: {evidence.get('strong_model_score', 0.0)}"
+            if proof_payload.get('rounds')
+            else 'Generalization proof finished.'
+        )
+        return proof_state, ActionOutcome(
+            flash=flash,
+            flash_tone='success',
+            result_kind='generalization_proof',
+            result_payload=payload,
+        )
+
+    def _run_generalization_proof(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if not _load_store_graphs(state.unified_store_path, state.unified_source, state.unified_split):
+            return self._run_autopilot_coach(state, progress_callback=progress_callback)
+        source_prefix = (state.unified_source or 'autopilot_proof').strip() or 'autopilot_proof'
+        return self._run_generalization_proof_loop(state, source_prefix=source_prefix, progress_callback=progress_callback)
+
+    def _run_autopilot_coach(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        coach_state = replace(
+            state,
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        if progress_callback:
+            progress_callback(0.04, 'Running beginner setup before the proof coach.')
+        coach_state, beginner_outcome = self._run_beginner_autopilot(
+            coach_state,
+            progress_callback=(lambda p, d: progress_callback(min(0.48, 0.04 + (float(p) * 0.44)), d)) if progress_callback else None,
+        )
+        if progress_callback:
+            progress_callback(0.5, 'Beginner setup finished. Starting the proof coach rounds.')
+        proof_state, proof_outcome = self._run_generalization_proof_loop(
+            coach_state,
+            source_prefix='autopilot_coach',
+            progress_callback=(lambda p, d: progress_callback(min(0.97, 0.5 + (float(p) * 0.47)), d)) if progress_callback else None,
+        )
+        payload = dict(proof_outcome.result_payload or {})
+        payload['beginner_autopilot'] = beginner_outcome.result_payload
+        payload['autopilot_setup'] = {
+            **(beginner_outcome.result_payload.get('autopilot_setup', {}) if isinstance(beginner_outcome.result_payload, dict) else {}),
+            **(payload.get('autopilot_setup', {}) if isinstance(payload.get('autopilot_setup'), dict) else {}),
+        }
+        evidence = (payload.get('proof', {}) if isinstance(payload.get('proof'), dict) else {}).get('evidence', {})
+        flash = (
+            f"Autopilot coach finished. Strong model score: {evidence.get('strong_model_score', 0.0)}"
+            if isinstance(evidence, dict)
+            else 'Autopilot coach finished.'
+        )
+        return proof_state, ActionOutcome(
+            flash=flash,
+            flash_tone='success',
+            result_kind='autopilot_coach',
+            result_payload=payload,
+        )
     @staticmethod
     def _run_understanding_eval(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
         if progress_callback:
@@ -2854,6 +3232,7 @@ button.compact {{ padding:8px 12px; font-size:13px; }}
       <p>This studio is the product-facing entry point for context reasoning, visual grounding, unified artifact training, and benchmark-gated learning. Keep the older GUIs for power-user data operations; stay here for the main loop.</p>
       <div class="hero-actions">
         <a class="nav-pill" href="#reasoning-lab">Try reasoning</a>
+        <a class="nav-pill" href="#autopilot-lab">Do everything</a>
         <a class="nav-pill" href="#beginner-lab">One-click mode</a>
         <a class="nav-pill" href="#training-lab">Train artifacts</a>
         <a class="nav-pill" href="#benchmark-lab">Benchmark gate</a>
@@ -2867,7 +3246,7 @@ button.compact {{ padding:8px 12px; font-size:13px; }}
       <small class="eyebrow">Starter flow</small>
       <h2>Use the same order every time.</h2>
       <ol>
-        <li>For the easiest path, start with One-click setup + train + test.</li>
+        <li>For the easiest path, press Do everything for me once.</li>
         <li>Watch the Live jobs card while long tasks run in the background.</li>
         <li>If the gate is blocked at 0.0, use Guided starter loop once.</li>
         <li>Inspect the diagnosis and keep only accepted bundles.</li>
@@ -2880,6 +3259,7 @@ button.compact {{ padding:8px 12px; font-size:13px; }}
   <section style="margin-bottom:20px;">{spotlight_html}</section>
   {notification_panel_html}
   {job_panel_html}
+  {_render_autopilot_coach_section(state)}
   {_render_beginner_section(state)}
   {_render_reasoning_section(state)}
   {_render_training_section(state)}
@@ -2937,5 +3317,17 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -13,6 +13,7 @@ Build a general operator-algebra intelligence system that can:
 
 Implemented:
 - unified parser priors for text/document/vision entry points
+- repeated generalization proof harness with auto-derived hidden/transfer/grounding/compiler cases and an ultimate-goal tracker
 - multimodal graph fusion into the same `StructuredMeaningPipeline`
 - analogy retrieval with learned ranking and verifier/planning hooks
 - retained higher-order operator algebra

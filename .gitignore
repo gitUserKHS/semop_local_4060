@@ -170,4 +170,7 @@ tests/cp_labeled_download_smoke/
 tests/vlso_geometry_bootstrap_smoke/
 tests/vlso_geometry_gui_smoke/
 tests/vlso_geometry_pipeline_smoke/
+# Generalization proof runtime outputs
+**/generalization_proof/
+**/generalization_proof_report.json
 

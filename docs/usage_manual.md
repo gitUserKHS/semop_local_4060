@@ -24,7 +24,7 @@ Then open:
 - benchmark-gated learning
 - compact result inspection
 
-If you are starting from scratch, use the `One-click setup + train + test` button in `One-click mode` first. It seeds built-in hidden-premise, transfer, and starter vision examples, writes approved grounded review traces, trains the unified artifact bundle, then runs the benchmark gate and beginner smoke tests in one pass.
+If you are starting from scratch, press `Do everything for me` in `Autopilot coach` first. That path runs beginner setup, grows a small reviewed text-and-vision curriculum, reruns benchmark-gated learning across several rounds, and writes a plain-language proof report about generalization and multimodal transfer. The proof report now also includes an `ultimate goal tracker` with remaining axes, domain coverage, and the next priority focus. If you want the shorter legacy path, `One-click setup + train + test` still exists in `One-click mode`.
 
 Long actions now run in the background. Watch the `Live jobs` card in the GUI while they run; the page refreshes automatically every few seconds until the active job finishes.
 
@@ -35,7 +35,7 @@ Finished jobs also show up in the `Completion alerts` card. That card keeps unre
 If you want to inspect how two runs differ, use the `Artifact compare` card. It can compare two files such as `benchmark_gate.json` and `accepted_benchmark_summary.json`, or compare two whole output directories and list changed, left-only, and right-only artifacts.
 
 
-If you already have a store and just want to re-check the current bundle, use `One-click test current bundle`.
+If you already have a store and just want to re-check the current bundle, use `One-click test current bundle`. If you want to re-score the stronger proof loop without redoing the full coach, use `Re-check proof on current data`.
 
 If the benchmark gate is blocked with `0.0` on analogy, grounding, or repair, use the GUI button `Guided starter loop` once. It seeds starter graphs, writes approved review traces, and reruns training plus the gate automatically.
 
@@ -1042,4 +1042,5 @@ Run the broad understanding check across hidden-premise reasoning, CP structurin
 ```
 
 In the easy GUI, use `5. Geometry starter tools -> Evaluation shortcuts -> Run overall understanding benchmark`.
+
 

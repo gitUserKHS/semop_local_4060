@@ -12,6 +12,7 @@ from .operator_repair_policy import OperatorRepairPolicyModel, OperatorRepairPol
 from .repair_utility import RepairUtilityModel, RepairUtilityScorer, RepairUtilityTrainer, RepairUtilityTrainingSummary, train_repair_utility_from_graphs
 from .retained_repair_programs import RetainedRepairProgramLibrary, RetainedRepairProgramModel, RetainedRepairProgramRecord, RetainedRepairProgramTrainer, RetainedRepairProgramTrainingSummary, train_retained_repair_programs_from_graphs
 from .unified_benchmark import AnalogyEvalCase, BenchmarkGateDecision, BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer, BenchmarkGatedTrainingSummary, BenchmarkSliceSummary, CompilerRepairEvalCase, GroundedExplanationEvalCase, PersistentBenchmarkCorpusSummary, PromotedReviewBenchmarkCases, UnifiedBenchmarkHarness, UnifiedBenchmarkSummary, UnifiedSemOpArtifacts, UnifiedSemOpTrainer, UnifiedSemOpTrainingSummary
+from .generalization_proof import GeneralizationGoalAxis, GeneralizationGoalTracker, GeneralizationProofEvidence, GeneralizationProofHarness, GeneralizationProofRound, GeneralizationProofSummary
 from .cp_knowledge import CpAlgorithmKnowledge, CpDslOperator, CpKnowledgeBase, CpKnowledgeLoader, CpLogicalFrame
 from .cp_corpus import CpCorpusBuilder, CpCorpusRecord
 from .cp_dataset import CpDslExample, load_cp_dsl_examples, save_cp_dsl_examples
@@ -178,6 +179,12 @@ __all__ = [
     "UnifiedSemOpTrainingSummary",
     "UnifiedBenchmarkHarness",
     "UnifiedBenchmarkSummary",
+    "GeneralizationGoalAxis",
+    "GeneralizationGoalTracker",
+    "GeneralizationProofEvidence",
+    "GeneralizationProofHarness",
+    "GeneralizationProofRound",
+    "GeneralizationProofSummary",
     "AnalogyEvalCase",
     "GroundedExplanationEvalCase",
     "CompilerRepairEvalCase",
@@ -446,6 +453,7 @@ __all__ = [
     "PersistentBenchmarkCorpusSummary",
     "PromotedReviewBenchmarkCases",
 ]
+
 
 
 
