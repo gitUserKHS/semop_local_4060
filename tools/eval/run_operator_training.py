@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--resume-from-checkpoint')
     parser.add_argument('--save-steps', type=int, default=25)
     parser.add_argument('--save-total-limit', type=int, default=2)
+    parser.add_argument('--hardware-profile', default='auto')
+    parser.add_argument('--disable-auto-hw-tune', action='store_true')
     return parser.parse_args()
 
 
@@ -62,6 +64,8 @@ def main() -> None:
         resume_from_checkpoint=args.resume_from_checkpoint,
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
+        hardware_profile=args.hardware_profile,
+        auto_configure_for_local_gpu=not args.disable_auto_hw_tune,
     ))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

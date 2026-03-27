@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from .hardware_profiles import detect_local_hardware, recommended_generation_tokens, should_force_4bit
 from .prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_TEMPLATE, JSON_REPAIR_SYSTEM_PROMPT, JSON_REPAIR_USER_TEMPLATE
 
 
@@ -15,6 +16,7 @@ class LocalLLMConfig:
     temperature: float = 0.1
     use_4bit: bool = True
     repair_attempts: int = 2
+    hardware_profile: str = 'auto'
 
 
 class LocalTransformersExtractor:
@@ -23,6 +25,7 @@ class LocalTransformersExtractor:
         self._loaded = False
         self._tokenizer = None
         self._model = None
+        self._hardware_profile = detect_local_hardware(config.hardware_profile)
 
     def _lazy_load(self) -> None:
         if self._loaded:
@@ -33,8 +36,8 @@ class LocalTransformersExtractor:
         except ImportError as exc:
             raise RuntimeError("llm 모드를 사용하려면 torch와 transformers가 설치되어 있어야 합니다.") from exc
 
-        model_kwargs: Dict[str, Any] = {"device_map": "auto"}
-        use_4bit = bool(self.config.use_4bit and torch.cuda.is_available())
+        model_kwargs: Dict[str, Any] = {"device_map": "auto", "low_cpu_mem_usage": True}
+        use_4bit = bool(should_force_4bit(self._hardware_profile, self.config.use_4bit) and torch.cuda.is_available())
         if use_4bit:
             try:
                 import bitsandbytes  # noqa: F401
@@ -111,7 +114,7 @@ class LocalTransformersExtractor:
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
         outputs = self._model.generate(
             **inputs,
-            max_new_tokens=self.config.max_new_tokens,
+            max_new_tokens=recommended_generation_tokens(self._hardware_profile, self.config.max_new_tokens),
             temperature=self.config.temperature,
             do_sample=self.config.temperature > 0,
         )

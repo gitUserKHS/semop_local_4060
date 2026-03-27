@@ -47,6 +47,7 @@ class OperatorAlgebraLearner:
         decompositions: List[OperatorDecomposition] = []
         operator_names = {candidate.name for candidate in graph.induced_operators}
         relation_names = {edge.relation for edge in graph.edges}
+        node_ids = graph.node_ids()
 
         if graph.hidden_goals and graph.required_premises:
             decompositions.append(
@@ -57,16 +58,16 @@ class OperatorAlgebraLearner:
                     confidence=0.82,
                 )
             )
-        if 'car_wash' in graph.node_ids() and graph.hidden_goals:
+        if self._has_service_goal_signal(graph, relation_names, node_ids):
             decompositions.append(
                 OperatorDecomposition(
                     operator_name='SERVICE_GOAL_OPERATOR',
                     basis_operators=canonicalize_basis_signature(['TYPICAL_FOR', 'REQUIRES']),
-                    rationale='Service-place reasoning can be decomposed into a typical-goal script and required enabling premises.',
+                    rationale='Service-place reasoning decomposes into a typical-goal script plus enabling service preconditions.',
                     confidence=0.79,
                 )
             )
-        if 'bag' in graph.node_ids() and {'open_access', 'available_space'} <= set(graph.required_premises):
+        if 'bag' in node_ids and {'open_access', 'available_space'} <= set(graph.required_premises):
             decompositions.append(
                 OperatorDecomposition(
                     operator_name='CONTAINMENT_GOAL_OPERATOR',
@@ -91,6 +92,32 @@ class OperatorAlgebraLearner:
             if name == 'SERVICE_GOAL_OPERATOR' and 'TYPICAL_FOR' in relation_names and 'REQUIRES' in relation_names:
                 decompositions.append(OperatorDecomposition(operator_name=name, basis_operators=canonicalize_basis_signature(basis), rationale='Language service reasoning exposes the same basis relations.', confidence=0.72))
         return self._merge_decompositions([], decompositions)
+
+    @staticmethod
+    def _has_service_goal_signal(
+        graph: StructuredMeaningGraph,
+        relation_names: set[str],
+        node_ids: set[str],
+    ) -> bool:
+        hidden_goals = {str(item) for item in graph.hidden_goals}
+        service_node_ids = {
+            node.id
+            for node in graph.nodes
+            if (node.kind or '').lower() in {'service_place', 'service'}
+        }
+        if 'car_wash' in node_ids and hidden_goals:
+            return True
+        if not service_node_ids:
+            return False
+        if any(goal for goal in hidden_goals if any(token in goal for token in ('clean_car', 'booking', 'reservation', 'service'))):
+            return True
+        if 'vehicle_present' in graph.required_premises:
+            return True
+        if any(edge.relation == 'REQUIRES' and edge.target == 'vehicle_present' for edge in graph.edges):
+            return True
+        if any(edge.relation == 'TYPICAL_FOR' and edge.source in service_node_ids for edge in graph.edges):
+            return True
+        return 'TYPICAL_FOR' in relation_names and 'REQUIRES' in relation_names
 
     def _induce_functors(self, graph: StructuredMeaningGraph, decompositions: List[OperatorDecomposition]) -> List[FunctorHypothesis]:
         functors: List[FunctorHypothesis] = []

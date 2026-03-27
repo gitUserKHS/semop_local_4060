@@ -14,6 +14,8 @@ from .geometry_dataset import SyntheticGeometryScene, SyntheticGeometrySceneBuil
 from .geometry_pipeline import GeometryPipelineSummary, VisualGeometryBootstrapPipeline
 from .detector_adapters import DetectorOutputAdapter
 from .embedding_store import VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore
+from .frontier_setup import FrontierBundleItem, FrontierInstallSummary, FrontierSetupSummary, FrontierVisionInstaller
+from .frontier_vlm import FrontierVisualSummary, FrontierVisionAdapter, FrontierVisionSpec, VisualSceneAdjudication, VisualSceneAdjudicator
 from .geometry_backbones import GeometryPrimitiveBackbone, GeometryPrimitiveResult
 from .geometry_reasoner import GeometryReasoningResult, VisualGeometryReasoner
 from .hybrid_memory import HybridMemoryMatch, VisualHybridMemory, VisualHybridMemoryResult
@@ -27,6 +29,7 @@ from .operator_registry import OperatorType, VLSO_OPERATOR_TYPES
 from .operator_learning import VisualOperatorLearningSummary, VisualOperatorMatch, VisualOperatorMemory, VisualOperatorPrototypeTrainer, VisualOperatorRecord
 from .predictive_priors import JepaStructuralPredictor, PredictivePriorResult
 from .qa import LocalTextGenerator, VLSOAnswer, VLSOQuestionAnswerer
+from .semantic_scene import SemanticRegionHypothesis, SemanticSceneAnalyzer, SemanticSceneHypothesis, SemanticSceneSummary
 from .self_training import PseudoLabelAcceptanceConfig, VisualConceptSelfTrainer, VisualPseudoCluster, VisualSelfTrainingSummary
 from .cluster_review import VisualClusterReviewDecision, VisualClusterReviewStore
 from .review_retrain import VisualApprovedReviewRetrainer, VisualReviewRetrainSummary
@@ -89,6 +92,15 @@ __all__ = [
     "VisualPseudoCluster",
     "VisualSelfTrainingSummary",
     "DetectorOutputAdapter",
+    "FrontierBundleItem",
+    "FrontierInstallSummary",
+    "FrontierSetupSummary",
+    "FrontierVisionInstaller",
+    "FrontierVisualSummary",
+    "FrontierVisionAdapter",
+    "FrontierVisionSpec",
+    "VisualSceneAdjudication",
+    "VisualSceneAdjudicator",
     "GeometryPrimitiveBackbone",
     "GeometryPrimitiveResult",
     "GeometryReasoningResult",
@@ -98,6 +110,10 @@ __all__ = [
     "ImageMaskPreprocessor",
     "ImagePreprocessResult",
     "LocalTextGenerator",
+    "SemanticRegionHypothesis",
+    "SemanticSceneAnalyzer",
+    "SemanticSceneHypothesis",
+    "SemanticSceneSummary",
     "OpenImagesAnnotationAdapter",
     "OpenImagesPayloadSummary",
     "PseudoLabelAcceptanceConfig",

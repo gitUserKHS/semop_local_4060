@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List
@@ -42,6 +42,21 @@ class VLSOOperator:
 
 
 @dataclass
+class VLSOEvent:
+    id: str
+    label: str
+    event_type: str
+    modality: str = "shared"
+    frame_index: int | None = None
+    confidence: float = 1.0
+    participants: Dict[str, Any] = field(default_factory=dict)
+    attributes: Dict[str, Any] = field(default_factory=dict)
+
+    def model_dump(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class VisualObservation:
     objects: List[dict] = field(default_factory=list)
     relations: List[dict] = field(default_factory=list)
@@ -58,6 +73,7 @@ class SharedWorldModel:
     entities: List[VLSOEntity] = field(default_factory=list)
     relations: List[VLSORelation] = field(default_factory=list)
     operators: List[VLSOOperator] = field(default_factory=list)
+    events: List[VLSOEvent] = field(default_factory=list)
     goals: List[str] = field(default_factory=list)
     constraints: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -71,6 +87,8 @@ class SharedWorldModel:
                 existing.attributes.update(entity.attributes)
                 if existing.entity_type == "unknown" and entity.entity_type != "unknown":
                     existing.entity_type = entity.entity_type
+                if (existing.label == existing.id or existing.label.lower().startswith(("shape_", "polygon_"))) and entity.label:
+                    existing.label = entity.label
                 return
         self.entities.append(entity)
 
@@ -90,6 +108,17 @@ class SharedWorldModel:
                 return
         self.operators.append(operator)
 
+    def add_event(self, event: VLSOEvent) -> None:
+        for existing in self.events:
+            if existing.id == event.id:
+                existing.confidence = max(existing.confidence, event.confidence)
+                existing.participants.update(event.participants)
+                existing.attributes.update(event.attributes)
+                if existing.frame_index is None and event.frame_index is not None:
+                    existing.frame_index = event.frame_index
+                return
+        self.events.append(event)
+
     def relation_tuples(self) -> set[tuple[str, str, str]]:
         return {(item.source, item.relation, item.target) for item in self.relations}
 
@@ -99,6 +128,7 @@ class SharedWorldModel:
             "entities": [item.model_dump() for item in self.entities],
             "relations": [item.model_dump() for item in self.relations],
             "operators": [item.model_dump() for item in self.operators],
+            "events": [item.model_dump() for item in self.events],
             "goals": list(self.goals),
             "constraints": list(self.constraints),
             "metadata": dict(self.metadata),
@@ -106,6 +136,3 @@ class SharedWorldModel:
             "warnings": list(self.warnings),
             "audit_trace": list(self.audit_trace),
         }
-
-
-

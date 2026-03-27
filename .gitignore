@@ -71,6 +71,8 @@ artifacts/
 # SemOp Studio local runtime history
 **/studio_job_history.json
 **/studio_notifications.json
+data/runtime_ops/
+**/launch_manifest.json
 
 data/**/*.db
 data/**/*.sqlite
@@ -174,3 +176,12 @@ tests/vlso_geometry_pipeline_smoke/
 **/generalization_proof/
 **/generalization_proof_report.json
 
+
+# Additional runtime and smoke-test workspaces
+**/one_click_summary.json
+data/hardware_profile_runtime/
+data/tmp_world_model_math*/
+tests/hardware_profile_runtime/
+tests/*_runtime_*/
+tests/*_smoke_*/
+tests/tmp*/

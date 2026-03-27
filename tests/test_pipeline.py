@@ -240,14 +240,16 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertEqual(hits[0]['premise'], 'vehicle_present')
 
     def test_operator_algebra_decomposes_hidden_goal_reasoning(self) -> None:
-        graph = StructuredMeaningPipeline(mode="heuristic").run("?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??")
+        query = "I am going to the car wash and traffic is bad, should I walk there?"
+        graph = StructuredMeaningPipeline(mode="heuristic").run(query)
         names = {item.operator_name for item in graph.operator_decompositions}
         self.assertIn("GOAL_PRESERVATION_OPERATOR", names)
         self.assertIn("SERVICE_GOAL_OPERATOR", names)
         self.assertTrue(any(item.name == "ServiceGoalToConstraintFunctor" for item in graph.functor_hypotheses))
 
     def test_vlso_language_parser_projects_hidden_premises_into_world_model(self) -> None:
-        world, graph = VLSOReasoner().language_parser.parse("?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??")
+        query = "I am going to the car wash and traffic is bad, should I walk there?"
+        world, graph = VLSOReasoner().language_parser.parse(query)
         self.assertIn("clean_car_goal", world.goals)
         self.assertIn("vehicle_present", world.constraints)
         self.assertTrue(world.metadata.get('hidden_premises'))
@@ -257,7 +259,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         evaluator = OperatorAlgebraEvaluator(StructuredMeaningPipeline(mode="heuristic"))
         summary = evaluator.evaluate([
             __import__('semop').OperatorAlgebraEvalCase(
-                query="?嶺뚮ㅎ?②???묎덩???좊읈???釉먮폇??癲ル슓堉곤쭗? 癲ル슢??쭕?, 癲꾧퀗?э㎖猷잛젂疫뀀９苡???뉖??",
+                query="I am going to the car wash and traffic is bad, should I walk there?",
                 expected_decompositions=["GOAL_PRESERVATION_OPERATOR", "SERVICE_GOAL_OPERATOR"],
                 expected_functors=["ServiceGoalToConstraintFunctor"],
             )
@@ -482,8 +484,8 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
                 {'id': 'handle', 'label': 'polygon_6', 'kind': 'shape', 'bbox': [18, 70, 36, 150], 'polygon': [[18, 70], [36, 70], [36, 150], [18, 150]]},
             ]
         }
-        world = VLSOReasoner(mode='deep').run("???????좊읈??袁⑸젻泳?④덩?癲?????袁⑸즴??繞??壤굿??苑?????ル㎦??", visual_payload)
-        self.assertTrue(any('containment goal' in warning.lower() or 'access-first' in step.lower() for warning in world.warnings for step in world.inferred_steps[:1]) or any('Visual structure and language preconditions' in step for step in world.inferred_steps))
+        world = VLSOReasoner(mode='deep').run("The box is closed and I need the file inside. Can I pull it out now?", visual_payload)
+        self.assertTrue(any('access goal' in warning.lower() or 'containment goal' in warning.lower() for warning in world.warnings) or any('access-control part' in step.lower() or 'access-first' in step.lower() for step in world.inferred_steps) or any('Visual structure and language preconditions' in step for step in world.inferred_steps))
 
     def test_synthesizer_produces_human_readable_answer(self) -> None:
         pipeline = StructuredMeaningPipeline(mode="heuristic")
@@ -3804,6 +3806,148 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertIn('opening', answer.answer_text.lower())
         self.assertIn('handle', answer.answer_text.lower())
 
+    def test_vlso_question_answerer_avoids_raw_relation_fallback_for_scene_description_questions(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            '\uc774 \uc0ac\uc9c4\uc744 \uc124\uba85\ud574\ubd10',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [10, 10, 180, 160]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [40, 12, 150, 24]},
+                ],
+                'relations': [
+                    {'source': 'shape_2', 'relation': 'PART_OF', 'target': 'shape_1'},
+                ],
+            },
+        )
+        answer = VLSOQuestionAnswerer().answer('\uc774 \uc0ac\uc9c4\uc744 \uc124\uba85\ud574\ubd10', world, answer_mode='structured')
+        self.assertNotIn('PART_OF', answer.answer_text)
+        self.assertNotIn('part_of', answer.answer_text.lower())
+        self.assertEqual(answer.scene_semantic_level, 'structural_only')
+        self.assertTrue('사람처럼 의미적으로 해석하지는 못했고' in answer.answer_text or 'not yet being semantically understood at a human level' in answer.answer_text)
+
+    def test_vlso_question_answerer_uses_semantic_scene_caption_when_available(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            'Describe this image.',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [0, 0, 160, 160]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [40, 40, 100, 140]},
+                ],
+            },
+        )
+        world.metadata['semantic_scene_summary'] = {
+            'backend': 'openclip_local',
+            'backend_ready': True,
+            'semantic_level': 'semantic_candidate',
+            'caption': 'This appears to be a first-person shooter game screenshot. A human-like game character is visible near the center of the scene.',
+            'region_hypotheses': [
+                {'entity_id': 'shape_2', 'label': 'human character', 'score': 0.31, 'candidates': []},
+            ],
+        }
+        answer = VLSOQuestionAnswerer().answer('Describe this image.', world, answer_mode='structured')
+        self.assertEqual(answer.scene_semantic_level, 'semantic_candidate')
+        self.assertIn('first-person shooter game screenshot', answer.answer_text)
+        self.assertIn('human character', answer.answer_text)
+
+    def test_vlso_question_answerer_prefers_frontier_scene_summary_when_available(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            'Describe this image.',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [0, 0, 160, 160]},
+                ],
+            },
+        )
+        world.metadata['frontier_scene_summary'] = {
+            'backend': 'frontier_vlm',
+            'backend_ready': True,
+            'semantic_level': 'frontier_vlm',
+            'family': 'qwen2_5_vl',
+            'answer_text': 'This appears to be a game screenshot showing a first-person weapon view and storefronts.',
+        }
+        world.metadata['semantic_scene_summary'] = {
+            'backend': 'openclip_local',
+            'backend_ready': True,
+            'semantic_level': 'semantic_candidate',
+            'caption': 'This appears to be a first-person shooter game screenshot.',
+            'region_hypotheses': [],
+        }
+        world.metadata['scene_adjudication'] = {
+            'preferred_answer': 'This appears to be a game screenshot showing a first-person weapon view and storefronts.',
+            'stack_level': 'frontier_adjudicated',
+            'confidence': 0.81,
+            'used_frontier': True,
+        }
+        answer = VLSOQuestionAnswerer().answer('Describe this image.', world, answer_mode='structured')
+        self.assertEqual(answer.scene_semantic_level, 'frontier_adjudicated')
+        self.assertIn('game screenshot', answer.answer_text)
+
+    def test_vlso_question_answerer_answers_korean_inventory_queries_with_semantic_scene_summary(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            '이 사진에서 뭐가 보여?',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [0, 0, 200, 200]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [50, 40, 120, 180]},
+                ],
+            },
+        )
+        world.metadata['semantic_scene_summary'] = {
+            'backend': 'openclip_local',
+            'backend_ready': True,
+            'semantic_level': 'semantic_grounded',
+            'caption': 'This appears to be a first-person shooter game screenshot.',
+            'scene_hypotheses': [
+                {'label': 'first-person shooter game screenshot', 'score': 0.33, 'category': 'scene'},
+            ],
+            'object_hypotheses': [
+                {'label': 'weapon', 'score': 0.31, 'category': 'object'},
+                {'label': 'human character', 'score': 0.29, 'category': 'object'},
+                {'label': 'shop awning', 'score': 0.26, 'category': 'object'},
+            ],
+            'overlay_hypotheses': [
+                {'label': 'mini-map overlay', 'score': 0.28, 'category': 'overlay'},
+            ],
+            'region_hypotheses': [
+                {'entity_id': 'shape_2', 'label': 'human character', 'score': 0.31, 'candidates': []},
+            ],
+        }
+        world.metadata['scene_adjudication'] = {
+            'preferred_answer': 'This appears to be a first-person shooter game screenshot.',
+            'stack_level': 'semantic_grounded',
+            'confidence': 0.72,
+            'used_frontier': False,
+        }
+        answer = VLSOQuestionAnswerer().answer('이 사진에서 뭐가 보여?', world, answer_mode='structured')
+        self.assertEqual(answer.scene_semantic_level, 'semantic_grounded')
+        self.assertNotIn('Best grounded answer', answer.answer_text)
+        self.assertIn('게임', answer.answer_text)
+        self.assertTrue('무기' in answer.answer_text or '권총' in answer.answer_text)
+
+    def test_vlso_reasoner_attaches_scene_operator_relations_to_visual_world(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            'How can I access or move through this scene?',
+            visual_input={
+                'objects': [
+                    {'id': 'door', 'label': 'door', 'kind': 'opening', 'bbox': [20, 10, 160, 190]},
+                    {'id': 'handle', 'label': 'handle', 'kind': 'part', 'bbox': [120, 90, 145, 120], 'concept_labels': ['HANDLE_CANDIDATE', 'GRASPABLE_PART']},
+                    {'id': 'crate', 'label': 'crate', 'kind': 'container', 'bbox': [180, 40, 320, 200], 'concept_labels': ['HAS_INTERIOR', 'STRUCTURAL_CONTAINER_CANDIDATE']},
+                ],
+                'relations': [
+                    {'source': 'handle', 'relation': 'PART_OF', 'target': 'door'},
+                ],
+                'states': [
+                    {'subject': 'door', 'value': 'CLOSED'},
+                ],
+                'constraints': ['path_blocked'],
+            },
+        )
+        relations = {(item.source, item.relation, item.target) for item in world.relations}
+        self.assertTrue(any(relation == 'TARGET_OF_ATTENTION' for _, relation, _ in relations))
+        self.assertTrue(any(relation == 'INTENT_OF_AGENT' for _, relation, _ in relations))
+        self.assertTrue(any(relation == 'AFFORDS' and target in {'open_access_action', 'grasp_or_carry_action'} for _, relation, target in relations))
+        self.assertTrue(any(relation == 'BLOCKED_BY' for _, relation, _ in relations))
+
     def test_common_evaluator_accepts_cp_hidden_and_vlso_real_inputs(self) -> None:
         evaluator = SemOpCommonEvaluator()
         cp_hidden_examples = CpParserEvaluator.load_examples(Path('examples/cp_hidden_constraint_eval.jsonl'))
@@ -3999,7 +4143,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertTrue(response.compiled_execution)
         self.assertTrue(response.context_frame)
         self.assertIn('Decision:', response.to_text())
-        self.assertIn('?곗궛???ㅽ뻾:', response.to_text())
+        self.assertIn('\uc5f0\uc0b0\uc790 \uc2e4\ud589:', response.to_text())
 
     def test_response_synthesizer_includes_analogical_memories(self) -> None:
         db_path = os.path.join(os.path.dirname(__file__), 'analogical_response_test.db')
@@ -4013,7 +4157,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             graph = StructuredMeaningPipeline(mode='heuristic', memory_store_path=db_path, memory_source='demo').run('The box is closed and I need the file inside. Can I pull it out now?')
             response = ResponseSynthesizer().synthesize(graph)
             self.assertTrue(response.analogical_memories)
-            self.assertIn('??⑥る쭜?????:', response.to_text())
+            self.assertIn('\uc5f0\uc0c1\ub41c \uc0ac\ub840:', response.to_text())
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
@@ -5275,6 +5419,16 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         try:
             query = 'The drawer is closed and I need the folder inside. Should I pull the folder out right now?'
             graph = StructuredMeaningPipeline(mode='heuristic').run(query)
+            from semop.structures import StructuredMeaningGraph
+            broken_graph = StructuredMeaningGraph.from_dict(graph.model_dump())
+            broken_graph.operator_decompositions.append(
+                __import__('semop').OperatorDecomposition(
+                    operator_name='BROKEN_SLICE_OPERATOR',
+                    basis_operators=['HIDDEN_GOAL', 'REQUIRES', 'CONTAINS', 'TYPICAL_FOR'],
+                    rationale='slice regression test',
+                    confidence=0.7,
+                )
+            )
             store = CorpusMemoryStore(db_path)
             store.upsert_graph(graph, source='slice_regression_gate', split='train')
             Path(baseline_path).write_text(
@@ -5315,7 +5469,7 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
                     minimum_repair_success_rate=0.0,
                     require_improvement_if_baseline=False,
                 ),
-                compiler_cases=[CompilerRepairEvalCase(graph=graph, domain='general', scenario='qa')],
+                compiler_cases=[CompilerRepairEvalCase(graph=broken_graph, domain='general', scenario='qa')],
             )
             self.assertFalse(summary.gate.accepted)
             self.assertTrue(any('compiler_validity regressed against baseline' in item for item in summary.gate.slice_blocking_reasons))

@@ -7,7 +7,19 @@ Code layout reference:
 
 ## 0. Fastest Start
 
-If you just want to test the project without learning commands first, run:
+If you just want the true one-click beginner GUI on Windows, double-click:
+
+```text
+launch_semop_studio.bat
+```
+
+If you prefer the terminal one-click path, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_beginner_local_stack.py
+```
+
+If you only want to open the studio server directly without the launcher, run:
 
 ```bash
 .\.venv312\Scripts\python.exe semop_studio_gui.py
@@ -23,10 +35,25 @@ Then open:
 - unified artifact training
 - benchmark-gated learning
 - compact result inspection
+- one-box unified chat that auto-routes prompts to hidden-context reasoning, math, image QA, video situation understanding, 3D reconstruction, or all-domain training
+- concept-fusion creativity hints grounded in the same operator and world-model stack
+- ultimate AGI and commercialization readiness auditing
+- general-domain reasoning, not only warehouse/logistics prompts
+
+The new easiest path is `Unified chat` near the top of `SemOp Studio`. Type one request like a ChatGPT prompt and let the studio route it automatically. The studio now writes a graph-backed `prompt understanding` summary so beginners can see the inferred hidden intent, hidden constraints, likely domain, likely scenario, and helpful inputs before trusting the answer. The home screen is now intentionally simplified: one big chat box, tap-to-try prompt chips, big beginner action cards, and all advanced labs hidden inside collapsible drawers so even a child can start from the chat box first. Example prompts:
+- `?? ????`
+- `? ???? ??? ?? ??`
+- `??? ABC?? ? ??? ????`
+- `? ??? 3D? ?????`
+- `? ??? ????? ?? ??? ?????`
 
 If you are starting from scratch, press `Do everything for me` in `Autopilot coach` first. That path runs beginner setup, grows a small reviewed text-and-vision curriculum, reruns benchmark-gated learning across several rounds, and writes a plain-language proof report about generalization and multimodal transfer. The proof report now also includes an `ultimate goal tracker` with remaining axes, domain coverage, and the next priority focus. If you want the shorter legacy path, `One-click setup + train + test` still exists in `One-click mode`.
 
 Long actions now run in the background. Watch the `Live jobs` card in the GUI while they run; the page refreshes automatically every few seconds until the active job finishes.
+
+The local stack now auto-detects low-VRAM CUDA setups such as an RTX 4060 8GB and switches to a safer profile automatically: symbolic operator algebra first, shorter local generation, LoRA-first training, and QLoRA/4-bit loading when `bitsandbytes` is available.
+
+Both beginner GUIs now also show an `ML dependencies` or dependency snapshot card. That card tells you whether `torch`, `transformers`, `peft`, `accelerate`, and `bitsandbytes` are installed, and whether the current machine is actually ready for local LLM use, LoRA training, and QLoRA on a 4060-class GPU.
 
 You can cancel a queued or running background job from the same card, retry a finished job, and reload a saved result later. Each job now keeps a small step log, and failed or blocked jobs show suggested recovery buttons such as `Guided starter loop` or `One-click setup`. Completed, failed, and cancelled jobs are saved automatically to `studio_job_history.json` under the current output directory.
 
@@ -37,7 +64,89 @@ If you want to inspect how two runs differ, use the `Artifact compare` card. It 
 
 If you already have a store and just want to re-check the current bundle, use `One-click test current bundle`. If you want to re-score the stronger proof loop without redoing the full coach, use `Re-check proof on current data`.
 
+If the long automatic loop feels excessive, use `Manual fast path` in `SemOp Studio` instead. That section lets you `Save current result as pending review`, `Save + approve current result`, approve or reject recent queue items yourself, and then press `Train approved reviews now` to rerun the gate only on the traces you decided to keep.
+
+If your real target is `high-intelligence local reasoning on RTX 4060 8GB`, use the new `RTX 4060 coach` card in `SemOp Studio`. `Check 4060 readiness` explains the current ceiling in plain language, and `Collect data + improve for 4060` runs the improvement loop and then rewrites the next-batch data collection plan for you.
+
+If you want the stronger local visual lane instead of the fallback semantic scene stack, open the `Frontier vision` drawer in `SemOp Studio`. `Check frontier vision status` tells you whether the recommended local bundle is already installed, and `Install frontier vision bundle` downloads the recommended RTX 4060-friendly checkpoints into `models/vision/frontier`. The main recommended bundle is `Qwen2.5-VL-3B-Instruct` plus `Florence-2-base-ft`; the optional Molmo lane is slower and heavier.
+
+If you prefer the same check from the terminal, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_frontier_vision_setup.py status
+```
+
+And if you want to download the recommended local bundle from the terminal, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_frontier_vision_setup.py install
+```
+
+If you want one button that both grows the local dataset and trains a stronger bundle, use `One-click collect + train stronger`. That flow runs the all-domain beginner bootcamp first, then the RTX 4060 improvement loop, and finally rewrites the next-batch data plan with readiness deltas, math score changes, starter graph counts, approved trace counts, and visual scene totals. The same path is also available from `Unified chat` with prompts such as `collect data and train stronger` or `gather data and train a stronger bundle`.
+If you want true one-click `collect -> train -> execute`, use `Collect + train + answer` in `Unified chat`. That path first runs the same stronger data flywheel, then immediately reruns your current prompt on the refreshed local bundle and shows both the training summary and the final answer in one result card.
+
+If you want the system to learn one setting deeply instead of widening into many domains, use `Learn this environment`. That loop reuses the current context, domain, scenario, and optional visual input, asks repeated local questions, stores only environment-specific graphs, auto-approves safe local traces, retrains an environment bundle from that single source, and then writes an `environment mastery` report with stable concepts, repeated routines, hazards, and next probes. You can also trigger it from `Unified chat` with prompts like `learn this environment`.
+If you want a stronger brain-like local loop, use `Self-improve this environment`. That path runs the same local memory build, launches grounding self-evolution only on that environment, merges refined traces back into the same environment source, retrains an environment-only bundle, synthesizes safe local action rehearsals, and scores `local intelligence`, `self-reflection`, `embodied planning`, `multimodal understanding`, and the remaining local gaps. You can also trigger it from `Unified chat` with prompts like `self improve this environment` or `grow intelligence here`.
+If you want an AlphaEvolve-style recursive loop instead of one local improvement pass, use `Recursive self-evolve`. That path keeps a population of local improvement programs, mutates and recombines them, evaluates each candidate automatically, preserves a diversity-aware archive, and then deploys the best evolved local bundle back into the same environment. You can also trigger it from `Unified chat` with prompts like `alpha evolve this environment` or `recursive self evolve`.
+
+See the research notes in `docs/recursive_self_evolution_research_notes_2026_03_27.md`.
+
+If you want the repo to tell you how close the current stack is to a commercializable broad-intelligence system, use `Run ultimate AGI + commercialization audit`. That report scores prompt reasoning, multimodal understanding, math, embodied autonomy readiness for driving and robotics, creativity via concept fusion, self-improvement strength, and product blockers in one place.
+
+Unified chat results now also show a `Concept fusion` block. That block proposes auditable creative hypotheses by recombining prompt understanding, world-model priors, and operator-style constraints instead of free-form brainstorming alone.
+
 If the benchmark gate is blocked with `0.0` on analogy, grounding, or repair, use the GUI button `Guided starter loop` once. It seeds starter graphs, writes approved review traces, and reruns training plus the gate automatically.
+
+For direct video files, the temporal lane now tries `imageio`, then `OpenCV`, then local `ffmpeg`. If none are available, the result card shows a fallback hint and `frame folder` or `JSON manifest` remains the stable no-install path.
+
+## 0A. Beginner Operations Runner
+
+If you want the repo to diagnose the local machine and recommend the right launch path first, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_beginner_local_stack.py doctor
+```
+
+That prints one JSON report with:
+- detected hardware profile
+- whether local LLM use is ready
+- whether LoRA training is ready
+- whether QLoRA is ready on the current machine
+- which local surfaces can be launched safely
+
+If the report looks good, you can still launch the beginner local stack in the background with:
+
+```bash
+.\.venv312\Scripts\python.exe run_beginner_local_stack.py launch
+```
+
+But the new default one-click path is:
+
+```bash
+.\.venv312\Scripts\python.exe run_beginner_local_stack.py
+```
+
+That command now runs the doctor step, launches the safe beginner surfaces, waits briefly for the main studio, opens the browser automatically, and writes both `data\runtime_ops\launch_manifest.json` and `data\runtime_ops\one_click_summary.json`. Use `run_beginner_local_stack.py one_click --dry-run --no-browser` if you only want the manifests without starting the processes.
+
+To measure how capable the current bundle actually is, and optionally auto-fill missing proof or math artifacts, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_capability_audit.py --bootstrap-missing
+```
+
+That writes `data\unified_semop_gui_run\capability_audit_report.json` with runtime readiness, benchmark-gate status, generalization proof readiness, math self-test quality, visual 3D reconstruction status, and the next priority improvements.
+
+If you want the same kind of answer but phrased specifically for an RTX 4060 8GB target, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_rtx4060_coach.py --bootstrap-missing
+```
+
+And if you want it to collect more reviewed traces and rerun the improvement loop before reporting:
+
+```bash
+.\.venv312\Scripts\python.exe run_rtx4060_coach.py --bootstrap-missing --improve
+```
 
 If you need the older all-in-one power-user lab, you can still run:
 
@@ -47,6 +156,74 @@ If you need the older all-in-one power-user lab, you can still run:
 
 Then open:
 - `http://127.0.0.1:8770`
+
+If you want the dedicated beginner-friendly geometry and hard-math lab, run:
+
+```bash
+.\.venv312\Scripts\python.exe math_world_model_gui.py
+```
+
+Then open:
+- `http://127.0.0.1:8791`
+
+This lab builds a latent math world model first, optionally parses a geometry diagram JSON or image, and then ranks proof candidates by world-model alignment plus verification. See `docs/world_model_math_research_notes_2026_03_22.md` for the research basis.
+
+For deployment-style use, the math lab now runs behind a production gate. `math_world_model_gui.py` shows `accepted/review`, gate reasons, safe fallback text, and audit-log location instead of exposing the raw candidate answer as the primary result.
+
+If you want a JSON service for local integration tests or another UI, run:
+
+```bash
+.\.venv312\Scripts\python.exe math_world_model_service.py
+```
+
+Then use:
+- `GET http://127.0.0.1:8792/healthz`
+- `GET http://127.0.0.1:8792/readyz`
+- `POST http://127.0.0.1:8792/self_test`
+- `POST http://127.0.0.1:8792/solve`
+
+The service writes JSONL audit records to `data/math_world_model_service/audit_log.jsonl` by default.
+
+`math_world_model_gui.py` is now a small studio, not only a demo solver. The beginner path is:
+- press `Load starter curriculum` once if the cases file does not exist yet
+- press `One-click starter train + eval`
+- wait for `logical_pattern_weights.json`, `math_strategy_memory.json`, `math_leworldmodel_prior.json`, and `math_eval_final.json` to appear under the chosen output dir
+- inspect `math_leworldmodel_effect.json` if you want the local on/off delta for the LeWM-inspired latent prior
+- the solver now also runs a small LeWM-inspired latent planner, so accepted or review results include both alignment and a planned latent action trajectory
+- then solve your own problem with `Solve with production gate` on the same output dir
+
+The same GUI now also has a `Visual geometry to 3D` lane.
+- `Collect starter geometry scenes` builds a starter local visual dataset
+- `Collect from folder or file` indexes your own image folder, single image, or JSON diagram path into a visual dataset manifest
+- `Run visual 3D training` trains the visual concept and operator stores from the chosen starter scenes or your own folder or file
+- the visual lane also exports `lewm_visual_prior.json` and `lewm_visual_training_report.json` so you can inspect the learned latent geometry prior quality
+- reconstructions also include a LeWM-inspired latent assembly plan that proposes a likely reconstruction order or topology trajectory
+- `Reconstruct image or diagram into 3D` converts an image or diagram JSON into a simple 3D paint preview
+- each reconstruction also exports an OBJ/MTL bundle under `scene_3d_bundle\`
+- `One-click visual 3D bootcamp` runs collection, training, and one reconstruction preview in one pass
+- `One-click math + visual bootcamp` runs both lanes for complete beginner setup
+
+If you prefer the same loop from the terminal, run:
+
+```bash
+.\.venv312\Scripts\python.exe train_math_world_model.py --bootstrap-starter --epochs 2 --hardware-profile rtx_4060_8gb
+```
+
+That command writes a local training bundle under `data/math_world_model_gui_run` by default and prints a JSON summary with baseline score, final score, improved cases, hardware profile, operator algebra mode, and artifact paths. Use `--hardware-profile rtx_4060_8gb` when you want to force the same low-VRAM symbolic-first profile outside the GUI.
+
+If you want the same visual 3D workflow from the terminal, run:
+
+```bash
+.\.venv312\Scripts\python.exe run_visual_geometry_3d.py bootcamp --input-dir examples\vlso --output-dir data\visual_geometry_3d_cli_run --limit 1 --visual-input examples\vlso\geometry_scene.json
+```
+
+Useful subcommands:
+- `collect-starter`: generate starter geometry scenes and eval JSONL
+- `collect-inputs`: index your own folder or file into a visual dataset manifest
+- `train`: train visual geometry concept and operator stores
+- `reconstruct`: export one 3D reconstruction plus OBJ/MTL bundle
+- `reconstruct-batch`: export OBJ bundles for a folder of images or diagram JSON files
+- `bootcamp`: collect, train, and reconstruct in one pass
 
 That advanced GUI still lets you:
 - test warehouse and SOP reasoning
@@ -569,7 +746,8 @@ To train from stored contest episodes instead, point the trainer at the SQLite s
 On RTX 4060 8GB, keep the starting point small:
 - prefer `0.5B` to `1.5B` parser models first
 - start with `--dry-run` and local files if the model is already cached
-- turn on `--use-lora` before attempting full-model training
+- the training scaffolds now auto-enable a safer 4060 profile by default: batch size `1`, larger grad accumulation, LoRA-first, and QLoRA when possible
+- use `--hardware-profile rtx_4060_8gb` if you want to force that profile explicitly
 - use the generated `training_plan.json` before attempting a real run
 
 ### Evaluate the heuristic parser or a learned parser
@@ -1044,3 +1222,16 @@ Run the broad understanding check across hidden-premise reasoning, CP structurin
 In the easy GUI, use `5. Geometry starter tools -> Evaluation shortcuts -> Run overall understanding benchmark`.
 
 
+
+
+## Capability Audit
+
+In `SemOp Studio`, use `Run capability audit` to measure the current stack across runtime, SemOp reasoning, generalization proof, math, and visual 3D.
+Use `Improve weak areas + re-audit` to seed more reviewed starter data, rerun the benchmark gate, rerun the proof harness, and write both `capability_audit_report.json` and `capability_improvement_report.json` into your selected unified output directory.
+
+CLI equivalents:
+
+```powershell
+.\.venv312\Scripts\python.exe run_capability_audit.py --bootstrap-missing
+.\.venv312\Scripts\python.exe run_capability_audit.py --bootstrap-missing --auto-improve
+```

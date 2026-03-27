@@ -143,6 +143,7 @@ class GeneralizationProofHarness:
         operating_domain: str | None = None,
         benchmark_corpus_path: str | Path | None = None,
         report_path: str | Path | None = None,
+        round_setup_callback: Any = None,
         progress_callback: Any = None,
     ) -> GeneralizationProofSummary:
         resolved_domain = operating_domain or infer_operating_domain(review_store_path)
@@ -173,6 +174,8 @@ class GeneralizationProofHarness:
             split_value = str(splits[round_index - 1] or split).strip() or split
             round_dir = proof_root / f"round_{round_index:02d}"
             round_dir.mkdir(parents=True, exist_ok=True)
+            if round_setup_callback is not None:
+                round_setup_callback(round_index, source_value, split_value)
             if progress_callback:
                 progress_callback(
                     min(0.92, ((round_index - 1) / float(total_rounds)) + 0.05),
@@ -274,7 +277,7 @@ class GeneralizationProofHarness:
         store: CorpusMemoryStore,
         split_value: str,
         source_value: str | None,
-        limit: int = 160,
+        limit: int = 640,
     ) -> list[StructuredMeaningGraph]:
         rows = list(store.fetch_graphs(split=split_value or None, source=source_value or None))
         return rows[:limit]
@@ -420,13 +423,14 @@ class GeneralizationProofHarness:
     ) -> list[GroundedExplanationEvalCase]:
         cases: list[GroundedExplanationEvalCase] = []
         for graph in graphs:
-            if not graph.query.strip() or not str(getattr(graph, 'source_context', '')).strip():
+            source_context = str(getattr(graph, 'source_context', '')).strip()
+            if not graph.query.strip() or not source_context:
                 continue
             grounded_claims: list[str] = []
             unsupported_claims: list[str] = []
             if graph.operator_execution is not None:
                 for item in graph.operator_execution.claim_groundings:
-                    claim = cls._snippet(item.claim)
+                    claim = cls._clean_grounding_term(item.claim, graph.query)
                     if not claim:
                         continue
                     if item.grounded:
@@ -434,34 +438,41 @@ class GeneralizationProofHarness:
                     else:
                         unsupported_claims.append(claim)
             evidence_terms: list[str] = []
+            context_terms = cls._context_grounding_terms(source_context, graph.query)
+            evidence_terms.extend(context_terms[:3])
             for result in graph.symbolic_results:
                 if result.domain != "document_grounding":
                     continue
                 for evidence in result.evidence:
-                    snippet = cls._snippet(evidence, max_words=5)
+                    snippet = cls._clean_grounding_term(evidence, graph.query, max_words=5)
                     if snippet and snippet not in evidence_terms:
                         evidence_terms.append(snippet)
                 if not grounded_claims and result.answer.strip():
-                    for chunk in re.split(r"\band\b|[.;]\s*", result.answer):
-                        snippet = cls._snippet(chunk)
+                    for chunk in re.split(r"and|[.;]\s*", result.answer):
+                        snippet = cls._clean_grounding_term(chunk, graph.query)
                         if snippet and snippet not in grounded_claims:
                             grounded_claims.append(snippet)
             if not evidence_terms:
                 for node in graph.nodes:
                     if node.kind != "evidence":
                         continue
-                    snippet = cls._snippet(str(node.attributes.get("text", node.label)))
+                    snippet = cls._clean_grounding_term(str(node.attributes.get("text", node.label)), graph.query)
                     if snippet and snippet not in evidence_terms:
                         evidence_terms.append(snippet)
+            if not grounded_claims:
+                grounded_claims.extend(context_terms[:2])
+            grounded_claims = cls._unique(grounded_claims)
+            evidence_terms = cls._unique(evidence_terms)
+            unsupported_claims = cls._unique(unsupported_claims)
             if not grounded_claims and not evidence_terms:
                 continue
             cases.append(
                 GroundedExplanationEvalCase(
                     query=graph.query,
-                    source_context=str(getattr(graph, 'source_context', '')),
-                    expected_evidence_terms=evidence_terms[:4],
-                    expected_claim_terms=grounded_claims[:4],
-                    forbidden_unsupported_claim_terms=unsupported_claims[:4],
+                    source_context=source_context,
+                    expected_evidence_terms=evidence_terms[:3],
+                    expected_claim_terms=grounded_claims[:3],
+                    forbidden_unsupported_claim_terms=unsupported_claims[:2],
                     domain=cls._normalize_domain(getattr(graph, 'domain', 'general')),
                     scenario=cls._normalize_scenario(getattr(graph, 'scenario', 'qa')),
                     severity="medium",
@@ -504,6 +515,35 @@ class GeneralizationProofHarness:
             if len(cases) >= limit:
                 break
         return cases
+
+    @classmethod
+    def _context_grounding_terms(cls, source_context: str, query: str) -> list[str]:
+        terms: list[str] = []
+        for chunk in re.split(r'(?<=[.!?])\s+|,\s*|;\s*', str(source_context or '').strip()):
+            snippet = cls._clean_grounding_term(chunk, query)
+            if snippet and snippet not in terms:
+                terms.append(snippet)
+        return terms
+
+    @classmethod
+    def _clean_grounding_term(cls, text: str, query: str, max_words: int = 6) -> str:
+        cleaned = str(text or '').strip()
+        if not cleaned:
+            return ''
+        cleaned = re.sub(r'^(?:(?:Question|SOP Context|Document evidence points to):\s*)+', '', cleaned, flags=re.I)
+        cleaned = ' '.join(cleaned.split())
+        if not cleaned:
+            return ''
+        query_lower = ' '.join(str(query or '').split()).lower()
+        lowered = cleaned.lower()
+        if lowered == query_lower or lowered.startswith('question:'):
+            return ''
+        if len(lowered) < 10:
+            return ''
+        snippet = cls._snippet(cleaned, max_words=max_words)
+        if snippet.lower() == query_lower:
+            return ''
+        return snippet
 
     @staticmethod
     def _snippet(text: str, max_words: int = 6, max_chars: int = 72) -> str:

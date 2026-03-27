@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from semop import (
     AnalogyEvalCase,
     BenchmarkGatedContinuousTrainer,
+    CapabilityAuditRunner,
+    CapabilityImprovementRunner,
     CompilerRepairEvalCase,
     CorpusMemoryStore,
     CopilotRequest,
@@ -35,12 +37,28 @@ from semop import (
     StructuredMeaningPipeline,
     UnifiedSemOpTrainer,
     VLSOReasoner,
+    VisualGeometry3DWorkbench,
     VlsoGroundedEvaluator,
+    ProductionMathServiceConfig,
+    WorldModelMathProductionService,
+    WorldModelMathTrainer,
+    ensure_starter_math_cases,
     collect_review_promotion_decisions,
     infer_review_severity,
     review_reasons_from_graph_and_kpis,
+    detect_local_hardware,
+    detect_local_ml_stack,
+    RTX4060ReasoningCoach,
+    ConceptFusionEngine,
+    UltimateAGIReadinessRunner,
+    EnvironmentBrainRunner,
+    AdaptiveEnvironmentLearningRunner,
+    RecursiveSelfEvolutionRunner,
+    FrontierVisionInstaller,
 )
 from semop.structures import StructuredMeaningGraph
+from semop.multimodal_scene_understanding import TemporalSceneReasoner
+from semop.prompt_understanding import PromptUnderstandingAnalyzer
 
 
 OPS_EXAMPLE = {
@@ -74,6 +92,13 @@ VISION_STORE_EXAMPLE = {
     'operator_store': 'data/vlso_visual_operators.db',
     'weights': 'data/vlso_samples/trained_affordance_weights.json',
     'review_path': 'data/vlso_download_pipeline_gui/manual_label_reviews.json',
+}
+FRONTIER_EXAMPLE = {
+    'target_root': 'models/vision/frontier',
+}
+CHAT_EXAMPLE = {
+    'prompt': '이 통로가 막혀 있고 승인도 없으면 어떻게 해야 해?',
+    'image': '',
 }
 GUIDED_BOOTSTRAP_SOURCE = 'studio_bootstrap'
 BEGINNER_AUTOPILOT_SOURCE = 'studio_beginner_autopilot'
@@ -130,6 +155,7 @@ GUIDED_BOOTSTRAP_VARIANTS = (
 SPLIT_OPTIONS = ('train', 'val', 'test')
 VISION_MODE_OPTIONS = ('deep', 'hybrid', 'heuristic')
 VISION_ANSWER_MODE_OPTIONS = ('structured', 'llm')
+TEMPORAL_INPUT_EXTENSIONS = {'.gif', '.mp4', '.mov', '.avi', '.mkv', '.webm'}
 ACTION_TIME_HINTS = {
     'run_unified_training': 'about 10-30 seconds',
     'run_unified_benchmark_gate': 'about 20-60 seconds',
@@ -139,6 +165,19 @@ ACTION_TIME_HINTS = {
     'run_generalization_proof': 'about 45-120 seconds',
     'run_autopilot_coach': 'about 1-3 minutes',
     'run_understanding_eval': 'about 10-25 seconds',
+    'run_capability_audit': 'about 20-50 seconds',
+    'run_capability_improvement': 'about 1-3 minutes',
+    'run_environment_brain': 'about 1-3 minutes',
+    'run_adaptive_environment_learning': 'about 2-5 minutes',
+    'run_recursive_self_evolution': 'about 4-9 minutes',
+    'run_collect_train_execute': 'about 2-4 minutes',
+    'run_ultimate_agi_audit': 'about 30-90 seconds',
+    'run_rtx4060_assessment': 'about 20-50 seconds',
+    'run_rtx4060_improvement': 'about 1-3 minutes',
+    'run_manual_review_fast_loop': 'about 15-45 seconds',
+    'run_universal_bootcamp': 'about 2-5 minutes',
+    'run_data_flywheel': 'about 4-8 minutes',
+    'run_frontier_setup_install': 'about 10-30 minutes',
 }
 ACTION_TIME_SECONDS = {
     'run_unified_training': 25,
@@ -149,11 +188,26 @@ ACTION_TIME_SECONDS = {
     'run_generalization_proof': 90,
     'run_autopilot_coach': 150,
     'run_understanding_eval': 20,
+    'run_capability_audit': 40,
+    'run_capability_improvement': 150,
+    'run_environment_brain': 150,
+    'run_adaptive_environment_learning': 240,
+    'run_recursive_self_evolution': 480,
+    'run_collect_train_execute': 210,
+    'run_ultimate_agi_audit': 75,
+    'run_rtx4060_assessment': 40,
+    'run_rtx4060_improvement': 150,
+    'run_manual_review_fast_loop': 35,
+    'run_universal_bootcamp': 240,
+    'run_data_flywheel': 420,
+    'run_frontier_setup_install': 1200,
 }
 
 
 @dataclass(frozen=True)
 class StudioState:
+    chat_prompt: str = CHAT_EXAMPLE['prompt']
+    chat_image: str = CHAT_EXAMPLE['image']
     ops_query: str = OPS_EXAMPLE['query']
     ops_context: str = OPS_EXAMPLE['context']
     ops_domain: str = OPS_EXAMPLE['domain']
@@ -166,6 +220,8 @@ class StudioState:
     vision_operator_store: str = VISION_STORE_EXAMPLE['operator_store']
     vision_weights: str = VISION_STORE_EXAMPLE['weights']
     vision_review_path: str = VISION_STORE_EXAMPLE['review_path']
+    frontier_target_root: str = FRONTIER_EXAMPLE['target_root']
+    frontier_include_optional: bool = False
     unified_store_path: str = UNIFIED_EXAMPLE['store']
     unified_output_dir: str = UNIFIED_EXAMPLE['output_dir']
     unified_review_queue_path: str = UNIFIED_EXAMPLE['review_queue']
@@ -185,6 +241,8 @@ class StudioState:
     @classmethod
     def from_form(cls, form: dict[str, list[str]]) -> 'StudioState':
         return cls(
+            chat_prompt=_first(form, 'chat_prompt', cls.chat_prompt),
+            chat_image=_first(form, 'chat_image', cls.chat_image),
             ops_query=_first(form, 'ops_query', cls.ops_query),
             ops_context=_first(form, 'ops_context', cls.ops_context),
             ops_domain=_first(form, 'ops_domain', cls.ops_domain),
@@ -197,6 +255,8 @@ class StudioState:
             vision_operator_store=_first(form, 'vision_operator_store', cls.vision_operator_store),
             vision_weights=_first(form, 'vision_weights', cls.vision_weights),
             vision_review_path=_first(form, 'vision_review_path', cls.vision_review_path),
+            frontier_target_root=_first(form, 'frontier_target_root', cls.frontier_target_root),
+            frontier_include_optional=_checked_form(form, 'frontier_include_optional', default=False),
             unified_store_path=_first(form, 'unified_store_path', cls.unified_store_path),
             unified_output_dir=_first(form, 'unified_output_dir', cls.unified_output_dir),
             unified_review_queue_path=_first(form, 'unified_review_queue_path', cls.unified_review_queue_path),
@@ -292,6 +352,59 @@ def _metric_card(label: str, value: object) -> str:
 
 def _info_block(label: str, value: object) -> str:
     return f"<div class='info-block'><small>{html.escape(label)}</small><div>{html.escape(_render_value(value))}</div></div>"
+
+
+def _render_timeline_block(label: str, steps: object) -> str:
+    if not isinstance(steps, list) or not steps:
+        return ''
+    rows: list[str] = []
+    for item in steps:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            "".join([
+                "<div class='job-row'>",
+                f"<div class='job-row-head'><strong>{html.escape(str(item.get('label', '-')))}</strong><span class='status-chip'>{html.escape(str(item.get('status', 'done')))}</span></div>",
+                f"<div class='job-meta'>{html.escape(str(item.get('detail', '-')))}</div>",
+                "</div>",
+            ])
+        )
+    if not rows:
+        return ''
+    return f"<div class='info-block'><small>{html.escape(label)}</small><div class='job-list'>{''.join(rows)}</div></div>"
+
+
+def _render_active_job_banner(snapshot: dict[str, object]) -> str:
+    active = snapshot.get('active', {}) if isinstance(snapshot.get('active'), dict) else {}
+    if not active:
+        queued_count = int(snapshot.get('queued_count', 0) or 0)
+        if queued_count <= 0:
+            return ''
+        return (
+            "<section class='card active-job-banner'>"
+            "<small class='eyebrow'>Background work</small>"
+            "<h2>A job is queued</h2>"
+            f"<p>{html.escape(str(queued_count))} background job(s) are waiting to start. Open the Live jobs drawer for full detail.</p>"
+            "</section>"
+        )
+    progress = max(0, min(100, int((float(active.get('progress', 0.0) or 0.0)) * 100)))
+    events = active.get('events', []) if isinstance(active.get('events'), list) else []
+    recent = []
+    for item in events[-3:]:
+        if not isinstance(item, dict):
+            continue
+        recent.append(f"<li>{html.escape(str(item.get('message', '-')))}</li>")
+    recent_html = ''.join(recent) or '<li>Working...</li>'
+    return (
+        "<section class='card active-job-banner'>"
+        "<small class='eyebrow'>Now running</small>"
+        f"<h2>{html.escape(str(active.get('label', 'Background job')))}</h2>"
+        f"<p>{html.escape(str(active.get('detail', '-')))}</p>"
+        f"<div class='job-progress'><span style='width:{progress}%;'></span></div>"
+        f"<div class='job-meta'>Progress: {progress}% | ETA: {html.escape(str(active.get('remaining_eta', '-')))} | Job id: {html.escape(str(active.get('job_id', '-')))}</div>"
+        f"<ul class='spotlight-list'>{recent_html}</ul>"
+        "</section>"
+    )
 
 
 def _action_time_hint(action: str) -> str:
@@ -585,7 +698,42 @@ def _download_review_counts(path_value: str) -> dict[str, int]:
     return counts
 
 
+def _is_temporal_visual_input(path_value: str) -> bool:
+    candidate = Path(str(path_value or '').strip())
+    if not candidate.exists():
+        return False
+    if candidate.is_dir():
+        return True
+    if candidate.suffix.lower() in TEMPORAL_INPUT_EXTENSIONS:
+        return True
+    if candidate.suffix.lower() != '.json':
+        return False
+    try:
+        payload = json.loads(candidate.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if isinstance(payload, dict):
+        frames = payload.get('frames')
+        return isinstance(frames, list) and len(frames) >= 1
+    return isinstance(payload, list) and len(payload) >= 2
+
+
+def build_video_payload(query: str, input_path: str, mode: str, answer_mode: str, concept_store: str, operator_store: str, weights: str) -> dict[str, object]:
+    summary = TemporalSceneReasoner(
+        mode=mode,
+        answer_mode=answer_mode,
+        concept_store_path=concept_store or None,
+        operator_store_path=operator_store or None,
+        affordance_weights_path=weights or None,
+    ).summarize(query, input_path)
+    payload = summary.model_dump()
+    payload['kind'] = 'video'
+    return payload
+
+
 def build_vision_payload(query: str, image_path: str, mode: str, answer_mode: str, concept_store: str, operator_store: str, weights: str) -> dict[str, object]:
+    if _is_temporal_visual_input(image_path):
+        return build_video_payload(query, image_path, mode, answer_mode, concept_store, operator_store, weights)
     reasoner = VLSOReasoner(
         mode=mode,
         concept_store_path=concept_store or None,
@@ -594,7 +742,7 @@ def build_vision_payload(query: str, image_path: str, mode: str, answer_mode: st
         answer_mode=answer_mode,
     )
     world, answer = reasoner.answer(query, visual_input={'image_path': image_path, 'metadata': {'image_path': image_path}})
-    return {'world': world.model_dump(), 'answer': answer.model_dump()}
+    return {'kind': 'vision', 'world': world.model_dump(), 'answer': answer.model_dump()}
 
 
 def _store_graph_count(store_path: str, source: str, split: str) -> int:
@@ -612,6 +760,30 @@ def _review_queue_snapshot(review_queue_path: str, domain: str) -> dict[str, int
     decisions = collect_review_promotion_decisions(review_queue_path, domain=domain or None)
     snapshot['promotable'] = sum(1 for _detail, decision in decisions if decision.promotable)
     return snapshot
+
+
+def _recent_review_items(review_queue_path: str, status: str | None = None, limit: int = 6) -> list[dict[str, Any]]:
+    if not review_queue_path or not Path(review_queue_path).exists():
+        return []
+    store = ReviewQueueStore(review_queue_path)
+    rows: list[dict[str, Any]] = []
+    for item in store.fetch_items(status=status, limit=limit):
+        detail = store.fetch_item_detail(item.id) or {}
+        rows.append(
+            {
+                'id': item.id,
+                'domain': item.domain,
+                'scenario': item.scenario,
+                'query': item.query,
+                'status': item.status,
+                'severity': item.severity,
+                'reasons': list(item.reasons),
+                'answer_text': str(detail.get('answer_text') or item.answer_text or ''),
+                'context_text': str(detail.get('context_text') or ''),
+                'resolution_note': str(detail.get('resolution_note') or item.resolution_note or ''),
+            }
+        )
+    return rows
 
 
 def _unique_texts(items: list[str]) -> list[str]:
@@ -634,6 +806,119 @@ def _resolve_operating_domain(state: StudioState) -> str:
     if ops_domain and ops_domain != 'general':
         return ops_domain
     return configured or 'general'
+
+
+def _chat_math_output_dir(state: StudioState) -> str:
+    return str(Path(state.unified_output_dir or UNIFIED_EXAMPLE['output_dir']) / 'chat_math')
+
+
+def _chat_visual_output_dir(state: StudioState) -> str:
+    return str(Path(state.unified_output_dir or UNIFIED_EXAMPLE['output_dir']) / 'chat_visual_3d')
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    normalized = str(text or '').lower()
+    return any(term in normalized for term in terms)
+
+
+def _build_concept_fusion_payload(prompt: str, route: str, prompt_understanding: dict[str, Any] | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return ConceptFusionEngine().build_summary(
+        prompt=prompt,
+        route=route,
+        prompt_understanding=prompt_understanding if isinstance(prompt_understanding, dict) else {},
+        payload=payload if isinstance(payload, dict) else {},
+    ).model_dump()
+
+
+def _chat_command_action(prompt: str) -> str:
+    normalized = str(prompt or '').strip().lower()
+    if not normalized:
+        return ''
+    if _contains_any(
+        normalized,
+        (
+            '\ub370\uc774\ud130 \ubaa8\uc544',
+            '\ub370\uc774\ud130 \uc218\uc9d1',
+            '\uc218\uc9d1\ud574\uc11c \ud559\uc2b5',
+            '\uc6d0\ud074\ub9ad \uc218\uc9d1',
+            'collect data',
+            'collect and train',
+            'collect and improve',
+            'train stronger',
+            'gather data and train',
+        ),
+    ):
+        return 'run_data_flywheel'
+    if _contains_any(normalized, ('ultimate agi', 'agi readiness', 'commercial readiness', '\uc0c1\uc6a9\ud654 \uc810\uac80', '\uad81\uadf9 agi', '\uac1c\ubc1c \ub85c\ub4dc\ub9f5')):
+        return 'run_ultimate_agi_audit'
+    if _contains_any(normalized, ('alpha evolve this environment', 'recursive self evolve', 'recursive self-improve', '?? ???', '?? ??', 'recursive evolution')):
+        return 'run_recursive_self_evolution'
+    if _contains_any(normalized, ('self improve this environment', 'self-improve this environment', 'grow intelligence here', 'adaptive environment learning', '\uc774 \ud658\uacbd\uc5d0\uc11c \uc2a4\uc2a4\ub85c \uac1c\uc120\ud574', '\ud658\uacbd \uc790\uae30\uac1c\uc120', '\ud658\uacbd \uc790\uae30\ud559\uc2b5')):
+        return 'run_adaptive_environment_learning'
+    if _contains_any(normalized, ('learn this environment', 'environment brain', 'local environment learning', '\uc774 \ud658\uacbd\uc5d0\uc11c \uc2a4\uc2a4\ub85c \ubc30\uc6cc', '\ud658\uacbd \ud559\uc2b5', '\ud2b9\uc815 \ud658\uacbd \ud559\uc2b5')):
+        return 'run_environment_brain'
+    if _contains_any(normalized, ('\uc804\uccb4 \ud559\uc2b5', '\uc804\ubd80 \ud559\uc2b5', '\ubaa8\ub450 \ud559\uc2b5', 'full bootcamp', 'everything train', 'all-in-one train')):
+        return 'run_universal_bootcamp'
+    if _contains_any(normalized, ('\uac1c\uc120', '\ubcf4\uc644', '\ud5a5\uc0c1', 'improve', 'self-evolution', 'self evolution', '\uc57d\ud55c \ucd95')):
+        return 'run_capability_improvement'
+    if _contains_any(normalized, ('capability audit', '\uc0c1\ud0dc \uc810\uac80', '\uc9c4\ub2e8', 'audit', 'readiness')):
+        return 'run_capability_audit'
+    if _contains_any(normalized, ('generalization proof', 'proof', '\ubc94\uc6a9\ud654 \uc99d\uba85', '\uc99d\uba85 \ub9ac\ud3ec\ud2b8')) and not _contains_any(normalized, ('\uc218\ud559', '\uc815\uc218', 'triangle', '\uc0bc\uac01\ud615', 'circle', '\uc6d0\uc758', 'prime')):
+        return 'run_generalization_proof'
+    if _contains_any(normalized, ('benchmark', 'gate', '\uac8c\uc774\ud2b8', '\ubc88\ub4e4 \ud3c9\uac00')):
+        return 'run_unified_benchmark_gate'
+    if _contains_any(normalized, ('\ud14c\uc2a4\ud2b8', 'test current', 'smoke test', '\ud604\uc7ac \ubc88\ub4e4 \ud14c\uc2a4\ud2b8')):
+        return 'run_beginner_test'
+    if _contains_any(normalized, ('\ud559\uc2b5', 'train', '\uc7ac\ud559\uc2b5', 'bootstrap', 'starter setup', 'bundle build', '\ubc88\ub4e4 \ud559\uc2b5')):
+        return 'run_universal_bootcamp'
+    return ''
+
+
+def _chat_math_like(prompt: str) -> bool:
+    normalized = str(prompt or '').lower()
+    math_terms = (
+        '증명', '정수', '수열', '함수', '부등식', '다항식', '기하', '도형', '삼각형', '사각형', '원', '위상',
+        'olympiad', 'geometry', 'theorem', 'prove', 'triangle', 'circle', 'prime', 'integer', 'polynomial', 'sequence',
+        'integral', 'derivative', 'matrix', 'graph theory', 'combinatorics',
+    )
+    if _contains_any(normalized, math_terms):
+        return True
+    symbol_count = sum(normalized.count(symbol) for symbol in ('=', '+', '-', '^', '∠', '√'))
+    digit_count = sum(1 for char in normalized if char.isdigit())
+    return symbol_count >= 2 or digit_count >= 3
+
+
+def _chat_3d_like(prompt: str) -> bool:
+    return _contains_any(
+        str(prompt or '').lower(),
+        ('3d', '차원', '재구성', 'reconstruct', 'mesh', 'obj', 'topology', '그림판', 'paint', 'primitive'),
+    )
+
+
+def _chat_video_like(prompt: str) -> bool:
+    return _contains_any(
+        str(prompt or '').lower(),
+        ('video', 'clip', 'frame', 'temporal', 'sequence', 'motion', '\uc601\uc0c1', '\ube44\ub514\uc624', '\ud504\ub808\uc784', '\uc7a5\uba74', '\uc6c0\uc9c1\uc784'),
+    )
+
+
+def _chat_route(prompt: str, image_path: str = '') -> dict[str, str]:
+    action = _chat_command_action(prompt)
+    if action:
+        return {'kind': 'action', 'target': action}
+    has_image = bool(str(image_path or '').strip())
+    temporal_input = _is_temporal_visual_input(image_path) if has_image else False
+    if _chat_3d_like(prompt):
+        return {'kind': 'visual_3d', 'target': 'reconstruct'}
+    if has_image and (temporal_input or _chat_video_like(prompt)):
+        return {'kind': 'video', 'target': 'summarize'}
+    if has_image and _chat_math_like(prompt):
+        return {'kind': 'math', 'target': 'solve'}
+    if has_image:
+        return {'kind': 'vision', 'target': 'answer'}
+    if _chat_math_like(prompt):
+        return {'kind': 'math', 'target': 'solve'}
+    return {'kind': 'ops', 'target': 'reason'}
 
 
 def _guided_bootstrap_requests(state: StudioState) -> list[CopilotRequest]:
@@ -1188,7 +1473,9 @@ def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
     detail = str(item.get('detail', '')).lower()
     specs: list[tuple[str, str]] = []
     if status in {'failed', 'cancelled'}:
-        if action in {'run_unified_benchmark_gate', 'run_unified_training', 'run_generalization_proof'} or 'no graphs were found' in detail:
+        if action in {'run_unified_benchmark_gate', 'run_unified_training', 'run_generalization_proof', 'run_capability_audit'} or 'no graphs were found' in detail:
+            specs.append(('run_data_flywheel', 'Collect + train stronger'))
+            specs.append(('run_capability_improvement', 'Improve weak areas'))
             specs.append(('run_autopilot_coach', 'Do everything for me'))
             specs.append(('run_beginner_autopilot', 'Beginner setup'))
             specs.append(('run_guided_learning', 'Guided starter loop'))
@@ -1198,6 +1485,8 @@ def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
         else:
             specs.append(('run_understanding_eval', 'Understanding benchmark'))
     if gate_accepted is False:
+        specs.append(('run_data_flywheel', 'Collect + train stronger'))
+        specs.append(('run_capability_improvement', 'Improve weak areas'))
         specs.append(('run_autopilot_coach', 'Do everything for me'))
         specs.append(('run_guided_learning', 'Bootstrap gate'))
         specs.append(('run_beginner_autopilot', 'One-click recovery'))
@@ -1209,7 +1498,6 @@ def _job_recovery_specs(item: dict[str, Any]) -> list[tuple[str, str]]:
         seen.add(recovery_action)
         ordered.append((recovery_action, label))
     return ordered[:3]
-
 
 def _render_job_recovery_bar(item: dict[str, Any]) -> str:
     job_id = str(item.get('job_id', ''))
@@ -1291,6 +1579,8 @@ def _render_diagnosis_blocks(payload: dict[str, object] | None) -> str:
 
 
 def _render_ops_summary(payload: dict[str, object]) -> str:
+    graph = payload.get('graph', {}) if isinstance(payload.get('graph'), dict) else {}
+    context_frame = graph.get('context_frame', {}) if isinstance(graph.get('context_frame'), dict) else {}
     metrics = ''.join([
         _metric_card('Domain', payload.get('domain')),
         _metric_card('Scenario', payload.get('scenario')),
@@ -1300,27 +1590,87 @@ def _render_ops_summary(payload: dict[str, object]) -> str:
     ])
     details = ''.join([
         _info_block('Answer', payload.get('response_text') or payload.get('answer_text') or payload.get('summary') or '-'),
-        _info_block('Warnings', payload.get('warnings') or '-'),
+        _info_block('Inferred context', context_frame.get('summary') or '-'),
+        _info_block('Hidden goals', graph.get('hidden_goals') or '-'),
+        _info_block('Active constraints', context_frame.get('active_constraints') or graph.get('missing_premises') or '-'),
+        _info_block('Warnings', payload.get('warnings') or graph.get('warnings') or '-'),
         _info_block('Recommended actions', payload.get('recommended_actions') or '-'),
     ])
     return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
 
 
+def _frontier_setup_snapshot(state: StudioState) -> dict[str, Any]:
+    try:
+        summary = FrontierVisionInstaller(target_root=state.frontier_target_root).installed_bundle_status().model_dump()
+    except Exception as exc:
+        return {
+            'target_root': state.frontier_target_root,
+            'detected_profile': 'unknown',
+            'recommended_bundle': [],
+            'installed_count': 0,
+            'ready_count': 0,
+            'recommended_count': 0,
+            'required_ready': False,
+            'missing_required': [],
+            'installed_families': [],
+            'notes': [f'frontier setup check failed: {exc}'],
+        }
+    summary['include_optional'] = state.frontier_include_optional
+    return summary
+
+
 def _render_vision_summary(payload: dict[str, object]) -> str:
     answer = payload.get('answer', {}) if isinstance(payload.get('answer'), dict) else {}
     world = payload.get('world', {}) if isinstance(payload.get('world'), dict) else {}
+    semantic_scene = world.get('metadata', {}).get('semantic_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('semantic_scene_summary'), dict) else {}
+    frontier_scene = world.get('metadata', {}).get('frontier_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('frontier_scene_summary'), dict) else {}
+    adjudication = world.get('metadata', {}).get('scene_adjudication', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('scene_adjudication'), dict) else {}
     entities = world.get('entities', []) if isinstance(world.get('entities'), list) else []
     visual_entities = [entity for entity in entities if isinstance(entity, dict) and entity.get('modality') == 'vision']
+    region_hypotheses = semantic_scene.get('region_hypotheses', []) if isinstance(semantic_scene.get('region_hypotheses'), list) else []
+    region_labels = [item.get('label') for item in region_hypotheses[:4] if isinstance(item, dict) and item.get('label')]
     metrics = ''.join([
         _metric_card('Vision entities', len(visual_entities)),
         _metric_card('Relations', len(world.get('relations', []) if isinstance(world.get('relations'), list) else [])),
         _metric_card('Opening candidates', len(_opening_candidates(world))),
         _metric_card('Answer mode', answer.get('answer_mode') or '-'),
+        _metric_card('Scene semantic level', answer.get('scene_semantic_level') or '-'),
+        _metric_card('Frontier VLM', 'ready' if frontier_scene.get('backend_ready') else 'fallback'),
+        _metric_card('Scene stack', adjudication.get('stack_level') or '-'),
     ])
     details = ''.join([
         _info_block('Answer', answer.get('answer_text') or '-'),
+        _info_block('Reality check', 'This result is structural-only scene grounding.' if answer.get('scene_semantic_level') == 'structural_only' else 'This result includes semantic scene grounding.' if answer.get('scene_semantic_level') == 'semantic_grounded' else '-'),
+        _info_block('Adjudicated scene answer', adjudication.get('preferred_answer') or '-'),
+        _info_block('Scene stack', adjudication.get('stack_level') or '-'),
+        _info_block('Frontier scene answer', frontier_scene.get('answer_text') or '-'),
+        _info_block('Frontier backend', frontier_scene.get('family') or frontier_scene.get('backend') or '-'),
+        _info_block('Semantic caption', semantic_scene.get('caption') or '-'),
+        _info_block('Semantic backend', semantic_scene.get('backend') or '-'),
+        _info_block('Likely semantic regions', region_labels or '-'),
         _info_block('Likely openings', _opening_candidates(world) or '-'),
         _info_block('Warnings', answer.get('warnings') or world.get('warnings') or '-'),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+
+
+def _render_video_summary(payload: dict[str, object]) -> str:
+    sampled_frames = payload.get('sampled_frames', []) if isinstance(payload.get('sampled_frames'), list) else []
+    backend_support = payload.get('backend_support', {}) if isinstance(payload.get('backend_support'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Input kind', payload.get('input_kind') or '-'),
+        _metric_card('Frames', payload.get('frame_count') or 0),
+        _metric_card('Stable entities', len(payload.get('stable_entities') or [])),
+        _metric_card('Changed entities', len(payload.get('changed_entities') or [])),
+        _metric_card('Backend', payload.get('extraction_backend') or '-'),
+    ])
+    details = ''.join([
+        _info_block('Situation summary', payload.get('situation_summary') or payload.get('answer_text') or '-'),
+        _info_block('Temporal events', payload.get('temporal_events') or '-'),
+        _info_block('Frame answers', [item.get('answer_text') for item in sampled_frames[:4] if isinstance(item, dict)] or '-'),
+        _info_block('Backend support', backend_support or '-'),
+        _info_block('Fallback hint', payload.get('fallback_hint') or '-'),
+        _info_block('Warnings', payload.get('warnings') or '-'),
     ])
     return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
 
@@ -1587,12 +1937,418 @@ def _render_notification_panel(snapshot: dict[str, object]) -> str:
     )
 
 
+def _render_capability_audit_summary(payload: dict[str, object]) -> str:
+    axes = payload.get('axes', []) if isinstance(payload.get('axes'), list) else []
+    weak_axes = [str(item.get('name', '-')) for item in axes if isinstance(item, dict) and float(item.get('score', 0.0) or 0.0) < 0.65]
+    metrics = ''.join([
+        _metric_card('Overall readiness', f"{payload.get('overall_readiness_percent', 0)}%"),
+        _metric_card('Overall status', payload.get('overall_status') or '-'),
+        _metric_card('Weak axes', len(weak_axes)),
+        _metric_card('Priority improvements', len(payload.get('priority_improvements', []) or [])),
+    ])
+    details = ''.join([
+        _info_block('Weak axes', weak_axes or '-'),
+        _info_block('Priority improvements', payload.get('priority_improvements') or '-'),
+        _info_block('Generated artifacts', payload.get('generated_artifacts') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Capability audit report', str(payload.get('report_path') or '')),
+        ('Benchmark gate', str(Path(str(payload.get('report_path') or '')).parent / 'benchmark_gate.json') if payload.get('report_path') else ''),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_capability_improvement_summary(payload: dict[str, object]) -> str:
+    before = payload.get('before', {}) if isinstance(payload.get('before'), dict) else {}
+    after = payload.get('after', {}) if isinstance(payload.get('after'), dict) else {}
+    rounds = payload.get('rounds', []) if isinstance(payload.get('rounds'), list) else []
+    gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
+    proof = payload.get('proof', {}) if isinstance(payload.get('proof'), dict) else {}
+    quantization = payload.get('quantization', {}) if isinstance(payload.get('quantization'), dict) else {}
+    self_evolution = payload.get('self_evolution', {}) if isinstance(payload.get('self_evolution'), dict) else {}
+    proof_goal = proof.get('goal_tracker', {}) if isinstance(proof.get('goal_tracker'), dict) else {}
+    gate_decision = gate.get('gate', {}) if isinstance(gate.get('gate'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Before readiness', f"{before.get('overall_readiness_percent', 0)}%"),
+        _metric_card('After readiness', f"{after.get('overall_readiness_percent', 0)}%"),
+        _metric_card('Delta', payload.get('delta_readiness_percent')),
+        _metric_card('Weak axes before', len(payload.get('weak_axes_before', []) or [])),
+        _metric_card('Weak axes after', len(payload.get('weak_axes_after', []) or [])),
+        _metric_card('Gate accepted', gate_decision.get('accepted')),
+        _metric_card('Proof readiness', f"{proof_goal.get('readiness_percent', 0)}%" if proof_goal else '-'),
+        _metric_card('Quantized coverage', quantization.get('coverage_score') if quantization else '-'),
+        _metric_card('Self-evolution traces', self_evolution.get('approved_reviews') if self_evolution else '-'),
+    ])
+    round_lines = []
+    for item in rounds[:6]:
+        if not isinstance(item, dict):
+            continue
+        round_lines.append(f"round {item.get('round_index', '?')}: guided={item.get('guided_seeded', 0)}, approved={item.get('approved_reviews', 0)}, visual={item.get('visual_seeded', 0)}")
+    details = ''.join([
+        _info_block('Actions taken', payload.get('actions_taken') or '-'),
+        _info_block('Weak axes before', payload.get('weak_axes_before') or '-'),
+        _info_block('Weak axes after', payload.get('weak_axes_after') or '-'),
+        _info_block('Curriculum rounds', round_lines or '-'),
+        _info_block('TurboQuant review memory', [f"used clusters: {quantization.get('used_clusters', 0)}/{quantization.get('codebook_size', 0)}", f"avg novelty: {quantization.get('average_novelty', 0.0)}"] if quantization else '-'),
+        _info_block('Self-evolution grounding', [f"improved cases: {self_evolution.get('improved_cases', 0)}", f"final grounding: {self_evolution.get('final_grounding_score', 0.0)}", f"strategies: {', '.join(self_evolution.get('strategy_labels', [])[:3])}"] if self_evolution else '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Improvement report', str(payload.get('output_path') or '')),
+        ('Capability audit report', str((after.get('report_path') if isinstance(after, dict) else '') or '')),
+        ('Proof report', str(((proof.get('report_path') if isinstance(proof, dict) else '') or ''))),
+        ('Self-evolution report', str(self_evolution.get('output_path') or '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_manual_review_summary(payload: dict[str, object]) -> str:
+    review_detail = payload.get('review_detail', {}) if isinstance(payload.get('review_detail'), dict) else {}
+    snapshot = payload.get('review_snapshot', {}) if isinstance(payload.get('review_snapshot'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Review id', payload.get('review_id') or review_detail.get('id') or '-'),
+        _metric_card('Status', payload.get('saved_status') or review_detail.get('status') or '-'),
+        _metric_card('Pending total', snapshot.get('pending', 0)),
+        _metric_card('Approved total', snapshot.get('approved', 0)),
+        _metric_card('Promotable total', snapshot.get('promotable', 0)),
+    ])
+    details = ''.join([
+        _info_block('Query', review_detail.get('query') or payload.get('query') or '-'),
+        _info_block('Reasons', review_detail.get('reasons') or payload.get('reasons') or '-'),
+        _info_block('Answer kept for review', review_detail.get('answer_text') or payload.get('answer_text') or '-'),
+        _info_block('Manual source', payload.get('source_used') or '-'),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+
+
+def _render_unified_chat_summary(payload: dict[str, object]) -> str:
+    prompt_understanding = payload.get('prompt_understanding', {}) if isinstance(payload.get('prompt_understanding'), dict) else {}
+    concept_fusion = payload.get('concept_fusion', {}) if isinstance(payload.get('concept_fusion'), dict) else {}
+    vision_payload = payload.get('vision_payload', {}) if isinstance(payload.get('vision_payload'), dict) else {}
+    vision_world = vision_payload.get('world', {}) if isinstance(vision_payload.get('world'), dict) else {}
+    semantic_scene = vision_world.get('metadata', {}).get('semantic_scene_summary', {}) if isinstance(vision_world.get('metadata'), dict) and isinstance(vision_world.get('metadata', {}).get('semantic_scene_summary'), dict) else {}
+    frontier_scene = vision_world.get('metadata', {}).get('frontier_scene_summary', {}) if isinstance(vision_world.get('metadata'), dict) and isinstance(vision_world.get('metadata', {}).get('frontier_scene_summary'), dict) else {}
+    adjudication = vision_world.get('metadata', {}).get('scene_adjudication', {}) if isinstance(vision_world.get('metadata'), dict) and isinstance(vision_world.get('metadata', {}).get('scene_adjudication'), dict) else {}
+    hypotheses = concept_fusion.get('hypotheses', []) if isinstance(concept_fusion.get('hypotheses'), list) else []
+    hypothesis_lines = []
+    for item in hypotheses[:3]:
+        if not isinstance(item, dict):
+            continue
+        hypothesis_lines.append(f"{item.get('label', '-')}: novelty={item.get('novelty_score', 0)}")
+    metrics = ''.join([
+        _metric_card('Route', payload.get('route') or '-'),
+        _metric_card('Status', payload.get('status') or '-'),
+        _metric_card('Action', payload.get('queued_label') or '-'),
+        _metric_card('Likely domain', prompt_understanding.get('likely_domain') or '-'),
+        _metric_card('Likely scenario', prompt_understanding.get('likely_scenario') or '-'),
+    ])
+    details = ''.join([
+        _info_block('Prompt', payload.get('prompt') or '-'),
+        _info_block('Answer', payload.get('answer_text') or payload.get('message') or '-'),
+        _info_block('Prompt understanding', prompt_understanding.get('summary') or '-'),
+        _info_block('Route reason', prompt_understanding.get('route_reason') or '-'),
+        _info_block('Hidden context', prompt_understanding.get('hidden_context') or '-'),
+        _info_block('Hidden constraints', prompt_understanding.get('hidden_constraints') or '-'),
+        _info_block('Helpful input', prompt_understanding.get('required_inputs') or '-'),
+        _info_block('Scene semantic level', ((vision_payload.get('answer', {}) if isinstance(vision_payload.get('answer'), dict) else {}).get('scene_semantic_level') or '-')),
+        _info_block('Adjudicated scene answer', adjudication.get('preferred_answer') or '-'),
+        _info_block('Scene stack', adjudication.get('stack_level') or '-'),
+        _info_block('Frontier scene answer', frontier_scene.get('answer_text') or '-'),
+        _info_block('Frontier backend', frontier_scene.get('family') or frontier_scene.get('backend') or '-'),
+        _info_block('Semantic caption', semantic_scene.get('caption') or '-'),
+        _info_block('Semantic backend', semantic_scene.get('backend') or '-'),
+        _info_block('Concept fusion', concept_fusion.get('headline') or '-'),
+        _info_block('Fusion hypotheses', hypothesis_lines or '-'),
+        _info_block('Fusion focus', concept_fusion.get('recommended_focus') or '-'),
+        _info_block('Notes', payload.get('notes') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('3D reconstruction', str(payload.get('reconstruction_path') or '')),
+        ('Math audit log', str(payload.get('audit_log_path') or '')),
+        ('Math training summary', str(payload.get('math_training_path') or '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_frontier_setup_summary(payload: dict[str, object]) -> str:
+    status = payload.get('status', payload) if isinstance(payload, dict) else {}
+    install = payload.get('install', {}) if isinstance(payload, dict) and isinstance(payload.get('install'), dict) else {}
+    bundle = status.get('recommended_bundle', []) if isinstance(status.get('recommended_bundle'), list) else []
+    bundle_lines = []
+    for item in bundle:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get('family') or '-')
+        readiness = 'installed' if item.get('installed') else 'missing'
+        requirement = 'required' if item.get('required') else 'optional'
+        bundle_lines.append(f"{label}: {readiness} ({requirement})")
+    metrics = ''.join([
+        _metric_card('Profile', status.get('detected_profile') or '-'),
+        _metric_card('Installed', f"{status.get('installed_count', 0)}/{status.get('recommended_count', len(bundle) or 1)}"),
+        _metric_card('Required ready', status.get('required_ready')),
+        _metric_card('Installed families', len(status.get('installed_families') or [])),
+        _metric_card('Completed downloads', len(install.get('completed') or [])),
+        _metric_card('Failed downloads', len(install.get('failed') or [])),
+    ])
+    details = ''.join([
+        _info_block('Target root', status.get('target_root') or payload.get('target_root') or '-'),
+        _info_block('Missing required', status.get('missing_required') or '-'),
+        _info_block('Installed families', status.get('installed_families') or '-'),
+        _info_block('Recommended bundle', bundle_lines or '-'),
+        _info_block('Install notes', install.get('notes') or status.get('notes') or '-'),
+        _info_block('Failed items', install.get('failed') or '-'),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{_raw_details(payload)}"
+
+
+def _render_rtx4060_summary(payload: dict[str, object]) -> str:
+    lanes = payload.get('data_collection_lanes', []) if isinstance(payload.get('data_collection_lanes'), list) else []
+    lane_lines = []
+    for item in lanes[:6]:
+        if not isinstance(item, dict):
+            continue
+        lane_lines.append(
+            f"{item.get('label', '-')}: current={item.get('current_count', 0)}, next batch={item.get('suggested_next_batch', 0)}, surface={item.get('preferred_surface', '-')}"
+        )
+    metrics = ''.join([
+        _metric_card('Readiness', f"{payload.get('overall_readiness_percent', 0)}%"),
+        _metric_card('Status', payload.get('overall_status') or '-'),
+        _metric_card('Profile', payload.get('detected_profile') or '-'),
+        _metric_card('Operator algebra', payload.get('operator_algebra_mode') or '-'),
+        _metric_card('Goal readiness', f"{payload.get('goal_readiness_percent', 0)}%"),
+        _metric_card('Approved reviews', payload.get('approved_review_total') or 0),
+        _metric_card('Domain slices', payload.get('approved_domain_slices') or 0),
+        _metric_card('Grounded reviews', payload.get('grounded_review_total') or 0),
+    ])
+    details = ''.join([
+        _info_block('Weak axes', payload.get('weak_axes') or '-'),
+        _info_block('Remaining goal items', payload.get('remaining_goal_items') or '-'),
+        _info_block('Benchmark blockers', payload.get('benchmark_blockers') or '-'),
+        _info_block('Next data batches', lane_lines or '-'),
+        _info_block('Performance tactics', payload.get('performance_tactics') or '-'),
+        _info_block('Beginner actions', payload.get('beginner_actions') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('4060 coach report', str(payload.get('report_path') or '')),
+        ('Capability audit report', str((payload.get('source_reports') or {}).get('capability_audit', '') if isinstance(payload.get('source_reports'), dict) else '')),
+        ('Generalization proof', str((payload.get('source_reports') or {}).get('generalization_proof', '') if isinstance(payload.get('source_reports'), dict) else '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+
+
+def _render_environment_brain_summary(payload: dict[str, object]) -> str:
+    mastery = payload.get('mastery_scores', {}) if isinstance(payload.get('mastery_scores'), dict) else {}
+    routine_lines = []
+    for item in payload.get('routine_patterns', [])[:5] if isinstance(payload.get('routine_patterns'), list) else []:
+        if not isinstance(item, dict):
+            continue
+        routine_lines.append(f"{item.get('label', '-')}: support={item.get('support_count', 0)}")
+    metrics = ''.join([
+        _metric_card('Environment', payload.get('environment_name') or '-'),
+        _metric_card('Graphs', payload.get('stored_graph_count') or 0),
+        _metric_card('Auto-approved reviews', payload.get('auto_approved_review_count') or 0),
+        _metric_card('Environment mastery', mastery.get('environment_mastery') or 0),
+        _metric_card('Grounding', mastery.get('grounding_strength') or 0),
+        _metric_card('Safety', mastery.get('safety_alignment') or 0),
+    ])
+    details = ''.join([
+        _info_block('Stable concepts', [f"{item.get('label', '-')}: {item.get('support_count', 0)}" for item in (payload.get('stable_concepts') or [])[:6] if isinstance(item, dict)] or '-'),
+        _info_block('Stable constraints', payload.get('stable_constraints') or '-'),
+        _info_block('Routine patterns', routine_lines or '-'),
+        _info_block('Hazard patterns', payload.get('hazard_patterns') or '-'),
+        _info_block('Visual entities', payload.get('visual_entities') or '-'),
+        _info_block('Next probes', [item.get('query', '-') for item in (payload.get('next_probes') or [])[:4] if isinstance(item, dict)] or '-'),
+        _info_block('Notes', payload.get('notes') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Environment brain report', str(payload.get('report_path') or '')),
+        ('Environment bundle', str(((payload.get('training') or {}).get('artifacts') or {}).get('continuous_learning_bundle_dir', '') if isinstance((payload.get('training') or {}).get('artifacts'), dict) else '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_adaptive_environment_learning_summary(payload: dict[str, object]) -> str:
+    scores = payload.get('capability_scores', {}) if isinstance(payload.get('capability_scores'), dict) else {}
+    axes = payload.get('axes', []) if isinstance(payload.get('axes'), list) else []
+    temporal = payload.get('temporal_scene', {}) if isinstance(payload.get('temporal_scene'), dict) else {}
+    rehearsals = payload.get('action_rehearsals', []) if isinstance(payload.get('action_rehearsals'), list) else []
+    metrics = ''.join([
+        _metric_card('Environment', payload.get('environment_name') or '-'),
+        _metric_card('Local intelligence', scores.get('local_intelligence') or 0),
+        _metric_card('Self-reflection', scores.get('self_reflection') or 0),
+        _metric_card('Embodied planning', scores.get('embodied_planning') or 0),
+        _metric_card('Ready axes', f"{payload.get('ready_axes') or 0}/{payload.get('total_axes') or 0}"),
+        _metric_card('Improved cases', payload.get('improved_cases') or 0),
+    ])
+    details = ''.join([
+        _info_block('Completed skills', payload.get('completed_skills') or '-'),
+        _info_block('Remaining gaps', payload.get('remaining_gaps') or '-'),
+        _info_block('Next actions', payload.get('next_actions') or '-'),
+        _info_block('Capability axes', [f"{item.get('label', '-')}: {item.get('score', 0)} / target {item.get('target', 0)}" for item in axes[:6] if isinstance(item, dict)] or '-'),
+        _info_block('Action rehearsals', [f"{item.get('label', '-')}: {' -> '.join(str(step.get('action', '-')) for step in (item.get('steps') or [])[:3] if isinstance(step, dict))}" for item in rehearsals[:4] if isinstance(item, dict)] or '-'),
+        _info_block('Temporal scene', [temporal.get('situation_summary') or '-', f"Stable entities: {', '.join((temporal.get('stable_entities') or [])[:4]) or '-'}", f"Temporal events: {', '.join((temporal.get('temporal_events') or [])[:4]) or '-'}"] if temporal else '-'),
+        _info_block('Self-evolution', [f"Improved cases: {(payload.get('self_evolution') or {}).get('improved_cases', 0)}", f"Approved reviews: {(payload.get('self_evolution') or {}).get('approved_reviews', 0)}", f"Final grounding: {(payload.get('self_evolution') or {}).get('final_grounding_score', 0)}"] if isinstance(payload.get('self_evolution'), dict) else '-'),
+        _info_block('Notes', payload.get('notes') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Adaptive environment report', str(payload.get('report_path') or '')),
+        ('Environment brain report', str(((payload.get('environment_brain') or {}).get('report_path')) if isinstance(payload.get('environment_brain'), dict) else '')),
+        ('Self-evolution report', str(((payload.get('self_evolution') or {}).get('output_path')) if isinstance(payload.get('self_evolution'), dict) else '')),
+        ('Adaptive bundle', str(((payload.get('training') or {}).get('artifacts') or {}).get('continuous_learning_bundle_dir', '') if isinstance((payload.get('training') or {}).get('artifacts'), dict) else '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_recursive_self_evolution_summary(payload: dict[str, object]) -> str:
+    best = payload.get('best_program', {}) if isinstance(payload.get('best_program'), dict) else {}
+    generations = payload.get('generations', []) if isinstance(payload.get('generations'), list) else []
+    deployed = payload.get('deployed_summary', {}) if isinstance(payload.get('deployed_summary'), dict) else {}
+    deployed_scores = deployed.get('capability_scores', {}) if isinstance(deployed.get('capability_scores'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Environment', payload.get('environment_name') or '-'),
+        _metric_card('Final best score', payload.get('final_best_score') or 0),
+        _metric_card('Score delta', payload.get('score_delta') or 0),
+        _metric_card('Generations', len(generations)),
+        _metric_card('Best local intelligence', deployed_scores.get('local_intelligence') or 0),
+        _metric_card('Best embodied planning', deployed_scores.get('embodied_planning') or 0),
+    ])
+    details = ''.join([
+        _info_block('Best program', [best.get('label') or '-', f"Focus tags: {', '.join(best.get('focus_tags', [])[:6]) if isinstance(best.get('focus_tags'), list) else '-'}", f"Mutation note: {best.get('mutation_note') or '-'}"]),
+        _info_block('Generation scores', [f"Generation {item.get('generation_index', '-')}: best={item.get('best_score', 0)}, delta={item.get('score_delta', 0)}" for item in generations[:6] if isinstance(item, dict)] or '-'),
+        _info_block('Research principles', payload.get('research_principles') or '-'),
+        _info_block('Next actions', payload.get('next_actions') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Recursive evolution report', str(payload.get('report_path') or '')),
+        ('Best candidate report', str(best.get('report_path') or '')),
+        ('Deployed best report', str(deployed.get('report_path') or '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_collect_train_execute_summary(payload: dict[str, object]) -> str:
+    answer = payload.get('answer_result', {}) if isinstance(payload.get('answer_result'), dict) else {}
+    metrics = ''.join([
+        _metric_card('Answer route', answer.get('route') or '-'),
+        _metric_card('Answer status', answer.get('status') or '-'),
+        _metric_card('Readiness now', ((payload.get('rtx4060_assessment') or {}).get('overall_readiness_percent') if isinstance(payload.get('rtx4060_assessment'), dict) else 0) or 0),
+        _metric_card('Starter graphs', ((payload.get('data_collection') or {}).get('starter_graphs') if isinstance(payload.get('data_collection'), dict) else 0) or 0),
+        _metric_card('Approved traces', ((payload.get('data_collection') or {}).get('approved_starter_traces') if isinstance(payload.get('data_collection'), dict) else 0) or 0),
+        _metric_card('Visual scenes', ((payload.get('data_collection') or {}).get('visual_starter_scenes') if isinstance(payload.get('data_collection'), dict) else 0) or 0),
+        _metric_card('Stages', len(payload.get('execution_timeline') or []) if isinstance(payload.get('execution_timeline'), list) else 0),
+    ])
+    details = ''.join([
+        _info_block('Final answer', answer.get('answer_text') or payload.get('answer_text') or '-'),
+        _info_block('What this button did', payload.get('process_summary') or '-'),
+        _render_timeline_block('Step-by-step timeline', payload.get('execution_timeline') or []),
+        _info_block('Used inputs', payload.get('used_inputs') or '-'),
+        _info_block('Generated outputs', payload.get('generated_outputs') or '-'),
+        _info_block('Answer notes', answer.get('notes') or '-'),
+        _info_block('Prompt understanding', (answer.get('prompt_understanding') or {}).get('summary', '-') if isinstance(answer.get('prompt_understanding'), dict) else '-'),
+        _info_block('Training notes', payload.get('notes') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Improvement report', str((payload.get('rtx4060_improvement') or {}).get('output_path') if isinstance(payload.get('rtx4060_improvement'), dict) else '')),
+        ('4060 coach report', str((payload.get('rtx4060_assessment') or {}).get('report_path') if isinstance(payload.get('rtx4060_assessment'), dict) else '')),
+        ('Math training summary', str((payload.get('universal_bootcamp') or {}).get('math_training_path') if isinstance(payload.get('universal_bootcamp'), dict) else '')),
+        ('3D reconstruction', str((payload.get('universal_bootcamp') or {}).get('reconstruction_path') if isinstance(payload.get('universal_bootcamp'), dict) else '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_data_flywheel_summary(payload: dict[str, object]) -> str:
+    boot = payload.get('universal_bootcamp', {}) if isinstance(payload.get('universal_bootcamp'), dict) else {}
+    semop = boot.get('semop', {}) if isinstance(boot.get('semop'), dict) else {}
+    setup = semop.get('autopilot_setup', {}) if isinstance(semop.get('autopilot_setup'), dict) else {}
+    math_training = boot.get('math_training', {}) if isinstance(boot.get('math_training'), dict) else {}
+    visual_bootcamp = boot.get('visual_bootcamp', {}) if isinstance(boot.get('visual_bootcamp'), dict) else {}
+    collection = visual_bootcamp.get('collection', {}) if isinstance(visual_bootcamp.get('collection'), dict) else {}
+    improve = payload.get('rtx4060_improvement', {}) if isinstance(payload.get('rtx4060_improvement'), dict) else {}
+    assess = payload.get('rtx4060_assessment', {}) if isinstance(payload.get('rtx4060_assessment'), dict) else {}
+    lanes = assess.get('data_collection_lanes', []) if isinstance(assess.get('data_collection_lanes'), list) else []
+    lane_lines = []
+    for item in lanes[:5]:
+        if not isinstance(item, dict):
+            continue
+        lane_lines.append(f"{item.get('label', '-')}: current={item.get('current_count', 0)}, next batch={item.get('suggested_next_batch', 0)}")
+    metrics = ''.join([
+        _metric_card('Starter graphs', setup.get('total_seeded') or 0),
+        _metric_card('Approved traces', setup.get('approved_review_count') or 0),
+        _metric_card('Math score', f"{float(math_training.get('final_average_score', 0.0) or 0.0):.3f}"),
+        _metric_card('Visual scenes', collection.get('scene_count') or 0),
+        _metric_card('Readiness now', f"{assess.get('overall_readiness_percent', 0)}%"),
+        _metric_card('Readiness delta', improve.get('delta_readiness_percent') or 0),
+        _metric_card('Goal readiness', f"{assess.get('goal_readiness_percent', 0)}%"),
+        _metric_card('Status', assess.get('overall_status') or improve.get('overall_status') or '-'),
+        _metric_card('Stages', len(payload.get('execution_timeline') or []) if isinstance(payload.get('execution_timeline'), list) else 0),
+    ])
+    details = ''.join([
+        _info_block('What this button did', payload.get('process_summary') or '-'),
+        _render_timeline_block('Step-by-step timeline', payload.get('execution_timeline') or []),
+        _info_block('What was collected', payload.get('data_collection') or '-'),
+        _info_block('Used inputs', payload.get('used_inputs') or '-'),
+        _info_block('Generated outputs', payload.get('generated_outputs') or '-'),
+        _info_block('Next data batches', lane_lines or '-'),
+        _info_block('Performance tactics', assess.get('performance_tactics') or '-'),
+        _info_block('Notes', payload.get('notes') or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('4060 assessment', str(assess.get('report_path') or '')),
+        ('4060 improvement', str(improve.get('output_path') or improve.get('report_path') or '')),
+        ('Math training summary', str(boot.get('math_training_path') or '')),
+        ('3D reconstruction', str(boot.get('reconstruction_path') or '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
+def _render_ultimate_agi_summary(payload: dict[str, object]) -> str:
+    axes = payload.get('axes', []) if isinstance(payload.get('axes'), list) else []
+    axis_lines = []
+    for item in axes[:7]:
+        if not isinstance(item, dict):
+            continue
+        axis_lines.append(
+            f"{item.get('label', item.get('key', 'axis'))}: {float(item.get('score', 0.0) or 0.0):.3f}/{float(item.get('target', 0.0) or 0.0):.3f} ({item.get('status', '-')})"
+        )
+    fusion = payload.get('concept_fusion_preview', {}) if isinstance(payload.get('concept_fusion_preview'), dict) else {}
+    fusion_lines = []
+    for item in fusion.get('hypotheses', [])[:3] if isinstance(fusion.get('hypotheses'), list) else []:
+        if not isinstance(item, dict):
+            continue
+        fusion_lines.append(f"{item.get('label', '-')}: novelty={item.get('novelty_score', 0)}")
+    metrics = ''.join([
+        _metric_card('AGI readiness', f"{payload.get('overall_readiness_percent', 0)}%"),
+        _metric_card('Commercial status', payload.get('commercial_status') or '-'),
+        _metric_card('Completed axes', len(payload.get('completed_axes') or [])),
+        _metric_card('Remaining axes', len(payload.get('remaining_axes') or [])),
+    ])
+    details = ''.join([
+        _info_block('Headline', payload.get('headline') or '-'),
+        _info_block('Priority focus', payload.get('priority_focus') or '-'),
+        _info_block('Completed axes', payload.get('completed_axes') or '-'),
+        _info_block('Remaining axes', payload.get('remaining_axes') or '-'),
+        _info_block('Product blockers', payload.get('product_blockers') or '-'),
+        _info_block('Next steps', payload.get('next_steps') or '-'),
+        _info_block('Axis breakdown', axis_lines or '-'),
+        _info_block('Creative fusion preview', fusion.get('headline') or '-'),
+        _info_block('Fusion hypotheses', fusion_lines or '-'),
+    ])
+    quick_actions = _render_output_quick_actions([
+        ('Ultimate AGI readiness', str(payload.get('report_path') or '')),
+        ('Capability audit', str((payload.get('source_reports') or {}).get('capability_audit', '') if isinstance(payload.get('source_reports'), dict) else '')),
+        ('Generalization proof', str((payload.get('source_reports') or {}).get('generalization_proof', '') if isinstance(payload.get('source_reports'), dict) else '')),
+    ])
+    return f"<div class='summary-grid'>{metrics}</div>{details}{quick_actions}{_raw_details(payload)}"
+
+
 def render_result(kind: str, payload: dict[str, object] | None) -> str:
     if payload is None:
         return "<div class='empty'>Run one of the actions above. The result console will summarize the latest answer or training run here.</div>"
     titles = {
         'ops': 'Context reasoning result',
         'vision': 'Vision-grounded reasoning result',
+        'video': 'Video-grounded situation result',
         'unified_training': 'Unified SemOp training result',
         'unified_benchmark_gate': 'Unified benchmark gate result',
         'guided_learning': 'Guided starter learning result',
@@ -1600,6 +2356,22 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         'beginner_test': 'One-click beginner test result',
         'generalization_proof': 'Generalization proof result',
         'autopilot_coach': 'Autopilot coach result',
+        'capability_audit': 'Capability audit result',
+        'capability_improvement': 'Capability improvement result',
+        'environment_brain': 'Environment brain result',
+        'adaptive_environment_learning': 'Adaptive environment learning result',
+        'recursive_self_evolution': 'Recursive self-evolution result',
+        'collect_train_execute': 'One-click collect, train, and answer result',
+        'ultimate_agi_audit': 'Ultimate AGI readiness result',
+        'data_flywheel': 'One-click data collection and training result',
+        'rtx4060_assessment': 'RTX 4060 reasoning coach result',
+        'rtx4060_improvement': 'RTX 4060 improvement result',
+        'manual_review': 'Manual review fast-lane result',
+        'manual_review_loop': 'Approved-review fast loop result',
+        'frontier_setup': 'Frontier vision setup result',
+        'frontier_install': 'Frontier vision installation result',
+        'unified_chat': 'Unified chat result',
+        'universal_bootcamp': 'All-domain bootcamp result',
         'understanding_eval': 'Overall understanding benchmark',
         'file_preview': 'Output file preview',
         'artifact_compare': 'Artifact comparison',
@@ -1608,14 +2380,40 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
         body = _render_ops_summary(payload)
     elif kind == 'vision':
         body = _render_vision_summary(payload)
+    elif kind == 'video':
+        body = _render_video_summary(payload)
     elif kind == 'unified_training':
         body = _render_unified_training_summary(payload)
-    elif kind in {'unified_benchmark_gate', 'guided_learning'}:
+    elif kind in {'unified_benchmark_gate', 'guided_learning', 'manual_review_loop'}:
         body = _render_unified_gate_summary(payload)
     elif kind in {'beginner_autopilot', 'beginner_test'}:
         body = _render_beginner_suite_summary(payload)
     elif kind in {'generalization_proof', 'autopilot_coach'}:
         body = _render_generalization_proof_summary(payload)
+    elif kind == 'capability_audit':
+        body = _render_capability_audit_summary(payload)
+    elif kind == 'capability_improvement':
+        body = _render_capability_improvement_summary(payload)
+    elif kind == 'environment_brain':
+        body = _render_environment_brain_summary(payload)
+    elif kind == 'adaptive_environment_learning':
+        body = _render_adaptive_environment_learning_summary(payload)
+    elif kind == 'recursive_self_evolution':
+        body = _render_recursive_self_evolution_summary(payload)
+    elif kind == 'collect_train_execute':
+        body = _render_collect_train_execute_summary(payload)
+    elif kind == 'ultimate_agi_audit':
+        body = _render_ultimate_agi_summary(payload)
+    elif kind == 'data_flywheel':
+        body = _render_data_flywheel_summary(payload)
+    elif kind in {'rtx4060_assessment', 'rtx4060_improvement'}:
+        body = _render_rtx4060_summary(payload)
+    elif kind in {'frontier_setup', 'frontier_install'}:
+        body = _render_frontier_setup_summary(payload)
+    elif kind == 'manual_review':
+        body = _render_manual_review_summary(payload)
+    elif kind in {'unified_chat', 'universal_bootcamp'}:
+        body = _render_unified_chat_summary(payload)
     elif kind == 'understanding_eval':
         body = _render_understanding_summary(payload)
     elif kind == 'file_preview':
@@ -1628,6 +2426,8 @@ def render_result(kind: str, payload: dict[str, object] | None) -> str:
 
 
 def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
+    hardware = detect_local_hardware().model_dump()
+    dependencies = detect_local_ml_stack().model_dump()
     unified_output_dir = Path(state.unified_output_dir)
     unified_artifacts = [
         unified_output_dir / 'analogy_policy.json',
@@ -1653,6 +2453,11 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
     proof_report_path = unified_output_dir / 'generalization_proof' / 'generalization_proof_report.json'
     proof_snapshot = _read_json_dict(str(proof_report_path))
     proof_goal_tracker = proof_snapshot.get('goal_tracker', {}) if isinstance(proof_snapshot.get('goal_tracker'), dict) else {}
+    capability_report_path = unified_output_dir / 'capability_audit_report.json'
+    capability_snapshot = _read_json_dict(str(capability_report_path))
+    improvement_report_path = unified_output_dir / 'capability_improvement_report.json'
+    improvement_snapshot = _read_json_dict(str(improvement_report_path))
+    frontier_snapshot = _frontier_setup_snapshot(state)
     cards = [
         (
             'Unified trainer lane',
@@ -1666,19 +2471,23 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
                 _metric_card('Gate summary', _status_text(str(unified_output_dir / 'benchmark_gate.json'), 'ready', 'not run')),
                 _metric_card('Proof report', _status_text(str(proof_report_path), 'ready', 'not run')),
                 _metric_card('Proof readiness', f"{proof_goal_tracker.get('readiness_percent', 0)}%" if proof_goal_tracker else 'not run'),
+                _metric_card('Capability audit', _status_text(str(capability_report_path), 'ready', 'not run')),
+                _metric_card('Capability readiness', f"{capability_snapshot.get('overall_readiness_percent', 0)}%" if capability_snapshot else 'not run'),
             ],
             [
                 _info_block('Output dir', state.unified_output_dir),
                 _info_block('Persistent benchmark corpus', state.unified_benchmark_corpus_path),
                 _info_block('Proof report', str(proof_report_path)),
                 _info_block('Proof priority focus', proof_goal_tracker.get('priority_focus') or '-'),
+                _info_block('Capability report', str(capability_report_path)),
+                _info_block('Capability priority focus', ', '.join(capability_snapshot.get('priority_improvements', [])[:2]) if capability_snapshot else '-'),
             ],
         ),
         (
             'Vision assets',
             'Starter image QA is wired to the same visual stores used in training workflows.',
             [
-                _metric_card('Scene image', _status_text(state.vision_image, 'ready', 'missing')),
+                _metric_card('Scene input', _status_text(state.vision_image, 'ready', 'missing')),
                 _metric_card('Concept store', _status_text(state.vision_concept_store, 'ready', 'missing')),
                 _metric_card('Operator store', _status_text(state.vision_operator_store, 'ready', 'missing')),
                 _metric_card('Approved label reviews', download_reviews.get('approved', 0)),
@@ -1686,6 +2495,56 @@ def render_workspace_snapshot(state: StudioState, result_kind: str) -> str:
             [
                 _info_block('Review file', state.vision_review_path),
                 _info_block('Affordance weights', state.vision_weights),
+            ],
+        ),
+        (
+            'Local hardware',
+            'RTX 4060 8GB friendly defaults keep operator algebra symbolic-first and only use the GPU when it clearly helps.',
+            [
+                _metric_card('Profile', hardware.get('detected_profile', 'cpu_only')),
+                _metric_card('Device', hardware.get('device', 'cpu')),
+                _metric_card('GPU', hardware.get('gpu_name', '-') or '-'),
+                _metric_card('VRAM', hardware.get('vram_gb', 0.0)),
+                _metric_card('4-bit ready', hardware.get('bitsandbytes_available', False)),
+                _metric_card('Operator algebra', hardware.get('operator_algebra_mode', '-')),
+            ],
+            [
+                _info_block('Hardware notes', hardware.get('notes', [])),
+                _info_block('Recommended precision', hardware.get('recommended_precision', '-')),
+            ],
+        ),
+        (
+            'ML dependencies',
+            'These packages decide whether the 4060 profile can actually use local LLMs, LoRA, and QLoRA instead of symbolic-only fallback.',
+            [
+                _metric_card('LLM ready', dependencies.get('llm_ready', False)),
+                _metric_card('Training ready', dependencies.get('training_ready', False)),
+                _metric_card('QLoRA ready', dependencies.get('qlora_ready', False)),
+                _metric_card('Torch', dependencies.get('torch_version', '-') or '-'),
+                _metric_card('Transformers', dependencies.get('transformers_version', '-') or '-'),
+                _metric_card('PEFT', dependencies.get('peft_version', '-') or '-'),
+                _metric_card('bitsandbytes', dependencies.get('bitsandbytes_version', '-') or '-'),
+                _metric_card('Accelerate', dependencies.get('accelerate_version', '-') or '-'),
+            ],
+            [
+                _info_block('Missing core packages', dependencies.get('missing_core', [])),
+                _info_block('Missing optional packages', dependencies.get('missing_optional', [])),
+                _info_block('Dependency notes', dependencies.get('notes', [])),
+            ],
+        ),
+        (
+            'Frontier vision',
+            'Local frontier VLM checkpoints upgrade the fallback semantic lane into the stronger frontier scene stack when available.',
+            [
+                _metric_card('Target root', frontier_snapshot.get('target_root', '-')),
+                _metric_card('Installed', f"{frontier_snapshot.get('installed_count', 0)}/{frontier_snapshot.get('recommended_count', 0) or 1}"),
+                _metric_card('Required ready', frontier_snapshot.get('required_ready', False)),
+                _metric_card('Missing required', len(frontier_snapshot.get('missing_required', []) or [])),
+            ],
+            [
+                _info_block('Installed families', frontier_snapshot.get('installed_families') or '-'),
+                _info_block('Missing required', frontier_snapshot.get('missing_required') or '-'),
+                _info_block('Bundle notes', frontier_snapshot.get('notes') or '-'),
             ],
         ),
         (
@@ -1808,7 +2667,7 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             "<h2>Start from a single example, then move into the training loop.</h2>"
             f"<ul class='spotlight-list'>{tips}</ul></div>"
         )
-    if kind in {'unified_benchmark_gate', 'guided_learning'}:
+    if kind in {'unified_benchmark_gate', 'guided_learning', 'manual_review_loop'}:
         gate = payload.get('gate', {}) if isinstance(payload.get('gate'), dict) else {}
         benchmark = payload.get('benchmark', {}) if isinstance(payload.get('benchmark'), dict) else {}
         title = 'The benchmark gate is open.' if gate.get('accepted') else 'The benchmark gate is still blocked.'
@@ -1862,6 +2721,67 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             f"Opening candidates: {_render_value(_opening_candidates(world))}",
             'If this looks right, keep the same stores for the unified benchmark gate.',
         ]
+    elif kind == 'data_flywheel':
+        title = 'One-click data collection and training finished.'
+        notes = [
+            f"Readiness now: {_render_value((payload.get('rtx4060_assessment') or {}).get('overall_readiness_percent') if isinstance(payload.get('rtx4060_assessment'), dict) else '-') }%",
+            f"Readiness delta: {_render_value((payload.get('rtx4060_improvement') or {}).get('delta_readiness_percent') if isinstance(payload.get('rtx4060_improvement'), dict) else '-')}",
+            str(payload.get('answer_text') or '-'),
+        ]
+        if payload.get('notes'):
+            notes.extend(str(item) for item in (payload.get('notes') or [])[:2])
+    elif kind == 'environment_brain':
+        mastery = payload.get('mastery_scores', {}) if isinstance(payload.get('mastery_scores'), dict) else {}
+        title = 'Environment-specific self-learning finished.'
+        notes = [
+            f"Environment mastery: {_render_value(mastery.get('environment_mastery'))}",
+            f"Grounding: {_render_value(mastery.get('grounding_strength'))}",
+            f"Safety: {_render_value(mastery.get('safety_alignment'))}",
+        ]
+        notes.extend(str(item) for item in (payload.get('hazard_patterns') or [])[:2])
+    elif kind == 'adaptive_environment_learning':
+        scores = payload.get('capability_scores', {}) if isinstance(payload.get('capability_scores'), dict) else {}
+        title = 'Adaptive environment self-improvement finished.'
+        notes = [
+            f"Local intelligence: {_render_value(scores.get('local_intelligence'))}",
+            f"Self-reflection: {_render_value(scores.get('self_reflection'))}",
+            f"Embodied planning: {_render_value(scores.get('embodied_planning'))}",
+        ]
+        notes.extend(str(item) for item in (payload.get('remaining_gaps') or [])[:2])
+    elif kind == 'recursive_self_evolution':
+        best = payload.get('best_program', {}) if isinstance(payload.get('best_program'), dict) else {}
+        title = 'Recursive self-evolution finished.'
+        notes = [
+            f"Final best score: {_render_value(payload.get('final_best_score'))}",
+            f"Score delta: {_render_value(payload.get('score_delta'))}",
+            f"Best focus: {', '.join(best.get('focus_tags', [])[:3]) if isinstance(best.get('focus_tags'), list) else '-'}",
+        ]
+        notes.extend(str(item) for item in (payload.get('next_actions') or [])[:2])
+    elif kind == 'collect_train_execute':
+        answer_payload = payload.get('answer_result', {}) if isinstance(payload.get('answer_result'), dict) else {}
+        title = 'One-click collect, train, and answer finished.'
+        notes = [
+            str(answer_payload.get('answer_text') or payload.get('answer_text') or '-'),
+            f"Answer route: {answer_payload.get('route') or '-'}",
+            f"Readiness now: {_render_value((payload.get('rtx4060_assessment') or {}).get('overall_readiness_percent') if isinstance(payload.get('rtx4060_assessment'), dict) else '-') }%",
+        ]
+    elif kind == 'ultimate_agi_audit':
+        title = 'Ultimate AGI readiness audit finished.'
+        notes = [
+            f"AGI readiness: {_render_value(payload.get('overall_readiness_percent'))}%",
+            f"Commercial status: {payload.get('commercial_status') or '-'}",
+            f"Priority focus: {payload.get('priority_focus') or '-'}",
+        ]
+        notes.extend(str(item) for item in (payload.get('product_blockers') or [])[:2])
+    elif kind in {'unified_chat', 'universal_bootcamp'}:
+        title = 'Unified chat finished.' if kind == 'unified_chat' else 'All-domain bootcamp finished.'
+        notes = [
+            f"Route: {_render_value(payload.get('route'))}",
+            str(payload.get('answer_text') or payload.get('message') or '-'),
+            f"Status: {_render_value(payload.get('status'))}",
+        ]
+        if payload.get('notes'):
+            notes.extend(str(item) for item in (payload.get('notes') or [])[:2])
     elif kind == 'artifact_compare':
         title = 'Artifact comparison finished.'
         notes = [
@@ -1882,6 +2802,44 @@ def render_result_spotlight(kind: str, payload: dict[str, object] | None) -> str
             f"Strong model score: {_render_value(evidence.get('strong_model_score'))}",
         ]
         notes.extend(str(item) for item in (goal_tracker.get('remaining_items') or [])[:2])
+    elif kind == 'capability_audit':
+        title = 'Capability audit finished.'
+        notes = [
+            f"Overall readiness: {_render_value(payload.get('overall_readiness_percent'))}%",
+            f"Status: {_render_value(payload.get('overall_status'))}",
+            f"Weak axes: {_render_value([item.get('name') for item in (payload.get('axes') or []) if isinstance(item, dict) and float(item.get('score', 0.0) or 0.0) < 0.65])}",
+        ]
+        notes.extend(str(item) for item in (payload.get('priority_improvements') or [])[:2])
+    elif kind == 'capability_improvement':
+        before = payload.get('before', {}) if isinstance(payload.get('before'), dict) else {}
+        after = payload.get('after', {}) if isinstance(payload.get('after'), dict) else {}
+        title = 'Capability improvement cycle finished.'
+        quantization = payload.get('quantization', {}) if isinstance(payload.get('quantization'), dict) else {}
+        notes = [
+            f"Before: {_render_value(before.get('overall_readiness_percent'))}%",
+            f"After: {_render_value(after.get('overall_readiness_percent'))}%",
+            f"Delta: {_render_value(payload.get('delta_readiness_percent'))}",
+            f"Remaining weak axes: {_render_value(payload.get('weak_axes_after'))}",
+            f"Quantized coverage: {_render_value(quantization.get('coverage_score'))}",
+        ]
+        notes.extend(str(item) for item in (payload.get('actions_taken') or [])[:2])
+    elif kind == 'video':
+        title = 'Video situation understanding finished.'
+        notes = [
+            f"Frames: {_render_value(payload.get('frame_count'))}",
+            f"Stable entities: {_render_value(payload.get('stable_entities'))}",
+            f"Changed entities: {_render_value(payload.get('changed_entities'))}",
+            str(payload.get('situation_summary') or payload.get('answer_text') or '-'),
+        ]
+    elif kind == 'manual_review':
+        snapshot = payload.get('review_snapshot', {}) if isinstance(payload.get('review_snapshot'), dict) else {}
+        title = 'Manual review queue was updated.'
+        notes = [
+            f"Status: {_render_value(payload.get('saved_status'))}",
+            f"Pending: {_render_value(snapshot.get('pending'))}",
+            f"Approved: {_render_value(snapshot.get('approved'))}",
+            'Next: approve a few pending reviews, then run Train approved reviews now.',
+        ]
     elif kind == 'file_preview':
         title = 'Output file preview loaded.'
         notes = [
@@ -1933,6 +2891,221 @@ def _render_unified_scope_fields(state: StudioState) -> str:
     ])
 
 
+def _render_review_queue_cards(state: StudioState, status: str, limit: int = 4, interactive: bool = False) -> str:
+    items = _recent_review_items(state.unified_review_queue_path, status=status, limit=limit)
+    if not items:
+        label = 'pending' if status == 'pending' else status.replace('_', ' ')
+        return f"<div class='empty'>No {html.escape(label)} review items yet.</div>"
+    rows: list[str] = []
+    for item in items:
+        controls: list[str] = []
+        if interactive:
+            for action, label, button_class in (
+                ('approve_review_item', 'Approve', 'primary compact'),
+                ('followup_review_item', 'Needs follow-up', 'secondary compact'),
+                ('reject_review_item', 'Reject', 'secondary compact'),
+            ):
+                controls.append(
+                    "".join([
+                        "<form method='post' class='mini-form'>",
+                        _render_hidden_state_inputs(state),
+                        f"<input type='hidden' name='review_item_id' value='{html.escape(str(item.get('id', '')))}'>",
+                        f"<button class='{button_class}' name='action' value='{action}' type='submit'>{html.escape(label)}</button>",
+                        "</form>",
+                    ])
+                )
+        answer_text = _snippet(str(item.get('answer_text') or ''), max_words=18, max_chars=160) or '-'
+        context_text = _snippet(str(item.get('context_text') or ''), max_words=14, max_chars=140) or '-'
+        reasons = ', '.join(str(reason) for reason in (item.get('reasons') or [])[:4]) or '-'
+        resolution_note = str(item.get('resolution_note') or '').strip()
+        rows.append(
+            "".join([
+                "<div class='job-row'>",
+                f"<div class='job-row-head'><strong>{html.escape(_snippet(str(item.get('query') or ''), max_words=18, max_chars=120) or '-')}</strong><span class='status-chip'>{html.escape(str(item.get('status', '-')))}</span></div>",
+                f"<div class='job-meta'>{html.escape(str(item.get('domain', '-')))} / {html.escape(str(item.get('scenario', '-')))} | severity: {html.escape(str(item.get('severity', '-')))}</div>",
+                f"<div class='job-meta'>Reasons: {html.escape(reasons)}</div>",
+                f"<div class='job-meta'>Suggested answer: {html.escape(answer_text)}</div>",
+                f"<div class='job-meta'>Context: {html.escape(context_text)}</div>",
+                f"<div class='job-meta'>Resolution: {html.escape(resolution_note or 'not resolved yet')}</div>",
+                f"<div class='job-actions'>{''.join(controls)}</div>" if controls else "",
+                "</div>",
+            ])
+        )
+    return f"<div class='job-list'>{''.join(rows)}</div>"
+
+
+
+def _render_chat_history(chat_snapshot: dict[str, Any]) -> str:
+    messages = chat_snapshot.get('messages', []) if isinstance(chat_snapshot.get('messages'), list) else []
+    if not messages:
+        return "<div class='empty'>Type one prompt to start. Examples: `전체 학습해줘`, `이 수학 문제 풀어줘`, `이 이미지 3D로 재구성해줘`.</div>"
+    rows: list[str] = []
+    for item in messages[-10:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get('role', 'assistant'))
+        tone = 'chat-user' if role == 'user' else 'chat-assistant'
+        route = str(item.get('route', '')).strip()
+        status = str(item.get('status', '')).strip()
+        badges = ' '.join(part for part in [route, status] if part)
+        rows.append(
+            "".join([
+                f"<div class='job-row {tone}'>",
+                f"<div class='job-row-head'><strong>{html.escape('You' if role == 'user' else 'SemOp')}</strong><span class='status-chip'>{html.escape(badges or role)}</span></div>",
+                f"<div>{html.escape(str(item.get('text', '-')))}</div>",
+                "</div>",
+            ])
+        )
+    return f"<div class='job-list'>{''.join(rows)}</div>"
+
+
+
+def _render_quick_prompt_buttons() -> str:
+    prompts = [
+        ('Help me think', '?? ??? ? ????. ?? ????.', ''),
+        ('Solve math', '? ?? ??? ???? ???.', ''),
+        ('Explain image', '? ????? ?? ?? ????? ????.', 'data/scene.png'),
+        ('Learn here', 'self improve this environment', ''),
+        ('Train stronger', 'collect data and train stronger', ''),
+        ('Do everything', '?? ???? ?? ???? ???.', ''),
+    ]
+    rendered: list[str] = []
+    for label, prompt, image in prompts:
+        rendered.append(
+            "".join([
+                "<button class='chip-button' type='button' ",
+                f"onclick=\"fillStudioPrompt({json.dumps(prompt)}, {json.dumps(image)})\">",
+                html.escape(label),
+                "</button>",
+            ])
+        )
+    return ''.join(rendered)
+
+
+
+def _render_primary_action_cards(state: StudioState) -> str:
+    hidden = _render_hidden_state_inputs(state)
+    cards = [
+        ('Talk', 'Ask anything in one box', 'run_unified_chat', 'Good for normal questions, explanations, math, images, and videos.'),
+        ('Learn', 'Collect + train + answer', 'run_collect_train_execute', 'If the answer is weak, gather starter data, train, and retry automatically.'),
+        ('Grow', 'Self-improve this environment', 'run_adaptive_environment_learning', 'Stay inside one environment and get better there.'),
+        ('Autopilot', 'Do everything for me', 'run_autopilot_coach', 'Run the long beginner loop and write a proof-style report.'),
+    ]
+    rendered: list[str] = []
+    for eyebrow, title, action, description in cards:
+        rendered.append(
+            "".join([
+                "<form method='post' class='action-card'>",
+                hidden,
+                f"<small class='eyebrow'>{html.escape(eyebrow)}</small>",
+                f"<strong>{html.escape(title)}</strong>",
+                f"<p>{html.escape(description)}</p>",
+                f"<button class='primary wide' name='action' value='{html.escape(action)}' type='submit'>{html.escape(title)}</button>",
+                "</form>",
+            ])
+        )
+    return ''.join(rendered)
+
+
+
+def _wrap_drawer(title: str, subtitle: str, body_html: str, section_id: str, open_by_default: bool = False) -> str:
+    open_attr = ' open' if open_by_default else ''
+    return (
+        f"<details class='drawer-card' id='{html.escape(section_id)}'{open_attr}>"
+        f"<summary><span><small class='eyebrow'>Advanced tool</small><strong>{html.escape(title)}</strong><em>{html.escape(subtitle)}</em></span></summary>"
+        f"<div class='drawer-body'>{body_html}</div>"
+        "</details>"
+    )
+
+
+
+def _render_advanced_drawers(state: StudioState, job_snapshot: dict[str, object], notification_snapshot: dict[str, object], snapshot_html: str) -> str:
+    sections = [
+        ('System status', 'Workspace, hardware, dependency, and benchmark details', f"<section class='dashboard-grid'>{snapshot_html}</section>", 'system-status-drawer', False),
+        ('Autopilot coach', 'Beginner long-loop setup and proof-style report', _render_autopilot_coach_section(state), 'autopilot-lab', False),
+        ('Alerts', 'Saved notifications and warnings', _render_notification_panel(notification_snapshot), 'notification-panel', False),
+        ('Live jobs', 'Background queue and progress', _render_job_queue_panel(job_snapshot), 'job-panel', bool(job_snapshot.get('has_active')) or int(job_snapshot.get('queued_count', 0) or 0) > 0),
+        ('Try reasoning', 'Context, image, and video labs', _render_reasoning_section(state), 'reasoning-lab', False),
+        ('One-click mode', 'Setup, test, and stronger beginner loops', _render_beginner_section(state), 'beginner-lab', False),
+        ('RTX 4060 coach', 'Local machine readiness and improvement', _render_rtx4060_section(state), 'rtx4060-lab', False),
+        ('Frontier vision', 'Install stronger local visual checkpoints', _render_frontier_setup_section(state), 'frontier-vision-lab', False),
+        ('Capability audit', 'Measure weak axes and improve them', _render_capability_section(state), 'capability-lab', False),
+        ('Environment brain', 'Learn one place deeply', _render_environment_brain_section(state), 'environment-brain-lab', False),
+        ('Ultimate AGI', 'Commercial-style readiness tracking', _render_ultimate_agi_section(state), 'ultimate-agi-lab', False),
+        ('Manual fast path', 'Save, approve, and retrain manually', _render_manual_review_section(state), 'manual-review-lab', False),
+        ('Train artifacts', 'Unified trainer and starter loop', _render_training_section(state), 'training-lab', False),
+        ('Benchmark gate', 'Gate the current bundle', _render_benchmark_section(state), 'benchmark-lab', False),
+        ('Compare outputs', 'Compare two artifact files or folders', _render_compare_section(state), 'compare-lab', False),
+        ('Notes', 'Advanced tools outside this studio', _render_notes_section(), 'notes-lab', False),
+    ]
+    return ''.join(
+        _wrap_drawer(title, subtitle, body_html, section_id, open_by_default)
+        for title, subtitle, body_html, section_id, open_by_default in sections
+    )
+
+
+
+def _render_unified_chat_section(state: StudioState, chat_snapshot: dict[str, Any]) -> str:
+    history_html = _render_chat_history(chat_snapshot)
+    return f"""
+  <section class="card chat-shell" id="chat-lab" style="margin-top:20px;">
+    <div class="chat-shell-top">
+      <div>
+        <small class="eyebrow">Unified chat</small>
+        <h2>Ask anything</h2>
+        <p>Type one prompt like ChatGPT. The studio will infer hidden context, route the task, and answer as simply as it can.</p>
+      </div>
+      <div class="status-badges">
+        <span class="status-chip">Kid-friendly start</span>
+        <span class="status-chip">One-box workflow</span>
+        <span class="status-chip">RTX 4060 ready</span>
+      </div>
+    </div>
+    <div class="simple-helper-grid">
+      <div class="assistant-welcome">
+        <div class="assistant-avatar">S</div>
+        <div>
+          <strong>SemOp helper</strong>
+          <p>You can talk normally. Examples: ask a question, show an image, ask for math help, or tell it to learn and improve.</p>
+        </div>
+      </div>
+      <div class="quick-prompts">
+        <small class="eyebrow">Tap to try</small>
+        <div class="chip-row">{_render_quick_prompt_buttons()}</div>
+      </div>
+    </div>
+    <div class="chat-history-card">
+      <div class="section-head"><div><small class="eyebrow">Conversation</small><h2>Recent chat</h2><p>The last few prompts and answers stay here like a normal chat app.</p></div></div>
+      {history_html}
+    </div>
+    <form method="post" class="composer-card">
+      <label>Message</label>
+      <textarea id="chat_prompt_box" name="chat_prompt" placeholder="Ask anything. Example: ? ???? ??? ?? ??">{html.escape(state.chat_prompt)}</textarea>
+      <div class="mini-grid">
+        <div><label>Optional image or video path</label><input id="chat_image_box" name="chat_image" value="{html.escape(state.chat_image)}" placeholder="Optional: image, folder, GIF, video, or manifest"></div>
+        <div><label>Good examples</label><div class="info-block"><small>Try one</small>?? ??? ?? ????<br>? ?? ??? ???<br>? ???? ?? ???? ????<br>self improve this environment</div></div>
+      </div>
+      {_render_hidden_state_inputs(state)}
+      <div class="actions primary-actions">
+        <button class="primary" name="action" value="run_unified_chat">Send prompt</button>
+        <button class="primary" name="action" value="run_collect_train_execute">Collect + train + answer</button>
+        <button class="secondary" name="action" value="run_universal_bootcamp">One-click all-domain training</button>
+      </div>
+      <details class="more-actions">
+        <summary>More actions</summary>
+        <div class="actions">
+          <button class="secondary" name="action" value="clear_chat_history">Clear chat</button>
+          <button class="secondary" name="action" value="run_environment_brain">Learn this environment</button>
+          <button class="secondary" name="action" value="run_adaptive_environment_learning">Self-improve this environment</button>
+          <button class="secondary" name="action" value="run_recursive_self_evolution">Recursive self-evolve</button>
+          <button class="secondary" name="action" value="run_data_flywheel">Collect + train stronger</button>
+        </div>
+      </details>
+    </form>
+    <div class="simple-action-grid">{_render_primary_action_cards(state)}</div>
+  </section>
+"""
+
 def _render_reasoning_section(state: StudioState) -> str:
     return f"""
   <section class="grid" id="reasoning-lab">
@@ -1949,10 +3122,10 @@ def _render_reasoning_section(state: StudioState) -> str:
       <div class="actions"><button class="secondary" name="action" value="load_ops_example">Load example</button><button class="primary" name="action" value="run_ops">Run context reasoning</button></div>
     </form>
     <form method="post" class="card">
-      <div class="section-head"><div><small class="eyebrow">Vision</small><h2>Vision-grounded reasoning lab</h2><p>Ask an image question with the same concept and operator stores used by your training loops.</p></div></div>
+      <div class="section-head"><div><small class="eyebrow">Vision</small><h2>Vision-grounded reasoning lab</h2><p>Ask about an image, frame folder, GIF, video, or visual manifest with the same concept and operator stores used by your training loops.</p></div></div>
       <label>Question</label>
       <input name="vision_query" value="{html.escape(state.vision_query)}">
-      <label>Image path</label>
+      <label>Image, frame folder, GIF, video, or manifest path</label>
       <input name="vision_image" value="{html.escape(state.vision_image)}">
       <div class="mini-grid">
         <div><label>Reasoning mode</label>{_render_select('vision_mode', state.vision_mode, VISION_MODE_OPTIONS)}</div>
@@ -1962,7 +3135,7 @@ def _render_reasoning_section(state: StudioState) -> str:
       <label>Operator store</label><input name="vision_operator_store" value="{html.escape(state.vision_operator_store)}">
       <label>Affordance weights</label><input name="vision_weights" value="{html.escape(state.vision_weights)}">
       <label>Downloaded-label review file</label><input name="vision_review_path" value="{html.escape(state.vision_review_path)}">
-      <div class="actions"><button class="secondary" name="action" value="load_vision_example">Load example</button><button class="primary" name="action" value="run_vision">Run vision reasoning</button></div>
+      <div class="actions"><button class="secondary" name="action" value="load_vision_example">Load example</button><button class="primary" name="action" value="run_vision">Run image/video reasoning</button></div>
     </form>
   </section>
 """
@@ -1980,6 +3153,86 @@ def _render_autopilot_coach_section(state: StudioState) -> str:
   </section>
 """
 
+
+def _render_rtx4060_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="rtx4060-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">RTX 4060 coach</small><h2>Check how close this machine is to a strong local reasoning stack</h2><p>This coach translates the raw benchmark and proof reports into a beginner-friendly 4060 plan: where you are now, which data to collect next, and which improvement loop to run.</p></div></div>
+    <div class="info-block"><small>What it does</small>It reads the current capability audit, benchmark gate, generalization proof, and approved review queue, then turns them into a 4060-specific readiness summary and next-batch data collection plan.</div>
+    <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_rtx4060_assessment'))} for status only, {html.escape(_action_time_hint('run_rtx4060_improvement'))} for the 4060 improvement cycle, or {html.escape(_action_time_hint('run_data_flywheel'))} for the full beginner-friendly collect-and-train pass.</div>
+    <form method="post">{_render_hidden_state_inputs(state)}<div class="actions"><button class="secondary" name="action" value="run_rtx4060_assessment">Check 4060 readiness</button><button class="secondary" name="action" value="run_rtx4060_improvement">Collect data + improve for 4060</button><button class="primary" name="action" value="run_data_flywheel">One-click collect + train stronger</button></div></form>
+  </section>
+"""
+
+
+def _render_frontier_setup_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="frontier-vision-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Frontier vision</small><h2>Install the stronger local visual scene stack</h2><p>Use the recommended 4060-friendly frontier bundle to lift image and video understanding above the fallback semantic lane.</p></div></div>
+    <form method="post">
+      {_render_hidden_state_inputs(state)}
+      <div class="mini-grid">
+        <div><label>Target root</label><input name="frontier_target_root" value="{html.escape(state.frontier_target_root)}"></div>
+      </div>
+      {_render_checkbox('frontier_include_optional', state.frontier_include_optional, 'include the optional heavier Molmo bundle')}
+      <div class="info-block"><small>Recommended bundle</small>For RTX 4060 8GB, the main bundle is <strong>Qwen2.5-VL-3B</strong> + <strong>Florence-2-base-ft</strong>. The optional Molmo bundle is slower and larger.</div>
+      <div class="info-block"><small>Expected time</small>About 5 seconds to check local status, or {html.escape(_action_time_hint('run_frontier_setup_install'))} to download the recommended local checkpoints.</div>
+      <div class="actions"><button class="secondary" name="action" value="run_frontier_setup_status">Check frontier vision status</button><button class="primary" name="action" value="run_frontier_setup_install">Install frontier vision bundle</button></div>
+    </form>
+  </section>
+"""
+
+
+def _render_capability_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="capability-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Capability</small><h2>Audit current capability and improve weak areas</h2><p>Run a consolidated readiness check across local runtime, SemOp reasoning, generalization proof, math world model, and visual 3D. If the weak axes are obvious, the improvement cycle now runs grounding self-evolution, seeds more reviewed starter data, reruns the benchmark gate, and audits the result again.</p></div></div>
+    <form method="post">
+      {_render_unified_scope_fields(state)}
+      <div class="mini-grid">
+        <div><label>Transfer eval JSONL</label><input name="unified_transfer_input" value="{html.escape(state.unified_transfer_input)}"></div>
+        <div><label>Hidden premise eval JSONL</label><input name="understanding_hidden_input" value="{html.escape(state.understanding_hidden_input)}"></div>
+        <div><label>VLSO eval JSONL</label><input name="understanding_vlso_input" value="{html.escape(state.understanding_vlso_input)}"></div>
+        <div><label>VLSO real-image eval JSONL</label><input name="understanding_vlso_real_input" value="{html.escape(state.understanding_vlso_real_input)}"></div>
+      </div>
+      <div class="info-block"><small>What happens</small>1. Capability audit reads your gate, proof, math, and visual artifacts into one readiness report. 2. Improve weak areas runs grounding self-evolution with reflection memory, seeds starter curriculum across nearby domains, auto-approves starter review traces, reruns the benchmark gate, reruns the proof harness, and audits again. 3. The result tells you what improved and what is still weak.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_capability_audit'))} for audit only, or {html.escape(_action_time_hint('run_capability_improvement'))} for the full improvement cycle.</div>
+      <div class="actions"><button class="secondary" name="action" value="run_capability_audit">Run capability audit</button><button class="primary" name="action" value="run_capability_improvement">Improve weak areas + re-audit</button></div>
+    </form>
+  </section>
+"""
+
+
+def _render_environment_brain_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="environment-brain-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Environment brain</small><h2>Learn one environment deeply instead of spreading across many domains</h2><p>This loop uses the current domain, scenario, SOP context, and optional visual input to learn repeated local routines, stable constraints, hazards, and environment-specific priors.</p></div></div>
+    <form method="post">
+      {_render_hidden_state_inputs(state)}
+      <div class="info-block"><small>What it uses</small>The current Context reasoning domain, scenario, and SOP text, plus the current visual input path if available.</div>
+      <div class="info-block"><small>Deeper loop</small><strong>Self-improve this environment</strong> runs the same local memory build, then launches grounding self-evolution, merges refined traces back into the same environment source, retrains an environment-only bundle, and scores whether this setting is becoming locally intelligent.</div>
+      <div class="info-block"><small>Recursive loop</small><strong>Recursive self-evolve</strong> keeps a population of local improvement programs, mutates them based on weak axes, evaluates each candidate automatically, and deploys the best evolved local bundle back into the same environment.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_environment_brain'))} for local memory only, {html.escape(_action_time_hint('run_adaptive_environment_learning'))} for self-improving local intelligence, or {html.escape(_action_time_hint('run_recursive_self_evolution'))} for recursive evolution.</div>
+      <div class="actions"><button class="secondary" name="action" value="run_environment_brain">Learn this environment</button><button class="secondary" name="action" value="run_adaptive_environment_learning">Self-improve this environment</button><button class="primary" name="action" value="run_recursive_self_evolution">Recursive self-evolve</button></div>
+    </form>
+  </section>
+"""
+
+
+def _render_ultimate_agi_section(state: StudioState) -> str:
+    return f"""
+  <section class="card" id="ultimate-agi-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Ultimate AGI goal</small><h2>Track progress toward a commercializable broad-intelligence system</h2><p>This audit converts the current reasoning, multimodal, math, embodied-planning, creativity, and self-improvement signals into one product-oriented AGI readiness report.</p></div></div>
+    <form method="post">
+      {_render_hidden_state_inputs(state)}
+      <div class="info-block"><small>What it checks</small>Prompt reasoning, multimodal understanding, mathematical problem solving, embodied autonomy readiness for driving and robotics, creativity through concept fusion, self-improvement strength, and commercialization blockers.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_ultimate_agi_audit'))}</div>
+      <div class="actions"><button class="primary" name="action" value="run_ultimate_agi_audit">Run ultimate AGI + commercialization audit</button></div>
+    </form>
+  </section>
+"""
+
+
 def _render_beginner_section(state: StudioState) -> str:
     return f"""
   <section class="card" id="beginner-lab" style="margin-top:20px;">
@@ -1992,10 +3245,38 @@ def _render_beginner_section(state: StudioState) -> str:
         <div><label>VLSO eval JSONL</label><input name="understanding_vlso_input" value="{html.escape(state.understanding_vlso_input)}"></div>
         <div><label>VLSO real-image eval JSONL</label><input name="understanding_vlso_real_input" value="{html.escape(state.understanding_vlso_real_input)}"></div>
       </div>
-      <div class="info-block"><small>What happens</small>1. Built-in hidden-premise, transfer, and starter vision examples are stored into your corpus DB. 2. Grounded starter reviews are approved automatically. 3. The unified artifact bundle is trained. 4. The benchmark gate and beginner smoke tests are run.</div>
-      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_beginner_autopilot'))} for full setup, or {html.escape(_action_time_hint('run_beginner_test'))} to re-check the current bundle.</div>
-      <div class="actions"><button class="primary" name="action" value="run_beginner_autopilot">One-click setup + train + test</button><button class="secondary" name="action" value="run_beginner_test">One-click test current bundle</button></div>
+      <div class="info-block"><small>What happens</small>1. Built-in hidden-premise, transfer, and starter vision examples are stored into your corpus DB. 2. Grounded starter reviews are approved automatically. 3. The unified artifact bundle is trained. 4. The benchmark gate and beginner smoke tests are run. 5. If you want stronger performance, the new collect-and-train button continues into the RTX 4060 improvement loop and refreshes the readiness plan.</div>
+      <div class="info-block"><small>Expected time</small>{html.escape(_action_time_hint('run_beginner_autopilot'))} for full setup, {html.escape(_action_time_hint('run_beginner_test'))} to re-check the current bundle, or {html.escape(_action_time_hint('run_data_flywheel'))} to collect more reviewed data and train a stronger bundle automatically.</div>
+      <div class="actions"><button class="primary" name="action" value="run_beginner_autopilot">One-click setup + train + test</button><button class="secondary" name="action" value="run_beginner_test">One-click test current bundle</button><button class="primary" name="action" value="run_data_flywheel">One-click collect + train stronger</button></div>
     </form>
+  </section>
+"""
+
+
+def _render_manual_review_section(state: StudioState) -> str:
+    pending_cards = _render_review_queue_cards(state, 'pending', limit=4, interactive=True)
+    approved_cards = _render_review_queue_cards(state, 'approved', limit=3, interactive=False)
+    snapshot = _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state))
+    source_used = (state.unified_source or 'manual_user_review').strip() or 'manual_user_review'
+    return f"""
+  <section class="card" id="manual-review-lab" style="margin-top:20px;">
+    <div class="section-head"><div><small class="eyebrow">Human-in-the-loop</small><h2>Manual fast path when the long loop is overkill</h2><p>If you already know whether the current answer looks right, skip the long improvement cycle. Save the current reasoning result, approve a few queue items yourself, then rerun training only on the approved traces.</p></div></div>
+    <form method="post">
+      {_render_hidden_state_inputs(state)}
+      <div class="info-block"><small>Fast loop</small>1. Press <strong>Save current result as pending review</strong> or <strong>Save + approve current result</strong>. 2. Approve or reject a few pending items below. 3. Press <strong>Train approved reviews now</strong> to rerun the gate on the traces you kept.</div>
+      <div class="info-block"><small>Current scope</small>Review queue: {html.escape(state.unified_review_queue_path)}<br>Store source used for manual saves: {html.escape(source_used)}<br>Expected time for the fast retrain: {html.escape(_action_time_hint('run_manual_review_fast_loop'))}</div>
+      <div class="actions"><button class="secondary" name="action" value="queue_current_review">Save current result as pending review</button><button class="primary" name="action" value="approve_current_review">Save + approve current result</button><button class="primary" name="action" value="run_manual_review_fast_loop">Train approved reviews now</button></div>
+    </form>
+    <div class="summary-grid">
+      {_metric_card('Pending reviews', snapshot.get('pending', 0))}
+      {_metric_card('Approved reviews', snapshot.get('approved', 0))}
+      {_metric_card('Promotable reviews', snapshot.get('promotable', 0))}
+      {_metric_card('Rejected reviews', snapshot.get('rejected', 0))}
+    </div>
+    <div class="grid" style="margin-top:10px;">
+      <div class="info-block"><small>Recent pending reviews</small>{pending_cards}</div>
+      <div class="info-block"><small>Recent approved reviews</small>{approved_cards}</div>
+    </div>
   </section>
 """
 
@@ -2071,6 +3352,19 @@ class StudioApp:
         'run_generalization_proof',
         'run_autopilot_coach',
         'run_understanding_eval',
+        'run_capability_audit',
+        'run_capability_improvement',
+        'run_environment_brain',
+        'run_adaptive_environment_learning',
+        'run_recursive_self_evolution',
+        'run_collect_train_execute',
+        'run_ultimate_agi_audit',
+        'run_rtx4060_assessment',
+        'run_rtx4060_improvement',
+        'run_manual_review_fast_loop',
+        'run_universal_bootcamp',
+        'run_data_flywheel',
+        'run_frontier_setup_install',
     }
     ACTION_LABELS = {
         'run_unified_training': 'Unified trainer',
@@ -2081,6 +3375,19 @@ class StudioApp:
         'run_generalization_proof': 'Generalization proof',
         'run_autopilot_coach': 'Autopilot coach',
         'run_understanding_eval': 'Overall understanding benchmark',
+        'run_capability_audit': 'Capability audit',
+        'run_capability_improvement': 'Improve weak areas + re-audit',
+        'run_environment_brain': 'Learn this environment',
+        'run_adaptive_environment_learning': 'Self-improve this environment',
+        'run_recursive_self_evolution': 'Recursive self-evolve',
+        'run_collect_train_execute': 'Collect + train + answer',
+        'run_ultimate_agi_audit': 'Run ultimate AGI + commercialization audit',
+        'run_rtx4060_assessment': 'RTX 4060 coach',
+        'run_rtx4060_improvement': 'RTX 4060 improve',
+        'run_manual_review_fast_loop': 'Approved-review fast loop',
+        'run_universal_bootcamp': 'All-domain bootcamp',
+        'run_data_flywheel': 'One-click collect + train stronger',
+        'run_frontier_setup_install': 'Install frontier vision bundle',
     }
 
     def __init__(self) -> None:
@@ -2091,6 +3398,7 @@ class StudioApp:
         self._jobs: dict[str, BackgroundJob] = {}
         self._job_order: list[str] = []
         self._job_counter = 0
+        self._chat_messages: list[dict[str, str]] = []
         self._worker = threading.Thread(target=self._job_worker, name='semop-studio-worker', daemon=True)
         self._worker.start()
 
@@ -2105,6 +3413,7 @@ class StudioApp:
             notification_id = _first(form, 'notification_id', '')
             recovery_action = _first(form, 'recovery_action', '')
             file_path = _first(form, 'file_path', '')
+            review_item_id = _first(form, 'review_item_id', '')
             state = StudioState.from_form(form)
             try:
                 state, outcome = self._run_action(
@@ -2114,6 +3423,7 @@ class StudioApp:
                     notification_id=notification_id,
                     recovery_action=recovery_action,
                     file_path=file_path,
+                    review_item_id=review_item_id,
                 )
             except Exception as exc:
                 outcome = ActionOutcome(
@@ -2132,6 +3442,7 @@ class StudioApp:
             outcome,
             self._job_snapshot(state.unified_output_dir),
             _notification_snapshot(state.unified_output_dir),
+            self._chat_snapshot(),
         )
 
     def _run_action(
@@ -2143,6 +3454,7 @@ class StudioApp:
         notification_id: str = '',
         recovery_action: str = '',
         file_path: str = '',
+        review_item_id: str = '',
     ) -> tuple[StudioState, ActionOutcome]:
         if action == 'load_ops_example':
             state = replace(
@@ -2188,6 +3500,28 @@ class StudioApp:
             left, right = _default_compare_paths(state)
             state = replace(state, compare_left_path=left, compare_right_path=right)
             return state, self._run_artifact_compare(state)
+        if action == 'clear_chat_history':
+            self._chat_messages = []
+            return state, ActionOutcome(
+                flash='Unified chat history was cleared.',
+                flash_tone='success',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        if action == 'run_unified_chat':
+            return self._run_unified_chat(state)
+        if action == 'run_frontier_setup_status':
+            return state, self._run_frontier_setup_status(state)
+        if action == 'queue_current_review':
+            return self._queue_current_ops_review(state, approve_immediately=False)
+        if action == 'approve_current_review':
+            return self._queue_current_ops_review(state, approve_immediately=True)
+        if action == 'approve_review_item':
+            return self._update_review_item(state, review_item_id, 'approved')
+        if action == 'reject_review_item':
+            return self._update_review_item(state, review_item_id, 'rejected')
+        if action == 'followup_review_item':
+            return self._update_review_item(state, review_item_id, 'needs_followup')
         if action == 'run_ops':
             return state, self._run_ops(state)
         if action == 'run_vision':
@@ -2272,6 +3606,35 @@ class StudioApp:
             elif action == 'run_understanding_eval':
                 outcome = self._run_understanding_eval(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
                 final_state = state
+            elif action == 'run_capability_audit':
+                outcome = self._run_capability_audit(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            elif action == 'run_capability_improvement':
+                final_state, outcome = self._run_capability_improvement(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_environment_brain':
+                final_state, outcome = self._run_environment_brain(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_adaptive_environment_learning':
+                final_state, outcome = self._run_adaptive_environment_learning(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_recursive_self_evolution':
+                final_state, outcome = self._run_recursive_self_evolution(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_collect_train_execute':
+                final_state, outcome = self._run_collect_train_execute(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_ultimate_agi_audit':
+                final_state, outcome = self._run_ultimate_agi_audit(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_rtx4060_assessment':
+                outcome = self._run_rtx4060_assessment(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            elif action == 'run_rtx4060_improvement':
+                outcome = self._run_rtx4060_improvement(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+                final_state = state
+            elif action == 'run_manual_review_fast_loop':
+                final_state, outcome = self._run_manual_review_fast_loop(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_universal_bootcamp':
+                final_state, outcome = self._run_universal_bootcamp(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_data_flywheel':
+                final_state, outcome = self._run_data_flywheel(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
+            elif action == 'run_frontier_setup_install':
+                final_state, outcome = self._run_frontier_setup_install(state, progress_callback=lambda p, d: self._update_job(job_id, progress=p, detail=d))
             else:
                 raise ValueError(f'Unknown background action: {action}')
             self._complete_job(job_id, final_state, outcome)
@@ -2289,6 +3652,8 @@ class StudioApp:
         job.events.append({'at': time.time(), 'message': normalized})
         if len(job.events) > 40:
             del job.events[:-40]
+        timestamp = time.strftime('%H:%M:%S')
+        print(f"[{timestamp}] [{job.label}] {normalized}", flush=True)
 
     def _update_job(self, job_id: str, *, progress: float | None = None, detail: str | None = None) -> None:
         with self._job_lock:
@@ -2642,6 +4007,509 @@ class StudioApp:
             'recent': recent,
         }
 
+    def _queue_current_ops_review(self, state: StudioState, *, approve_immediately: bool) -> tuple[StudioState, ActionOutcome]:
+        source_used = (state.unified_source or 'manual_user_review').strip() or 'manual_user_review'
+        split_used = (state.unified_split or 'train').strip() or 'train'
+        request = CopilotRequest(
+            query=state.ops_query,
+            context=state.ops_context,
+            domain=state.ops_domain,
+            scenario=state.ops_scenario,
+        )
+        review_store = ReviewQueueStore(state.unified_review_queue_path)
+        existing = None
+        normalized_query = request.query.strip()
+        for item in review_store.fetch_items(limit=400):
+            if item.domain == request.domain and item.scenario == request.scenario and item.query.strip() == normalized_query:
+                existing = item
+                break
+        result = self._copilot(state.unified_review_queue_path).run(request)
+        store = CorpusMemoryStore(state.unified_store_path)
+        _persist_graph(store, result.graph, source_used, split_used)
+        corrected_answer = _grounded_review_answer(request.context, result.answer_text)
+        reasons = _bootstrap_review_reasons(result.graph, result.kpis.model_dump())
+        severity = infer_review_severity(request.domain, request.scenario, reasons, result.kpis.model_dump())
+        saved_status = 'pending'
+        resolution_note = 'User kept this trace in the studio manual fast path.'
+        if approve_immediately:
+            saved_status = 'approved'
+            resolution_note = 'User approved this trace in the studio manual fast path.'
+        if existing is None:
+            item_id = review_store.enqueue(
+                domain=request.domain,
+                scenario=request.scenario,
+                query=request.query,
+                reasons=reasons,
+                answer_text=corrected_answer,
+                kpis=result.kpis.model_dump(),
+                audit_items=[{'stage': item.stage, 'detail': item.detail} for item in result.audit_items],
+                context_text=request.context,
+                graph_payload=result.graph.model_dump(),
+                severity=severity,
+            )
+        else:
+            item_id = existing.id
+        if approve_immediately:
+            review_store.update_status(item_id, 'approved', resolution_note)
+        elif existing is not None and existing.status == 'approved':
+            saved_status = 'approved'
+        detail = review_store.fetch_item_detail(item_id) or {}
+        snapshot = _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state))
+        payload = {
+            'review_id': item_id,
+            'saved_status': saved_status,
+            'query': request.query,
+            'answer_text': corrected_answer,
+            'reasons': reasons,
+            'source_used': source_used,
+            'split_used': split_used,
+            'review_detail': detail,
+            'review_snapshot': snapshot,
+            'result': result.model_dump(),
+        }
+        flash = 'Current reasoning trace was saved as a pending review item.'
+        flash_tone = 'success'
+        if approve_immediately:
+            flash = 'Current reasoning trace was saved and approved for retraining.'
+        elif existing is not None:
+            flash = 'That query was already in the review queue. You can approve it from the manual fast path below.'
+            flash_tone = 'neutral'
+        updated_state = replace(state, unified_source=source_used if not state.unified_source.strip() else state.unified_source)
+        return updated_state, ActionOutcome(
+            flash=flash,
+            flash_tone=flash_tone,
+            result_kind='manual_review',
+            result_payload=payload,
+        )
+
+    def _update_review_item(self, state: StudioState, review_item_id: str, status: str) -> tuple[StudioState, ActionOutcome]:
+        try:
+            item_id = int(str(review_item_id or '0').strip())
+        except ValueError:
+            item_id = 0
+        if item_id <= 0:
+            return state, ActionOutcome(
+                flash='Choose a valid review item first.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        review_store = ReviewQueueStore(state.unified_review_queue_path)
+        detail = review_store.fetch_item_detail(item_id)
+        if not detail:
+            return state, ActionOutcome(
+                flash='That review item could not be found.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        notes = {
+            'approved': 'User approved this trace in the studio manual fast path.',
+            'rejected': 'User rejected this trace in the studio manual fast path.',
+            'needs_followup': 'User requested follow-up in the studio manual fast path.',
+        }
+        review_store.update_status(item_id, status, notes.get(status, 'Updated from the studio manual fast path.'))
+        updated = review_store.fetch_item_detail(item_id) or detail
+        payload = {
+            'review_id': item_id,
+            'saved_status': status,
+            'review_detail': updated,
+            'review_snapshot': _review_queue_snapshot(state.unified_review_queue_path, _resolve_operating_domain(state)),
+            'source_used': (state.unified_source or 'manual_user_review').strip() or 'manual_user_review',
+        }
+        return state, ActionOutcome(
+            flash=f"Review item {item_id} was marked as {status.replace('_', ' ')}.",
+            flash_tone='success',
+            result_kind='manual_review',
+            result_payload=payload,
+        )
+
+
+    def _append_chat_message(self, role: str, text: str, *, route: str = '', status: str = '') -> None:
+        normalized = str(text or '').strip()
+        if not normalized:
+            return
+        self._chat_messages.append(
+            {
+                'role': role,
+                'text': normalized,
+                'route': str(route or '').strip(),
+                'status': str(status or '').strip(),
+            }
+        )
+        if len(self._chat_messages) > 40:
+            del self._chat_messages[:-40]
+
+    def _chat_snapshot(self) -> dict[str, Any]:
+        return {'messages': list(self._chat_messages[-20:])}
+
+    def _math_service(
+        self,
+        state: StudioState,
+        *,
+        concept_store_path: str | None = None,
+        operator_store_path: str | None = None,
+        affordance_weights_path: str | None = None,
+    ) -> WorldModelMathProductionService:
+        output_dir = Path(_chat_math_output_dir(state))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return WorldModelMathProductionService(
+            ProductionMathServiceConfig(
+                concept_store_path=concept_store_path or state.vision_concept_store or None,
+                operator_store_path=operator_store_path or state.vision_operator_store or None,
+                affordance_weights_path=affordance_weights_path or state.vision_weights or None,
+                logical_weight_path=str(output_dir / 'logical_pattern_weights.json'),
+                strategy_memory_path=str(output_dir / 'math_strategy_memory.json'),
+                leworldmodel_path=str(output_dir / 'math_leworldmodel_prior.json'),
+                audit_log_path=str(output_dir / 'audit_log.jsonl'),
+            )
+        )
+
+    @staticmethod
+    def _visual_workbench(state: StudioState) -> VisualGeometry3DWorkbench:
+        return VisualGeometry3DWorkbench(
+            concept_store_path=state.vision_concept_store or None,
+            operator_store_path=state.vision_operator_store or None,
+            affordance_weights_path=state.vision_weights or None,
+            mode=state.vision_mode or 'deep',
+            answer_mode=state.vision_answer_mode or 'structured',
+        )
+
+    @staticmethod
+    def _pick_chat_visual_input(state: StudioState) -> str:
+        for candidate in (
+            str(state.chat_image or '').strip(),
+            str(state.vision_image or '').strip(),
+            'examples/vlso/geometry_scene.json',
+            VISION_EXAMPLE['image_path'],
+        ):
+            if candidate and Path(candidate).exists():
+                return candidate
+        return ''
+
+    def _run_unified_chat(self, state: StudioState) -> tuple[StudioState, ActionOutcome]:
+        prompt = str(state.chat_prompt or '').strip()
+        image_path = str(state.chat_image or '').strip()
+        if not prompt:
+            return state, ActionOutcome(
+                flash='Type a prompt first. The unified chat box routes everything from one request.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        next_state = replace(state, chat_prompt=prompt, chat_image=image_path)
+        self._append_chat_message('user', prompt)
+        route = _chat_route(prompt, image_path)
+        kind = route.get('kind', 'ops')
+        prompt_analyzer = PromptUnderstandingAnalyzer()
+        operating_domain = _resolve_operating_domain(next_state)
+        scenario_hint = str(next_state.ops_scenario or '').strip() or 'qa'
+        prompt_source_context = next_state.ops_context if kind == 'ops' else ''
+        prompt_understanding = prompt_analyzer.analyze_base(
+            prompt,
+            kind,
+            visual_input=image_path,
+            domain=operating_domain,
+            scenario=scenario_hint,
+            source_context=prompt_source_context,
+        )
+        if kind == 'action':
+            target = route.get('target', '')
+            queued_state, queued = self._enqueue_background_action(target, next_state)
+            label = self.ACTION_LABELS.get(target, target or 'background job')
+            answer_text = f'{label} was queued in the background. Check Live jobs for progress.'
+            self._append_chat_message('assistant', answer_text, route='action', status='queued')
+            return queued_state, ActionOutcome(
+                flash=queued.flash,
+                flash_tone=queued.flash_tone,
+                result_kind='unified_chat',
+                result_payload={
+                    'route': 'action',
+                    'status': 'queued',
+                    'queued_label': label,
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': ['Watch Live jobs for progress.', 'Use Load result when the job finishes.'],
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, 'action', prompt_understanding.model_dump()),
+                },
+            )
+        if kind in {'vision', 'video', 'visual_3d'} and (not image_path or not Path(image_path).exists()):
+            answer_text = (
+                'Attach a valid local image, frame folder, GIF, video file, or JSON manifest first for visual reasoning.'
+                if kind in {'vision', 'video'}
+                else 'Attach a valid local image or diagram path first for 3D reconstruction.'
+            )
+            self._append_chat_message('assistant', answer_text, route=kind, status='error')
+            return next_state, ActionOutcome(
+                flash=answer_text,
+                flash_tone='error',
+                result_kind='unified_chat',
+                result_payload={
+                    'route': kind,
+                    'status': 'error',
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': [
+                        'Example image path: data/scene.png',
+                        'Temporal inputs: frame folder, GIF, MP4, or a JSON manifest with frames.',
+                    ],
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, kind, prompt_understanding.model_dump()),
+                },
+            )
+        if kind == 'ops':
+            domain = str(prompt_understanding.likely_domain or operating_domain).strip() or 'general'
+            scenario = str(prompt_understanding.likely_scenario or scenario_hint).strip() or 'qa'
+            request = CopilotRequest(query=prompt, context=next_state.ops_context, domain=domain, scenario=scenario)
+            result = self._copilot(next_state.unified_review_queue_path).run(request)
+            answer_text = result.answer_text
+            prompt_understanding = prompt_analyzer.enrich_with_ops_result(prompt_understanding, result)
+            notes = [
+                f'Plan executability: {result.kpis.plan_executability:.3f}',
+                f'Relation recovery: {result.kpis.relation_recovery:.3f}',
+            ]
+            if result.graph.context_frame is not None and result.graph.context_frame.summary:
+                notes.append(result.graph.context_frame.summary)
+            self._append_chat_message('assistant', answer_text, route='ops', status='completed')
+            next_state = replace(next_state, ops_query=prompt, ops_domain=domain, ops_scenario=scenario)
+            return next_state, ActionOutcome(
+                flash='Unified chat routed your prompt to context reasoning.',
+                flash_tone='success',
+                result_kind='unified_chat',
+                result_payload={
+                    'route': 'ops',
+                    'status': 'completed',
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': notes,
+                    'ops_payload': result.model_dump(),
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, 'ops', prompt_understanding.model_dump(), result.model_dump()),
+                },
+            )
+        if kind == 'vision':
+            next_state = replace(next_state, vision_query=prompt, vision_image=image_path)
+            payload = build_vision_payload(
+                prompt,
+                image_path,
+                next_state.vision_mode,
+                next_state.vision_answer_mode,
+                next_state.vision_concept_store,
+                next_state.vision_operator_store,
+                next_state.vision_weights,
+            )
+            answer = payload.get('answer', {}) if isinstance(payload.get('answer'), dict) else {}
+            world = payload.get('world', {}) if isinstance(payload.get('world'), dict) else {}
+            answer_text = str(answer.get('answer_text') or 'Vision reasoning finished.')
+            frontier_scene = world.get('metadata', {}).get('frontier_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('frontier_scene_summary'), dict) else {}
+            adjudication = world.get('metadata', {}).get('scene_adjudication', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('scene_adjudication'), dict) else {}
+            notes = [
+                f'Openings or reachable candidates: {len(_opening_candidates(world))}',
+                f'Warnings: {len(world.get("warnings") or [])}',
+                f'Likely scenario: {prompt_understanding.likely_scenario}',
+                f'Scene semantic level: {answer.get("scene_semantic_level") or "-"}',
+                f'Frontier VLM: {"ready" if frontier_scene.get("backend_ready") else "fallback"}',
+                f'Scene stack: {adjudication.get("stack_level") or "-"}',
+            ]
+            if answer.get('scene_semantic_level') == 'structural_only':
+                notes.append('This is still structural-only scene grounding, not strong human-level semantic vision.')
+            prompt_understanding = prompt_analyzer.enrich_with_visual_payload(prompt_understanding, payload, temporal=False)
+            self._append_chat_message('assistant', answer_text, route='vision', status='completed')
+            return next_state, ActionOutcome(
+                flash='Unified chat routed your prompt to vision reasoning.',
+                flash_tone='success',
+                result_kind='unified_chat',
+                result_payload={
+                    'route': 'vision',
+                    'status': 'completed',
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': notes,
+                    'vision_payload': payload,
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, 'vision', prompt_understanding.model_dump(), payload),
+                },
+            )
+        if kind == 'video':
+            next_state = replace(next_state, vision_query=prompt, vision_image=image_path)
+            payload = build_video_payload(
+                prompt,
+                image_path,
+                next_state.vision_mode,
+                next_state.vision_answer_mode,
+                next_state.vision_concept_store,
+                next_state.vision_operator_store,
+                next_state.vision_weights,
+            )
+            answer_text = str(payload.get('answer_text') or payload.get('situation_summary') or 'Video reasoning finished.')
+            notes = [
+                f"Frames aggregated: {payload.get('frame_count', 0)}",
+                f"Stable entities: {len(payload.get('stable_entities') or [])}",
+                f"Temporal events: {len(payload.get('temporal_events') or [])}",
+                f"Video backend: {payload.get('extraction_backend') or '-'}",
+            ]
+            prompt_understanding = prompt_analyzer.enrich_with_visual_payload(prompt_understanding, payload, temporal=True)
+            self._append_chat_message('assistant', answer_text, route='video', status='completed')
+            return next_state, ActionOutcome(
+                flash='Unified chat routed your prompt to video situation reasoning.',
+                flash_tone='success',
+                result_kind='unified_chat',
+                result_payload={
+                    'route': 'video',
+                    'status': 'completed',
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': notes,
+                    'video_payload': payload,
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, 'video', prompt_understanding.model_dump(), payload),
+                },
+            )
+        if kind == 'visual_3d':
+            next_state = replace(next_state, vision_image=image_path)
+            reconstruction = self._visual_workbench(next_state).reconstruct_scene(prompt, image_path, _chat_visual_output_dir(next_state))
+            answer_text = reconstruction.answer_text or '3D reconstruction finished.'
+            self._append_chat_message('assistant', answer_text, route='visual_3d', status='completed')
+            return next_state, ActionOutcome(
+                flash='Unified chat routed your prompt to 3D reconstruction.',
+                flash_tone='success',
+                result_kind='unified_chat',
+                result_payload={
+                    'route': 'visual_3d',
+                    'status': 'completed',
+                    'prompt': prompt,
+                    'answer_text': answer_text,
+                    'notes': [
+                        f'Primitives: {len(reconstruction.primitives)}',
+                        f'Relations: {len(reconstruction.relations)}',
+                        f'Warnings: {len(reconstruction.warnings)}',
+                    ],
+                    'reconstruction_path': str(Path(_chat_visual_output_dir(next_state)) / 'scene_3d_reconstruction.json'),
+                    'visual_3d_payload': reconstruction.model_dump(),
+                    'prompt_understanding': prompt_understanding.model_dump(),
+                    'concept_fusion': _build_concept_fusion_payload(prompt, 'visual_3d', prompt_understanding.model_dump(), reconstruction.model_dump()),
+                },
+            )
+        math_service = self._math_service(next_state)
+        response = math_service.solve_request(
+            prompt,
+            source_context=next_state.ops_context,
+            visual_input=image_path or None,
+            task_mode='auto',
+            metadata={'surface': 'semop_studio_chat'},
+        )
+        prompt_understanding = prompt_analyzer.enrich_with_math_response(prompt_understanding, response)
+        answer_text = response.safe_answer
+        status = response.status
+        notes = [f'Likely scenario: {prompt_understanding.likely_scenario}'] + list(response.warnings[:3])
+        if len(notes) == 1 and not response.warnings:
+            notes = [', '.join(response.decision.reasons) or 'No warnings were emitted.']
+        self._append_chat_message('assistant', answer_text, route='math', status=status)
+        next_state = replace(next_state, vision_image=image_path or next_state.vision_image)
+        math_training_path = str(Path(_chat_math_output_dir(next_state)) / 'math_training_summary.json')
+        return next_state, ActionOutcome(
+            flash='Unified chat routed your prompt to the math world model.',
+            flash_tone='success' if response.accepted else 'neutral',
+            result_kind='unified_chat',
+            result_payload={
+                'route': 'math',
+                'status': status,
+                'prompt': prompt,
+                'answer_text': answer_text,
+                'notes': notes,
+                'audit_log_path': response.audit_log_path,
+                'math_training_path': math_training_path if Path(math_training_path).exists() else '',
+                'math_payload': response.model_dump(),
+                'decision': response.decision.model_dump(),
+                'prompt_understanding': prompt_understanding.model_dump(),
+                'concept_fusion': _build_concept_fusion_payload(prompt, 'math', prompt_understanding.model_dump(), response.model_dump()),
+            },
+        )
+
+    def _run_universal_bootcamp(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.06, 'Running the SemOp beginner autopilot for operator reasoning, reviews, and the benchmark gate.')
+        boot_state, beginner_outcome = self._run_beginner_autopilot(
+            state,
+            progress_callback=(lambda p, d: progress_callback(min(0.42, 0.06 + (float(p) * 0.36)), d)) if progress_callback else None,
+        )
+        math_output_dir = _chat_math_output_dir(boot_state)
+        if progress_callback:
+            progress_callback(0.48, 'Training the math world model starter curriculum and exporting LeWM-ready artifacts.')
+        cases_path = ensure_starter_math_cases()
+        math_trainer = WorldModelMathTrainer(
+            concept_store_path=boot_state.vision_concept_store or None,
+            operator_store_path=boot_state.vision_operator_store or None,
+            affordance_weights_path=boot_state.vision_weights or None,
+        )
+        math_summary = math_trainer.train_from_cases(cases_path, math_output_dir, epochs=2, bootstrap_starter=False)
+        visual_output_dir = _chat_visual_output_dir(boot_state)
+        if progress_callback:
+            progress_callback(0.72, 'Collecting starter geometry scenes, training the visual 3D bundle, and reconstructing one scene.')
+        workbench = self._visual_workbench(boot_state)
+        collection = workbench.collect_starter_scenes(visual_output_dir)
+        training = workbench.train_bundle_from_inputs(collection.scene_dir, visual_output_dir, eval_input=collection.eval_path)
+        visual_input = self._pick_chat_visual_input(boot_state)
+        reconstruction = None
+        if visual_input:
+            reconstruction = workbench.reconstruct_scene(
+                'Reconstruct the visible geometry and topology into a simple 3D scene.',
+                visual_input,
+                visual_output_dir,
+            )
+        concept_store_path = str(Path(visual_output_dir) / 'visual_geometry_concepts.db')
+        operator_store_path = str(Path(visual_output_dir) / 'visual_geometry_operators.db')
+        final_state = replace(
+            boot_state,
+            vision_concept_store=concept_store_path if Path(concept_store_path).exists() else boot_state.vision_concept_store,
+            vision_operator_store=operator_store_path if Path(operator_store_path).exists() else boot_state.vision_operator_store,
+            vision_image=visual_input or boot_state.vision_image,
+            chat_image=visual_input or boot_state.chat_image,
+        )
+        if progress_callback:
+            progress_callback(0.9, 'Running the production math self-check on the freshly trained local bundle.')
+        math_self_test = self._math_service(
+            final_state,
+            concept_store_path=final_state.vision_concept_store or None,
+            operator_store_path=final_state.vision_operator_store or None,
+        ).self_test()
+        if progress_callback:
+            progress_callback(0.98, 'All-domain bootcamp finished. Preparing the chat-friendly summary.')
+        beginner_payload = beginner_outcome.result_payload if isinstance(beginner_outcome.result_payload, dict) else {}
+        answer_text = 'All-domain bootcamp finished. The SemOp, math, and visual 3D bundles were refreshed together.'
+        self._append_chat_message('assistant', answer_text, route='bootcamp', status='completed')
+        notes = [
+            f"SemOp gate accepted: {beginner_payload.get('accepted', False)}",
+            f"Math final average score: {math_summary.final_average_score:.3f}",
+            f"Math self-test: {math_self_test.passed_count}/{math_self_test.total_count}",
+            f"Visual starter scenes: {collection.scene_count}",
+        ]
+        if reconstruction is not None:
+            notes.append(f'3D primitives: {len(reconstruction.primitives)}')
+        return final_state, ActionOutcome(
+            flash='All-domain bootcamp finished. SemOp, math, and visual 3D assets are ready from one run.',
+            flash_tone='success',
+            result_kind='universal_bootcamp',
+            result_payload={
+                'route': 'bootcamp',
+                'status': 'completed',
+                'prompt': state.chat_prompt,
+                'answer_text': answer_text,
+                'notes': notes,
+                'semop': beginner_payload,
+                'math_training': math_summary.model_dump(),
+                'math_self_test': math_self_test.model_dump(),
+                'visual_bootcamp': {
+                    'collection': collection.model_dump(),
+                    'training': training.model_dump(),
+                    'reconstruction': reconstruction.model_dump() if reconstruction is not None else None,
+                },
+                'math_training_path': str(Path(math_output_dir) / 'math_training_summary.json'),
+                'reconstruction_path': str(Path(visual_output_dir) / 'scene_3d_reconstruction.json') if reconstruction is not None else '',
+            },
+        )
+
     def _run_ops(self, state: StudioState) -> ActionOutcome:
         request = CopilotRequest(
             query=state.ops_query,
@@ -2668,10 +4536,12 @@ class StudioApp:
             state.vision_operator_store,
             state.vision_weights,
         )
+        result_kind = str(payload.get('kind') or 'vision')
+        flash = 'Video-grounded situation understanding finished.' if result_kind == 'video' else 'Vision-grounded reasoning finished.'
         return ActionOutcome(
-            flash='Vision-grounded reasoning finished.',
+            flash=flash,
             flash_tone='success',
-            result_kind='vision',
+            result_kind=result_kind,
             result_payload=payload,
         )
 
@@ -2730,6 +4600,40 @@ class StudioApp:
             flash_tone='success',
             result_kind='unified_benchmark_gate',
             result_payload=summary.model_dump(),
+        )
+
+    def _run_manual_review_fast_loop(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        source_used = str(state.unified_source or '').strip()
+        if not source_used and _store_graph_count(state.unified_store_path, 'manual_user_review', 'train') > 0:
+            source_used = 'manual_user_review'
+        manual_state = replace(
+            state,
+            unified_source=source_used,
+            unified_split='train',
+            unified_approved_queries_only=True,
+            unified_operating_domain=_resolve_operating_domain(state),
+        )
+        if progress_callback:
+            progress_callback(0.14, 'Re-training only on the approved review traces in the current scope.')
+        gate_outcome = self._run_unified_benchmark_gate(
+            manual_state,
+            progress_callback=(lambda p, d: progress_callback(min(0.94, 0.14 + (float(p) * 0.78)), d)) if progress_callback else None,
+        )
+        payload = dict(gate_outcome.result_payload or {})
+        payload['manual_review_loop'] = {
+            'source_used': source_used or 'all_sources',
+            'split_used': manual_state.unified_split,
+            'review_snapshot': _review_queue_snapshot(manual_state.unified_review_queue_path, _resolve_operating_domain(manual_state)),
+            'seed_graph_count': _store_graph_count(manual_state.unified_store_path, source_used, manual_state.unified_split),
+            'approved_only': True,
+        }
+        if progress_callback:
+            progress_callback(0.98, 'Approved-review fast loop finished. Packaging the result card.')
+        return manual_state, ActionOutcome(
+            flash='Approved-review fast loop finished on the traces you kept.',
+            flash_tone='success',
+            result_kind='manual_review_loop',
+            result_payload=payload,
         )
 
     def _run_guided_learning(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
@@ -3099,6 +5003,426 @@ class StudioApp:
             result_payload=payload,
         )
     @staticmethod
+    def _run_environment_brain(state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.12, 'Collecting repeated local queries and building an environment-specific memory instead of widening domain coverage.')
+        domain = str(state.ops_domain or _resolve_operating_domain(state) or 'general').strip() or 'general'
+        scenario = str(state.ops_scenario or 'qa').strip() or 'qa'
+        environment_name = f'{domain}_{scenario}'
+        summary = EnvironmentBrainRunner().run(
+            environment_name=environment_name,
+            domain=domain,
+            scenario=scenario,
+            context=state.ops_context,
+            store_path=state.unified_store_path,
+            review_queue_path=state.unified_review_queue_path or None,
+            output_dir=str(Path(state.unified_output_dir) / 'environment_brain'),
+            visual_input=state.vision_image or None,
+            concept_store_path=state.vision_concept_store or None,
+            operator_store_path=state.vision_operator_store or None,
+            affordance_weights_path=state.vision_weights or None,
+        )
+        if progress_callback:
+            progress_callback(0.96, 'Environment-specific learning finished. Summarizing stable concepts, routines, hazards, and the local mastery score.')
+        answer_text = (
+            f"Environment learning finished for {summary.environment_name}. "
+            f"Environment mastery is {summary.mastery_scores.get('environment_mastery', 0.0)} and the next probes now focus on this local setting only."
+        )
+        return state, ActionOutcome(
+            flash='Environment-specific self-learning finished. The local environment report and bundle are ready.',
+            flash_tone='success',
+            result_kind='environment_brain',
+            result_payload={
+                **summary.model_dump(),
+                'route': 'environment_brain',
+                'status': 'completed',
+                'prompt': state.chat_prompt,
+                'answer_text': answer_text,
+            },
+        )
+
+    @staticmethod
+    def _run_adaptive_environment_learning(state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.1, 'Building local memory, then running self-reflection and correction inside the same environment.')
+        domain = str(state.ops_domain or _resolve_operating_domain(state) or 'general').strip() or 'general'
+        scenario = str(state.ops_scenario or 'qa').strip() or 'qa'
+        environment_name = f'{domain}_{scenario}'
+        summary = AdaptiveEnvironmentLearningRunner().run(
+            environment_name=environment_name,
+            domain=domain,
+            scenario=scenario,
+            context=state.ops_context,
+            store_path=state.unified_store_path,
+            review_queue_path=state.unified_review_queue_path or None,
+            output_dir=str(Path(state.unified_output_dir) / 'adaptive_environment_learning'),
+            visual_input=state.vision_image or None,
+            concept_store_path=state.vision_concept_store or None,
+            operator_store_path=state.vision_operator_store or None,
+            affordance_weights_path=state.vision_weights or None,
+        )
+        if progress_callback:
+            progress_callback(0.96, 'Adaptive environment loop finished. Summarizing local intelligence, self-reflection, and the next actions in this same setting.')
+        answer_text = (
+            f"Adaptive environment self-improvement finished for {summary.environment_name}. "
+            f"Local intelligence is {summary.capability_scores.get('local_intelligence', 0.0)} and the loop now knows which local gaps to close next."
+        )
+        return state, ActionOutcome(
+            flash='Adaptive environment self-improvement finished. The local report and refined bundle are ready.',
+            flash_tone='success',
+            result_kind='adaptive_environment_learning',
+            result_payload={
+                **summary.model_dump(),
+                'route': 'adaptive_environment_learning',
+                'status': 'completed',
+                'prompt': state.chat_prompt,
+                'answer_text': answer_text,
+            },
+        )
+
+
+    @staticmethod
+    def _run_recursive_self_evolution(state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.08, 'Starting recursive self-evolution: evaluating and mutating local improvement programs for this environment.')
+        domain = str(state.ops_domain or _resolve_operating_domain(state) or 'general').strip() or 'general'
+        scenario = str(state.ops_scenario or 'qa').strip() or 'qa'
+        environment_name = f'{domain}_{scenario}'
+        summary = RecursiveSelfEvolutionRunner().run(
+            environment_name=environment_name,
+            domain=domain,
+            scenario=scenario,
+            context=state.ops_context,
+            store_path=state.unified_store_path,
+            review_queue_path=state.unified_review_queue_path or None,
+            output_dir=str(Path(state.unified_output_dir) / 'recursive_self_evolution'),
+            visual_input=state.vision_image or None,
+            concept_store_path=state.vision_concept_store or None,
+            operator_store_path=state.vision_operator_store or None,
+            affordance_weights_path=state.vision_weights or None,
+            progress_callback=progress_callback,
+        )
+        answer_text = (
+            f"Recursive self-evolution finished for {summary.environment_name}. "
+            f"The best evolved program improved the score by {summary.score_delta} and the deployed bundle now uses that local improvement policy."
+        )
+        return state, ActionOutcome(
+            flash='Recursive self-evolution finished. The best evolved local bundle is now ready.',
+            flash_tone='success',
+            result_kind='recursive_self_evolution',
+            result_payload={
+                **summary.model_dump(),
+                'route': 'recursive_self_evolution',
+                'status': 'completed',
+                'prompt': state.chat_prompt,
+                'answer_text': answer_text,
+            },
+        )
+
+
+    @staticmethod
+    def _run_ultimate_agi_audit(state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.16, 'Running the ultimate AGI and commercialization readiness audit on the current stack.')
+        summary = UltimateAGIReadinessRunner().run(
+            workspace='.',
+            bootstrap_missing=True,
+            output_path=str(Path(state.unified_output_dir) / 'ultimate_agi_readiness.json'),
+            unified_output_dir=state.unified_output_dir,
+            unified_store_path=state.unified_store_path,
+            unified_review_queue_path=state.unified_review_queue_path,
+            unified_benchmark_corpus_path=state.unified_benchmark_corpus_path,
+            math_output_dir='data/math_world_model_gui_run',
+            math_cases_path='examples/math_world_model_starter.jsonl',
+            visual_output_dir='data/math_world_model_gui_run/visual_3d',
+        )
+        if progress_callback:
+            progress_callback(0.96, 'Ultimate AGI audit finished. Summarizing commercialization blockers and the next product steps.')
+        return state, ActionOutcome(
+            flash=f"Ultimate AGI audit finished. Readiness: {summary.overall_readiness_percent}%.",
+            flash_tone='success',
+            result_kind='ultimate_agi_audit',
+            result_payload=summary.model_dump(),
+        )
+
+    def _run_frontier_setup_status(self, state: StudioState) -> ActionOutcome:
+        summary = FrontierVisionInstaller(target_root=state.frontier_target_root).installed_bundle_status().model_dump()
+        summary['include_optional'] = state.frontier_include_optional
+        ready = 'ready' if summary.get('required_ready') else 'missing models'
+        return ActionOutcome(
+            flash=f"Checked frontier vision status: {ready}.",
+            flash_tone='success',
+            result_kind='frontier_setup',
+            result_payload=summary,
+        )
+
+    def _run_frontier_setup_install(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback is not None:
+            progress_callback(0.08, 'Preparing the recommended frontier vision bundle for this machine.')
+        installer = FrontierVisionInstaller(target_root=state.frontier_target_root)
+        if progress_callback is not None:
+            progress_callback(0.18, 'Checking which frontier checkpoints are already installed locally.')
+        before = installer.installed_bundle_status().model_dump()
+        if progress_callback is not None:
+            progress_callback(0.32, 'Downloading the recommended frontier vision checkpoints. This may take a while.')
+        install = installer.install_recommended_bundle(include_optional=state.frontier_include_optional).model_dump()
+        if progress_callback is not None:
+            progress_callback(0.9, 'Rechecking the local frontier vision stack after the download finished.')
+        after = installer.installed_bundle_status().model_dump()
+        payload = {
+            'status': after,
+            'before': before,
+            'install': install,
+            'target_root': state.frontier_target_root,
+            'include_optional': state.frontier_include_optional,
+        }
+        failures = install.get('failed', []) if isinstance(install, dict) else []
+        flash = 'Frontier vision installation finished.' if not failures else 'Frontier vision installation finished with some failures.'
+        tone = 'success' if not failures else 'error'
+        return state, ActionOutcome(
+            flash=flash,
+            flash_tone=tone,
+            result_kind='frontier_install',
+            result_payload=payload,
+        )
+
+    def _run_collect_train_execute(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:
+        if not str(state.chat_prompt or '').strip():
+            return state, ActionOutcome(
+                flash='Type the prompt you want solved first, then use Collect + train + answer.',
+                flash_tone='error',
+                result_kind=self._last_outcome.result_kind,
+                result_payload=self._last_outcome.result_payload,
+            )
+        if progress_callback:
+            progress_callback(0.04, 'Running the fast collect-and-train path before answering your current prompt.')
+        trained_state, flywheel = self._run_data_flywheel(
+            state,
+            fast_mode=True,
+            progress_callback=(lambda p, d: progress_callback(min(0.78, 0.04 + (float(p) * 0.74)), d)) if progress_callback else None,
+        )
+        if progress_callback:
+            progress_callback(0.82, 'Fast training finished. Running the current prompt on the refreshed local bundle.')
+        answer_state, answer = self._run_unified_chat(trained_state)
+        payload = dict(flywheel.result_payload or {})
+        answer_payload = answer.result_payload if isinstance(answer.result_payload, dict) else {}
+        timeline = list(payload.get('execution_timeline') or []) if isinstance(payload.get('execution_timeline'), list) else []
+        timeline.append({
+            'label': 'Answer the current prompt',
+            'status': str(answer_payload.get('status') or 'done'),
+            'detail': f"Reran the current prompt through route {answer_payload.get('route') or '-'} and produced the refreshed answer.",
+        })
+        generated_outputs = list(payload.get('generated_outputs') or []) if isinstance(payload.get('generated_outputs'), list) else []
+        payload['answer_result'] = answer_payload
+        payload['answer_text'] = answer_payload.get('answer_text', '') if isinstance(answer_payload, dict) else ''
+        payload['process_summary'] = 'This button used the fast path: collect starter data, train the starter bundle, recheck readiness quickly, and then answer your current prompt. For the slower deep-improvement loop, use RTX 4060 coach.'
+        payload['execution_timeline'] = timeline
+        payload['used_inputs'] = [
+            f"prompt: {state.chat_prompt or '-'}",
+            f"visual input: {state.chat_image or state.vision_image or '-'}",
+            f"corpus store: {state.unified_store_path}",
+            f"review queue: {state.unified_review_queue_path}",
+            f"operating domain: {_resolve_operating_domain(state)}",
+        ]
+        payload['generated_outputs'] = generated_outputs
+        payload['fast_mode'] = True
+        if progress_callback:
+            progress_callback(0.98, 'Collect, train, and answer finished. Preparing the final summary card.')
+        return answer_state, ActionOutcome(
+            flash='One-click collect, train, and answer finished. The refreshed fast-path bundle answered your current prompt.',
+            flash_tone='success',
+            result_kind='collect_train_execute',
+            result_payload=payload,
+        )
+
+
+    @staticmethod
+    def _run_rtx4060_assessment(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
+        if progress_callback:
+            progress_callback(0.15, 'Running the RTX 4060 reasoning audit on the current bundle.')
+        summary = RTX4060ReasoningCoach().assess(
+            workspace='.',
+            bootstrap_missing=True,
+            output_path=str(Path(state.unified_output_dir) / 'rtx4060_reasoning_coach.json'),
+            unified_output_dir=state.unified_output_dir,
+            unified_store_path=state.unified_store_path,
+            unified_review_queue_path=state.unified_review_queue_path,
+            unified_benchmark_corpus_path=state.unified_benchmark_corpus_path,
+            math_output_dir='data/math_world_model_gui_run',
+            math_cases_path='examples/math_world_model_starter.jsonl',
+            visual_output_dir='data/math_world_model_gui_run/visual_3d',
+        )
+        if progress_callback:
+            progress_callback(0.96, 'RTX 4060 assessment finished. Packaging the data-collection plan.')
+        return ActionOutcome(
+            flash=f"RTX 4060 readiness checked. Current readiness: {summary.overall_readiness_percent}%.",
+            flash_tone='success',
+            result_kind='rtx4060_assessment',
+            result_payload=summary.model_dump(),
+        )
+
+    @staticmethod
+    def _run_rtx4060_improvement(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
+        if progress_callback:
+            progress_callback(0.12, 'Running the RTX 4060 improvement loop: collect stronger traces, rerun proof, and rebuild the 4060 plan.')
+        summary = RTX4060ReasoningCoach().improve(
+            workspace='.',
+            bootstrap_missing=True,
+            output_path=str(Path(state.unified_output_dir) / 'rtx4060_reasoning_improvement.json'),
+            unified_output_dir=state.unified_output_dir,
+            unified_store_path=state.unified_store_path,
+            unified_review_queue_path=state.unified_review_queue_path,
+            unified_benchmark_corpus_path=state.unified_benchmark_corpus_path,
+            math_output_dir='data/math_world_model_gui_run',
+            math_cases_path='examples/math_world_model_starter.jsonl',
+            visual_output_dir='data/math_world_model_gui_run/visual_3d',
+            hidden_input=state.understanding_hidden_input,
+            transfer_input=state.unified_transfer_input,
+            vlso_input=state.understanding_vlso_input,
+            vlso_real_input=state.understanding_vlso_real_input,
+            vision_image=state.vision_image or 'data/scene.png',
+        )
+        if progress_callback:
+            progress_callback(0.98, 'RTX 4060 improvement finished. Summarizing readiness gains and the next data batches.')
+        return ActionOutcome(
+            flash=f"RTX 4060 improvement finished. Readiness delta: {summary.delta_readiness_percent}%.",
+            flash_tone='success',
+            result_kind='rtx4060_improvement',
+            result_payload=summary.model_dump(),
+        )
+
+
+    def _run_data_flywheel(self, state: StudioState, progress_callback: Any = None, fast_mode: bool = False) -> tuple[StudioState, ActionOutcome]:
+        if progress_callback:
+            progress_callback(0.05, 'Running the all-domain starter bootcamp to collect built-in data, train the first bundle, and refresh math plus visual assets.')
+        final_state, boot_outcome = self._run_universal_bootcamp(
+            state,
+            progress_callback=(lambda p, d: progress_callback(min(0.54, 0.05 + (float(p) * 0.49)), d)) if progress_callback else None,
+        )
+        if fast_mode:
+            if progress_callback:
+                progress_callback(0.62, 'Starter bootcamp finished. Skipping the deep RTX 4060 improvement loop and rechecking readiness with the fast path.')
+            improvement_payload = {
+                'mode': 'fast_path_skipped',
+                'delta_readiness_percent': 0.0,
+                'output_path': '',
+                'notes': ['Deep RTX 4060 improvement was skipped to keep this button fast. Use RTX 4060 coach for the slower full loop.'],
+            }
+            if progress_callback:
+                progress_callback(0.84, 'Running a quick readiness check on the freshly trained starter bundle.')
+            assessment_outcome = self._run_rtx4060_assessment(
+                final_state,
+                progress_callback=(lambda p, d: progress_callback(min(0.96, 0.84 + (float(p) * 0.12)), d)) if progress_callback else None,
+            )
+        else:
+            if progress_callback:
+                progress_callback(0.58, 'Starter bootcamp finished. Running the RTX 4060 improvement loop to collect stronger reviewed traces and rerun the proof cycle.')
+            improvement_outcome = self._run_rtx4060_improvement(
+                final_state,
+                progress_callback=(lambda p, d: progress_callback(min(0.86, 0.58 + (float(p) * 0.28)), d)) if progress_callback else None,
+            )
+            improvement_payload = improvement_outcome.result_payload if isinstance(improvement_outcome.result_payload, dict) else {}
+            if progress_callback:
+                progress_callback(0.9, 'Rechecking RTX 4060 readiness and preparing the next-batch data collection plan.')
+            assessment_outcome = self._run_rtx4060_assessment(
+                final_state,
+                progress_callback=(lambda p, d: progress_callback(min(0.96, 0.9 + (float(p) * 0.06)), d)) if progress_callback else None,
+            )
+        if progress_callback:
+            progress_callback(0.98, 'Packaging the one-click data collection and stronger-training report.')
+        boot_payload = boot_outcome.result_payload if isinstance(boot_outcome.result_payload, dict) else {}
+        semop_payload = boot_payload.get('semop', {}) if isinstance(boot_payload.get('semop'), dict) else {}
+        setup = semop_payload.get('autopilot_setup', {}) if isinstance(semop_payload.get('autopilot_setup'), dict) else {}
+        visual_bootcamp = boot_payload.get('visual_bootcamp', {}) if isinstance(boot_payload.get('visual_bootcamp'), dict) else {}
+        collection = visual_bootcamp.get('collection', {}) if isinstance(visual_bootcamp.get('collection'), dict) else {}
+        math_training = boot_payload.get('math_training', {}) if isinstance(boot_payload.get('math_training'), dict) else {}
+        assessment_payload = assessment_outcome.result_payload if isinstance(assessment_outcome.result_payload, dict) else {}
+        lane_summaries = []
+        for item in assessment_payload.get('data_collection_lanes', []) if isinstance(assessment_payload.get('data_collection_lanes'), list) else []:
+            if not isinstance(item, dict):
+                continue
+            lane_summaries.append(
+                f"{item.get('label', '-')}: current={item.get('current_count', 0)}, next batch={item.get('suggested_next_batch', 0)}"
+            )
+        answer_text = ('Fast collect-and-train finished. Starter data was collected, the core bundles were retrained, and readiness was rechecked without the deep RTX 4060 improvement loop.' if fast_mode else 'One-click data collection and stronger training finished. Starter data was collected, the core bundles were retrained, and the RTX 4060 improvement loop refreshed the next-batch plan.')
+        notes = [
+            f"Starter graphs seeded: {setup.get('total_seeded', 0)}",
+            f"Approved starter traces: {setup.get('approved_review_count', 0)}",
+            f"Math final average score: {float(math_training.get('final_average_score', 0.0) or 0.0):.3f}",
+            f"Visual starter scenes: {collection.get('scene_count', 0)}",
+            f"4060 readiness delta: {improvement_payload.get('delta_readiness_percent', 0)}",
+            f"4060 readiness now: {assessment_payload.get('overall_readiness_percent', 0)}%",
+        ]
+        execution_timeline = [
+            {
+                'label': 'Collect starter data',
+                'status': 'done',
+                'detail': f"Seeded {setup.get('total_seeded', 0)} starter graphs and approved {setup.get('approved_review_count', 0)} starter traces.",
+            },
+            {
+                'label': 'Train starter bundle',
+                'status': 'done',
+                'detail': f"Ran the all-domain bootcamp, math starter training, and visual starter training. Math score reached {float(math_training.get('final_average_score', 0.0) or 0.0):.3f}.",
+            },
+            {
+                'label': 'RTX 4060 improvement step',
+                'status': 'done' if not fast_mode else 'skipped',
+                'detail': (
+                    f"Refreshed reviewed traces and improved readiness by {improvement_payload.get('delta_readiness_percent', 0)} points."
+                    if not fast_mode
+                    else 'Skipped the deep 4060 improvement loop to keep this path fast. Use RTX 4060 coach for the slower full improvement.'
+                ),
+            },
+            {
+                'label': 'Re-check readiness',
+                'status': 'done',
+                'detail': f"Measured current readiness at {assessment_payload.get('overall_readiness_percent', 0)}% and rewrote the next data-batch plan.",
+            },
+        ]
+        used_inputs = [
+            f"prompt: {state.chat_prompt or '-'}",
+            f"visual input: {state.chat_image or state.vision_image or '-'}",
+            f"corpus store: {state.unified_store_path}",
+            f"review queue: {state.unified_review_queue_path}",
+            f"operating domain: {_resolve_operating_domain(state)}",
+        ]
+        generated_outputs = [
+            str(boot_payload.get('math_training_path') or ''),
+            str(boot_payload.get('reconstruction_path') or ''),
+            str(improvement_payload.get('output_path') or improvement_payload.get('report_path') or ''),
+            str(assessment_payload.get('report_path') or ''),
+        ]
+        self._append_chat_message('assistant', answer_text, route='data_flywheel', status='completed')
+        return final_state, ActionOutcome(
+            flash=('Fast collect-and-train finished. Starter data was collected, the bundle was retrained, and readiness was rechecked.' if fast_mode else 'One-click data collection and stronger training finished. New starter data, reviewed traces, and the improvement report are ready.'),
+            flash_tone='success',
+            result_kind='data_flywheel',
+            result_payload={
+                'route': 'data_flywheel',
+                'fast_mode': fast_mode,
+                'status': 'completed',
+                'prompt': state.chat_prompt,
+                'answer_text': answer_text,
+                'process_summary': 'This button collected starter data, trained the starter bundle, and then rechecked current readiness. The deep RTX 4060 improvement loop only runs in full mode.',
+                'execution_timeline': execution_timeline,
+                'used_inputs': used_inputs,
+                'generated_outputs': [item for item in generated_outputs if item],
+                'notes': notes,
+                'data_collection': {
+                    'starter_graphs': setup.get('total_seeded', 0),
+                    'approved_starter_traces': setup.get('approved_review_count', 0),
+                    'visual_starter_scenes': collection.get('scene_count', 0),
+                    'next_batches': lane_summaries,
+                },
+                'universal_bootcamp': boot_payload,
+                'rtx4060_improvement': improvement_payload,
+                'rtx4060_assessment': assessment_payload,
+                'math_training_path': str(boot_payload.get('math_training_path') or ''),
+                'reconstruction_path': str(boot_payload.get('reconstruction_path') or ''),
+            },
+        )
+
+    @staticmethod
     def _run_understanding_eval(state: StudioState, progress_callback: Any = None) -> ActionOutcome:
         if progress_callback:
             progress_callback(0.18, 'Loading hidden-premise and VLSO evaluation files.')
@@ -3124,6 +5448,7 @@ def render_page(
     outcome: ActionOutcome,
     job_snapshot: dict[str, object],
     notification_snapshot: dict[str, object],
+    chat_snapshot: dict[str, object],
 ) -> str:
     flash_html = ''
     if outcome.flash:
@@ -3131,15 +5456,22 @@ def render_page(
     result_html = render_result(outcome.result_kind, outcome.result_payload)
     snapshot_html = render_workspace_snapshot(state, outcome.result_kind)
     spotlight_html = render_result_spotlight(outcome.result_kind, outcome.result_payload)
-    job_panel_html = _render_job_queue_panel(job_snapshot)
-    notification_panel_html = _render_notification_panel(notification_snapshot)
     refresh_html = "<meta http-equiv='refresh' content='2'>" if job_snapshot.get('has_active') else ''
     unread_count = int(notification_snapshot.get('unread_count', 0) or 0)
     title_prefix = f'({unread_count}) ' if unread_count else ''
-    vision_preview = _local_image_data_uri(state.vision_image)
-    vision_preview_html = "<div class='empty'>Set a local image path to preview it here.</div>"
+    preview_source = str(state.chat_image or '').strip() or state.vision_image
+    vision_preview = _local_image_data_uri(preview_source)
+    vision_preview_html = "<div class='empty'>Add an image or video path if you want visual help.</div>"
     if vision_preview:
         vision_preview_html = f"<img class='hero-preview' src='{vision_preview}' alt='vision preview'>"
+    quick_metrics = ''.join([
+        _metric_card('Latest run', outcome.result_kind or 'none'),
+        _metric_card('Unread alerts', unread_count),
+        _metric_card('Running jobs', job_snapshot.get('running_count', 0)),
+        _metric_card('Visual input', 'ready' if preview_source and Path(preview_source).exists() else 'optional'),
+    ])
+    active_job_banner = _render_active_job_banner(job_snapshot)
+    advanced_drawers = _render_advanced_drawers(state, job_snapshot, notification_snapshot, snapshot_html)
     return f"""
 <!doctype html>
 <html lang="en">
@@ -3149,124 +5481,154 @@ def render_page(
 {refresh_html}
 <title>{html.escape(title_prefix)}SemOp Studio</title>
 <style>
-:root {{ --bg:#f3eee4; --card:rgba(255,252,246,.92); --line:#d4d8cf; --ink:#17241d; --muted:#58685f; --accent:#245842; --soft:#eef5ef; --ok:#266747; --warn:#a5542d; --shadow:0 18px 44px rgba(23,36,29,.09); }}
+:root {{ --bg:#f4efe6; --card:rgba(255,252,247,.95); --line:#d7ddd2; --ink:#17241d; --muted:#56665c; --accent:#235842; --accent-soft:#eef5ef; --warm:#fff6ea; --ok:#266747; --warn:#b85e30; --shadow:0 18px 44px rgba(23,36,29,.09); }}
 * {{ box-sizing:border-box; }}
 html {{ scroll-behavior:smooth; }}
-body {{ margin:0; color:var(--ink); background:radial-gradient(circle at top left, rgba(212,134,46,.18), transparent 24%), radial-gradient(circle at top right, rgba(36,88,66,.14), transparent 28%), linear-gradient(180deg,#f8f1e6 0%,#edf4ef 100%); font-family:"Aptos","Segoe UI Variable","Segoe UI","Malgun Gothic",sans-serif; }}
-main {{ max-width:1360px; margin:0 auto; padding:24px 18px 48px; }}
+body {{ margin:0; color:var(--ink); background:radial-gradient(circle at top left, rgba(212,134,46,.16), transparent 24%), radial-gradient(circle at top right, rgba(36,88,66,.12), transparent 28%), linear-gradient(180deg,#fbf6ee 0%,#eef5ef 100%); font-family:"Aptos","Segoe UI Variable","Segoe UI","Malgun Gothic",sans-serif; }}
+main {{ max-width:1480px; margin:0 auto; padding:18px; }}
 a {{ color:inherit; text-decoration:none; }}
-h1 {{ margin:0 0 10px; font-size:38px; line-height:1.08; letter-spacing:-.04em; }}
-h2 {{ margin:0; font-size:22px; letter-spacing:-.02em; }}
+h1 {{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.04em; }}
+h2 {{ margin:0; font-size:24px; letter-spacing:-.02em; }}
 h3 {{ margin:0 0 10px; font-size:17px; }}
-p,li,label,small {{ color:var(--muted); line-height:1.6; }}
-.hero, .grid, .dashboard-grid, .mini-grid {{ display:grid; gap:18px; }}
-.hero {{ grid-template-columns:1.25fr .95fr; margin-bottom:20px; }}
-.dashboard-grid {{ grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); margin-bottom:20px; }}
-.grid {{ grid-template-columns:1fr 1fr; }}
-.mini-grid {{ grid-template-columns:1fr 1fr; }}
-.card, .lane-card, .spotlight-card {{ background:var(--card); border:1px solid rgba(113,138,123,.24); border-radius:24px; box-shadow:var(--shadow); }}
+p,li,label,small,em {{ color:var(--muted); line-height:1.6; }}
+strong {{ color:var(--ink); }}
+.card, .lane-card, .spotlight-card, .drawer-card, .action-card, .chat-history-card, .composer-card {{ background:var(--card); border:1px solid rgba(113,138,123,.24); border-radius:24px; box-shadow:var(--shadow); }}
 .card {{ padding:22px; }}
 .lane-card {{ padding:18px; }}
 .spotlight-card {{ padding:22px; background:linear-gradient(145deg, rgba(255,250,243,.98), rgba(239,247,240,.95)); }}
 .eyebrow {{ display:inline-block; margin-bottom:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); font-weight:700; font-size:11px; }}
-.hero p {{ margin:0 0 16px; font-size:16px; }}
-.hero-actions, .actions, .nav-row {{ display:flex; gap:10px; flex-wrap:wrap; }}
-.nav-pill, button {{ border:0; border-radius:999px; padding:11px 14px; font:inherit; cursor:pointer; }}
-.nav-pill {{ background:var(--soft); color:var(--accent); font-weight:700; }}
+textarea, input, select {{ width:100%; padding:14px 16px; border:1px solid var(--line); border-radius:18px; font:inherit; background:#fff; }}
+textarea {{ min-height:138px; resize:vertical; }}
+button, .nav-pill {{ border:0; border-radius:999px; padding:12px 16px; font:inherit; cursor:pointer; }}
 button.primary {{ background:var(--accent); color:#fff; font-weight:700; }}
-button.secondary {{ background:var(--soft); color:var(--ink); font-weight:700; }}
-textarea, input, select {{ width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:16px; font:inherit; background:#fff; }}
-textarea {{ min-height:120px; resize:vertical; }}
+button.secondary {{ background:var(--accent-soft); color:var(--ink); font-weight:700; }}
+button.wide {{ width:100%; }}
+button.compact {{ padding:8px 12px; font-size:13px; }}
+.chip-button {{ background:#fff; border:1px solid var(--line); color:var(--ink); padding:10px 14px; border-radius:999px; font:inherit; cursor:pointer; }}
 .flash {{ margin-bottom:16px; padding:13px 15px; border-radius:16px; background:#edf4f8; color:var(--accent); }}
 .flash.success {{ background:#ebf8ef; color:var(--ok); }}
 .flash.error {{ background:#fff1eb; color:var(--warn); }}
+.app-shell {{ display:grid; grid-template-columns:330px minmax(0, 1fr); gap:20px; align-items:start; }}
+.sidebar-stack, .main-stack {{ display:grid; gap:18px; }}
+.brand-card {{ padding:24px; }}
+.brand-card p {{ margin:10px 0 0; font-size:15px; }}
+.kid-note {{ background:var(--warm); border:1px solid rgba(212,134,46,.28); border-radius:18px; padding:14px; margin-top:14px; }}
+.simple-step-list {{ margin:12px 0 0; padding-left:18px; }}
 .summary-grid {{ display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin:14px 0; }}
+.mini-summary {{ margin-top:12px; }}
 .metric-card {{ background:#f6f8f4; border:1px solid var(--line); border-radius:16px; padding:12px; }}
 .metric-card small {{ display:block; margin-bottom:6px; }}
 .metric-card strong {{ display:block; font-size:16px; line-height:1.35; word-break:break-word; }}
 .info-block {{ background:#fbfcfa; border:1px solid var(--line); border-radius:16px; padding:12px 14px; margin-top:10px; }}
 .info-block small {{ display:block; margin-bottom:6px; }}
-.section-head {{ display:flex; justify-content:space-between; gap:18px; align-items:end; margin-bottom:14px; }}
-.section-head p {{ margin:6px 0 0; }}
-.lane-top p {{ margin:6px 0 0; }}
 .hero-preview-wrap {{ aspect-ratio:4 / 3; border-radius:20px; overflow:hidden; background:#e8eee8; border:1px solid var(--line); }}
 .hero-preview {{ width:100%; height:100%; object-fit:cover; display:block; }}
+.chat-shell {{ padding:24px; }}
+.chat-shell-top {{ display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:14px; }}
+.status-badges, .actions, .hero-actions, .nav-row, .chip-row {{ display:flex; gap:10px; flex-wrap:wrap; }}
+.simple-helper-grid {{ display:grid; grid-template-columns:1.1fr .9fr; gap:14px; margin-bottom:14px; }}
+.assistant-welcome {{ display:flex; gap:14px; align-items:flex-start; background:#f8fbf7; border:1px solid var(--line); border-radius:18px; padding:16px; }}
+.assistant-avatar {{ width:44px; height:44px; border-radius:16px; display:flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-weight:800; font-size:20px; flex:0 0 auto; }}
+.quick-prompts {{ background:#fff9f1; border:1px solid rgba(212,134,46,.22); border-radius:18px; padding:16px; }}
+.chat-history-card, .composer-card {{ padding:18px; margin-top:14px; }}
+.simple-action-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-top:14px; }}
+.action-card {{ padding:18px; }}
+.action-card p {{ margin:0 0 12px; min-height:70px; }}
+.primary-actions {{ margin-top:12px; }}
+.more-actions {{ margin-top:12px; }}
+.more-actions summary {{ cursor:pointer; color:var(--accent); font-weight:700; }}
+.section-head {{ display:flex; justify-content:space-between; gap:18px; align-items:end; margin-bottom:14px; }}
+.section-head p {{ margin:6px 0 0; }}
+.dashboard-grid, .grid, .mini-grid {{ display:grid; gap:18px; }}
+.dashboard-grid {{ grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); }}
+.grid {{ grid-template-columns:1fr 1fr; }}
+.mini-grid {{ grid-template-columns:1fr 1fr; }}
+.drawer-card {{ overflow:hidden; }}
+.drawer-card summary {{ list-style:none; cursor:pointer; padding:18px 20px; display:flex; align-items:center; justify-content:space-between; }}
+.drawer-card summary::-webkit-details-marker {{ display:none; }}
+.drawer-card summary span {{ display:grid; gap:4px; }}
+.drawer-card summary strong {{ font-size:18px; }}
+.drawer-card summary em {{ font-style:normal; }}
+.drawer-body {{ padding:0 18px 18px; }}
+.result-stack {{ display:grid; gap:18px; }}
 .spotlight-list {{ margin:12px 0 0; padding-left:18px; }}
 .spotlight-list li {{ margin-bottom:6px; }}
-.raw-json summary {{ cursor:pointer; color:var(--accent); font-weight:700; margin-bottom:10px; }}
+.raw-json summary, .job-log summary {{ cursor:pointer; color:var(--accent); font-weight:700; margin-bottom:10px; }}
 pre {{ background:#14211c; color:#eff7f0; border-radius:18px; padding:16px; overflow:auto; white-space:pre-wrap; }}
 .empty {{ border:1px dashed var(--line); border-radius:16px; padding:20px; color:var(--muted); }}
 .inline {{ display:flex; align-items:center; gap:8px; margin-top:12px; }}
 .inline input {{ width:auto; }}
-.status-chip {{ display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:999px; background:var(--soft); color:var(--accent); font-size:12px; font-weight:700; text-transform:capitalize; }}
+.status-chip {{ display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:700; text-transform:capitalize; }}
 .job-progress {{ margin-top:10px; height:10px; border-radius:999px; background:#dfe8df; overflow:hidden; }}
 .job-progress span {{ display:block; height:100%; background:linear-gradient(90deg, #245842, #d4862e); border-radius:999px; }}
-.job-row {{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#f7faf6; margin-top:10px; }}
+.job-row {{ border:1px solid var(--line); border-radius:18px; padding:12px 14px; background:#f7faf6; margin-top:10px; }}
 .job-row-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; }}
 .job-meta {{ margin-top:8px; color:var(--muted); font-size:13px; }}
 .job-list {{ margin-top:8px; }}
 .job-actions {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }}
 .job-recovery {{ margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); }}
 .job-recovery small {{ display:block; margin-bottom:6px; }}
-.job-log {{ margin-top:10px; }}
-.job-log summary {{ cursor:pointer; color:var(--accent); font-weight:700; }}
 .job-log-line {{ display:flex; gap:10px; align-items:flex-start; margin-top:8px; font-size:13px; }}
 .job-log-line span {{ color:var(--muted); min-width:56px; }}
 .job-log-line code {{ white-space:pre-wrap; background:#f2f6f1; border-radius:10px; padding:4px 8px; color:var(--ink); flex:1; }}
+.chat-user {{ background:#eef5ef; }}
+.chat-assistant {{ background:#fff8ef; }}
 .notification-row {{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#f7faf6; margin-top:10px; }}
 .notification-row.unread {{ border-color:#d4862e; background:#fff8ef; }}
 .notification-row.error {{ background:#fff3ec; }}
 .notification-row.success {{ background:#eef8f0; }}
 .notification-row.neutral {{ background:#f5f7f5; }}
 .mini-form {{ margin:0; }}
-button.compact {{ padding:8px 12px; font-size:13px; }}
-@media (max-width:1080px) {{ .hero, .grid, .mini-grid {{ grid-template-columns:1fr; }} }}
+@media (max-width:1180px) {{ .app-shell {{ grid-template-columns:1fr; }} .simple-helper-grid, .grid, .mini-grid {{ grid-template-columns:1fr; }} }}
 </style>
+<script>
+function fillStudioPrompt(prompt, imagePath) {{
+  const promptBox = document.getElementById('chat_prompt_box');
+  const imageBox = document.getElementById('chat_image_box');
+  if (promptBox) promptBox.value = prompt || '';
+  if (imageBox && imagePath !== undefined && imagePath !== null) imageBox.value = imagePath || '';
+  if (promptBox) promptBox.focus();
+}}
+</script>
 </head>
 <body>
 <main>
-  <section class="hero">
-    <div class="card">
-      <small class="eyebrow">SemOp Studio</small>
-      <h1>Train, inspect, and gate the operator-algebra stack from one friendly local UI.</h1>
-      <p>This studio is the product-facing entry point for context reasoning, visual grounding, unified artifact training, and benchmark-gated learning. Keep the older GUIs for power-user data operations; stay here for the main loop.</p>
-      <div class="hero-actions">
-        <a class="nav-pill" href="#reasoning-lab">Try reasoning</a>
-        <a class="nav-pill" href="#autopilot-lab">Do everything</a>
-        <a class="nav-pill" href="#beginner-lab">One-click mode</a>
-        <a class="nav-pill" href="#training-lab">Train artifacts</a>
-        <a class="nav-pill" href="#benchmark-lab">Benchmark gate</a>
-        <a class="nav-pill" href="#compare-lab">Compare outputs</a>
-        <a class="nav-pill" href="#notification-panel">Alerts</a>
-        <a class="nav-pill" href="#job-panel">Live jobs</a>
-        <a class="nav-pill" href="#result-panel">See results</a>
-      </div>
-    </div>
-    <div class="card">
-      <small class="eyebrow">Starter flow</small>
-      <h2>Use the same order every time.</h2>
-      <ol>
-        <li>For the easiest path, press Do everything for me once.</li>
-        <li>Watch the Live jobs card while long tasks run in the background.</li>
-        <li>If the gate is blocked at 0.0, use Guided starter loop once.</li>
-        <li>Inspect the diagnosis and keep only accepted bundles.</li>
-      </ol>
-      <div class="hero-preview-wrap">{vision_preview_html}</div>
+  {flash_html}
+  <section class="app-shell">
+    <aside class="sidebar-stack">
+      <section class="card brand-card">
+        <small class="eyebrow">SemOp Studio</small>
+        <h1>Talk to your local AGI lab.</h1>
+        <p>Use this like ChatGPT. Ask a question, attach an image or video if needed, and press one button.</p>
+        <div class="kid-note"><strong>Easy start</strong><br>You do not need to understand benchmark gates, repair policies, or stores first. Start with the chat box. Use the bigger buttons only when you want the system to learn more.</div>
+        <ol class="simple-step-list">
+          <li>Type one question in Unified chat.</li>
+          <li>If the answer is weak, press <strong>Collect + train + answer</strong>.</li>
+          <li>If you want the whole environment to get smarter, press <strong>Self-improve this environment</strong>.</li>
+        </ol>
+        <div class="summary-grid mini-summary">{quick_metrics}</div>
+      </section>
+      <section class="card">
+        <small class="eyebrow">Preview</small>
+        <h2>Optional picture or video</h2>
+        <p>If you attach a visual path, the same chat can understand images, folders of frames, GIFs, or videos.</p>
+        <div class="hero-preview-wrap">{vision_preview_html}</div>
+      </section>
+    </aside>
+    <div class="main-stack">
+      {active_job_banner}
+      {_render_unified_chat_section(state, chat_snapshot)}
+      <section class="result-stack">
+        {spotlight_html}
+        <section class="card" id="result-panel"><div class="section-head"><div><small class="eyebrow">Result console</small><h2>Latest run</h2><p>First read the short summary. Open the raw payload only if you need details.</p></div></div>{result_html}</section>
+      </section>
+      <section class="card" id="easy-actions-lab">
+        <div class="section-head"><div><small class="eyebrow">Beginner super buttons</small><h2>Big actions when you do not want to think about the system</h2><p>These are the easiest safe paths for kids, beginners, and tired developers.</p></div></div>
+        <div class="simple-action-grid">{_render_primary_action_cards(state)}</div>
+      </section>
+      {advanced_drawers}
     </div>
   </section>
-  {flash_html}
-  <section class="dashboard-grid">{snapshot_html}</section>
-  <section style="margin-bottom:20px;">{spotlight_html}</section>
-  {notification_panel_html}
-  {job_panel_html}
-  {_render_autopilot_coach_section(state)}
-  {_render_beginner_section(state)}
-  {_render_reasoning_section(state)}
-  {_render_training_section(state)}
-  {_render_benchmark_section(state)}
-  {_render_compare_section(state)}
-  {_render_notes_section()}
-  <section class="card" id="result-panel" style="margin-top:20px;"><div class="section-head"><div><small class="eyebrow">Result console</small><h2>Latest run</h2><p>Every action returns a compact summary first and the full structured payload below it.</p></div></div>{result_html}</section>
 </main>
 </body>
 </html>
@@ -3287,11 +5649,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, body: str) -> None:
         encoded = body.encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Browsers can cancel or refresh while the page is still rendering.
+            # This is harmless for the local studio, so keep the server quiet.
+            return
 
     def log_message(self, format: str, *args) -> None:
         return

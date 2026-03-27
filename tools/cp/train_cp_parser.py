@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--local-files-only", action="store_true", help="only load tokenizer/model from local cache or local path")
     parser.add_argument("--allow-failed-episodes", action="store_true", help="include failed compile/validation episodes in the training set")
     parser.add_argument("--use-lora", action="store_true", help="wrap the parser model with a LoRA adapter")
+    parser.add_argument("--use-qlora", action="store_true", help="request 4-bit QLoRA when bitsandbytes and CUDA are available")
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
@@ -36,6 +37,8 @@ def main() -> None:
     parser.add_argument("--resume-from-checkpoint", help="resume training from a checkpoint directory")
     parser.add_argument("--save-steps", type=int, default=25)
     parser.add_argument("--save-total-limit", type=int, default=2)
+    parser.add_argument("--hardware-profile", default="auto", help="auto, rtx_4060_8gb, cuda_low_vram, cuda_general, or cpu_only")
+    parser.add_argument("--disable-auto-hw-tune", action="store_true", help="disable automatic RTX 4060 / low-VRAM training safeguards")
     args = parser.parse_args()
 
     if not args.train_jsonl and not args.episode_store:
@@ -57,6 +60,7 @@ def main() -> None:
         local_files_only=args.local_files_only,
         allow_failed_episodes=args.allow_failed_episodes,
         use_lora=args.use_lora,
+        use_qlora=args.use_qlora,
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
@@ -64,6 +68,8 @@ def main() -> None:
         resume_from_checkpoint=args.resume_from_checkpoint,
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
+        hardware_profile=args.hardware_profile,
+        auto_configure_for_local_gpu=not args.disable_auto_hw_tune,
     )
     summary = CpParserTrainingScaffold().run(config)
     print(json.dumps(summary, ensure_ascii=False, indent=2))

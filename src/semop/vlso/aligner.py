@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .types import SharedWorldModel, VLSOEntity, VLSORelation
+from .types import SharedWorldModel, VLSOEntity, VLSOEvent, VLSORelation
 
 
 class VLSOAligner:
@@ -21,6 +21,8 @@ class VLSOAligner:
             destination.add_relation(relation)
         for operator in source.operators:
             destination.add_operator(operator)
+        for event in getattr(source, 'events', []):
+            destination.add_event(event)
         destination.goals.extend(item for item in source.goals if item not in destination.goals)
         destination.constraints.extend(item for item in source.constraints if item not in destination.constraints)
         destination.warnings.extend(item for item in source.warnings if item not in destination.warnings)
@@ -53,6 +55,10 @@ class VLSOAligner:
         if any(relation == "PART_OF" and target == "bag" for _, relation, target in relations):
             world.add_relation(VLSORelation(source="bag", relation="HAS", target="interior", modality="shared", confidence=0.6))
             world.add_entity(VLSOEntity(id="interior", label="interior", modality="shared", entity_type="region"))
+        if any(relation == "AFFORDS" and target == "open_access_action" for _, relation, target in relations):
+            world.inferred_steps.append("The visual world model includes an access-opening affordance.")
+        if getattr(world, 'events', []):
+            world.audit_trace.append(f'cross-modal temporal merge preserved {len(world.events)} event(s)')
 
     def _align_hidden_premises(self, world: SharedWorldModel) -> None:
         hidden_premises = world.metadata.get('hidden_premises', []) if isinstance(world.metadata, dict) else []

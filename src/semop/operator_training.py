@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 from .distillation import DistillationSftRecord
+from .hardware_profiles import detect_local_hardware
 
 
 @dataclass
@@ -32,6 +33,8 @@ class OperatorTrainConfig:
     resume_from_checkpoint: str | None = None
     save_steps: int = 25
     save_total_limit: int = 2
+    hardware_profile: str = 'auto'
+    auto_configure_for_local_gpu: bool = True
 
     def model_dump(self) -> dict[str, Any]:
         return asdict(self)
@@ -145,37 +148,48 @@ class OperatorTrainingScaffold:
         return str(snapshots[-1])
 
     @staticmethod
-    def _device_summary() -> dict[str, Any]:
-        try:
-            import torch
-        except Exception:
-            return {'torch_available': False, 'device': 'cpu'}
-        cuda_available = bool(torch.cuda.is_available())
-        summary: dict[str, Any] = {'torch_available': True, 'device': 'cuda' if cuda_available else 'cpu', 'cuda_available': cuda_available}
-        if cuda_available:
-            summary['gpu_name'] = torch.cuda.get_device_name(0)
-            try:
-                props = torch.cuda.get_device_properties(0)
-                summary['vram_gb'] = round(props.total_memory / (1024 ** 3), 2)
-            except Exception:
-                pass
+    def _device_summary(preferred_profile: str = 'auto') -> dict[str, Any]:
+        profile = detect_local_hardware(preferred_profile)
+        summary = profile.model_dump()
+        summary['torch_available'] = True
         return summary
 
+    @staticmethod
+    def _apply_hardware_profile(config: OperatorTrainConfig):
+        profile = detect_local_hardware(config.hardware_profile)
+        if not config.auto_configure_for_local_gpu:
+            return config, profile
+        effective = replace(config)
+        if profile.detected_profile in {'rtx_4060_8gb', 'cuda_low_vram'}:
+            effective.batch_size = 1
+            effective.gradient_accumulation_steps = max(int(effective.gradient_accumulation_steps), int(profile.recommended_gradient_accumulation))
+            effective.max_length = min(int(effective.max_length), 640)
+            effective.use_lora = True
+            effective.use_qlora = bool(profile.recommended_use_qlora or effective.use_qlora)
+            effective.save_total_limit = min(max(1, int(effective.save_total_limit)), 2)
+        elif profile.cuda_available:
+            effective.use_lora = bool(effective.use_lora or profile.recommended_use_lora)
+        return effective, profile
+
     def run(self, config: OperatorTrainConfig) -> dict[str, Any]:
-        records = self.load_sft_records(config.train_jsonl)
-        output_dir = Path(config.output_dir)
+        effective_config, hardware_profile = self._apply_hardware_profile(config)
+        records = self.load_sft_records(effective_config.train_jsonl)
+        output_dir = Path(effective_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         summary: dict[str, Any] = {
             'config': config.model_dump(),
+            'effective_config': effective_config.model_dump(),
             'num_records': len(records),
-            'device_summary': self._device_summary(),
-            'train_jsonl': config.train_jsonl,
-            'resume_from_checkpoint': config.resume_from_checkpoint,
+            'device_summary': self._device_summary(effective_config.hardware_profile),
+            'hardware_profile': hardware_profile.model_dump(),
+            'operator_algebra_mode': hardware_profile.operator_algebra_mode,
+            'train_jsonl': effective_config.train_jsonl,
+            'resume_from_checkpoint': effective_config.resume_from_checkpoint,
         }
-        if config.dry_run:
+        if effective_config.dry_run:
             plan_path = output_dir / 'operator_training_plan.json'
             plan_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
-            self._save_run_metadata(output_dir, config, config.model_name_or_path)
+            self._save_run_metadata(output_dir, effective_config, effective_config.model_name_or_path)
             summary['mode'] = 'dry_run'
             summary['plan_path'] = str(plan_path)
             return summary
@@ -201,18 +215,18 @@ class OperatorTrainingScaffold:
                 attention_mask = encoded['attention_mask'][0]
                 return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': input_ids.clone()}
 
-        model_source = self._resolve_local_model_source(config.model_name_or_path) if config.local_files_only else config.model_name_or_path
+        model_source = self._resolve_local_model_source(effective_config.model_name_or_path) if effective_config.local_files_only else effective_config.model_name_or_path
         summary['resolved_model_source'] = model_source
-        effective_resume, resume_info = self.resolve_resume_checkpoint(output_dir, config.resume_from_checkpoint, config, model_source)
+        effective_resume, resume_info = self.resolve_resume_checkpoint(output_dir, effective_config.resume_from_checkpoint, effective_config, model_source)
         summary.update(resume_info)
-        if config.local_files_only:
+        if effective_config.local_files_only:
             os.environ.setdefault('HF_HUB_OFFLINE', '1')
             os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
-        tokenizer = AutoTokenizer.from_pretrained(model_source, local_files_only=config.local_files_only)
+        tokenizer = AutoTokenizer.from_pretrained(model_source, local_files_only=effective_config.local_files_only)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        model_kwargs: dict[str, Any] = {'local_files_only': config.local_files_only}
-        if config.use_qlora:
+        model_kwargs: dict[str, Any] = {'local_files_only': effective_config.local_files_only, 'low_cpu_mem_usage': True}
+        if effective_config.use_qlora:
             try:
                 import torch
                 if torch.cuda.is_available():
@@ -220,37 +234,40 @@ class OperatorTrainingScaffold:
                     model_kwargs['device_map'] = 'auto'
             except Exception:
                 pass
+        if not effective_config.use_qlora and hardware_profile.cuda_available:
+            model_kwargs['torch_dtype'] = torch.float16
         model = AutoModelForCausalLM.from_pretrained(model_source, **model_kwargs)
         if hasattr(model, 'gradient_checkpointing_enable'):
             model.gradient_checkpointing_enable()
         if hasattr(model, 'config'):
             model.config.use_cache = False
-        if config.use_lora:
+        if effective_config.use_lora:
             try:
                 from peft import LoraConfig, TaskType, get_peft_model
             except Exception as exc:
                 raise RuntimeError('LoRA/QLoRA requested but peft is not available.') from exc
-            target_modules = config.lora_target_modules or ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
-            lora_config = LoraConfig(task_type=TaskType.CAUSAL_LM, r=config.lora_rank, lora_alpha=config.lora_alpha, lora_dropout=config.lora_dropout, target_modules=target_modules, bias='none')
+            target_modules = effective_config.lora_target_modules or ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+            lora_config = LoraConfig(task_type=TaskType.CAUSAL_LM, r=effective_config.lora_rank, lora_alpha=effective_config.lora_alpha, lora_dropout=effective_config.lora_dropout, target_modules=target_modules, bias='none')
             model = get_peft_model(model, lora_config)
             summary['lora_target_modules'] = target_modules
-        dataset = SftDataset(records, tokenizer, config.max_length)
+        dataset = SftDataset(records, tokenizer, effective_config.max_length)
         use_cuda = bool(torch.cuda.is_available())
         training_kwargs = {
             'output_dir': str(output_dir),
-            'per_device_train_batch_size': config.batch_size,
-            'gradient_accumulation_steps': config.gradient_accumulation_steps,
-            'learning_rate': config.learning_rate,
-            'max_steps': config.max_steps,
-            'warmup_steps': config.warmup_steps,
-            'logging_steps': max(1, min(10, config.max_steps)),
-            'save_steps': max(1, config.save_steps),
-            'save_total_limit': max(1, config.save_total_limit),
+            'per_device_train_batch_size': effective_config.batch_size,
+            'gradient_accumulation_steps': effective_config.gradient_accumulation_steps,
+            'learning_rate': effective_config.learning_rate,
+            'max_steps': effective_config.max_steps,
+            'warmup_steps': effective_config.warmup_steps,
+            'logging_steps': max(1, min(10, effective_config.max_steps)),
+            'save_steps': max(1, effective_config.save_steps),
+            'save_total_limit': max(1, effective_config.save_total_limit),
             'report_to': [],
-            'fp16': False,
+            'fp16': bool(hardware_profile.cuda_available),
             'bf16': False,
-            'seed': config.seed,
+            'seed': effective_config.seed,
             'remove_unused_columns': False,
+            'optim': 'paged_adamw_8bit' if effective_config.use_qlora and hardware_profile.bitsandbytes_available else 'adamw_torch',
         }
         try:
             args = TrainingArguments(**training_kwargs, overwrite_output_dir=False)
@@ -267,7 +284,7 @@ class OperatorTrainingScaffold:
                 trainer.train(resume_from_checkpoint=None)
             else:
                 raise
-        self._save_run_metadata(output_dir, config, model_source)
+        self._save_run_metadata(output_dir, effective_config, model_source)
         trainer.save_model(str(output_dir / 'final_model'))
         tokenizer.save_pretrained(str(output_dir / 'final_model'))
         latest_checkpoint = self.find_latest_checkpoint(output_dir)

@@ -3,6 +3,9 @@ from .baseline_runner import BASELINE_SPECS, BaselineRunner, BaselineSpec
 from .context_chunks import TextChunk, split_context_into_chunks
 from .context_understanding import OperatorContextAnalyzer
 from .continuous_learning import ContinuousLearningBundleBuilder, ContinuousLearningBundleSummary, build_continuous_learning_bundle
+from .environment_brain import EnvironmentBrainRunner, EnvironmentBrainSummary, EnvironmentConceptStat, EnvironmentRoutineStat, EnvironmentProbe
+from .adaptive_environment_learning import AdaptiveActionRehearsal, AdaptiveActionStep, AdaptiveEnvironmentAxis, AdaptiveEnvironmentLearningRunner, AdaptiveEnvironmentLearningSummary
+from .recursive_self_evolution import EvolvingImprovementProgram, RecursiveSelfEvolutionRunner, RecursiveSelfEvolutionSummary, SelfEvolutionGenerationSummary
 from .graph_supervision import GraphSupervisionExample, GraphSupervisionExporter, GraphSupervisionExportSummary, export_graph_supervision_from_graphs
 from .analogy_policy import AnalogyPolicyModel, AnalogyPolicyScorer, AnalogyPolicyTrainer, AnalogyPolicyTrainingSummary
 from .unified_parser import LearnedUnifiedParser, UnifiedParserModel, UnifiedParserTrainer, UnifiedParserTrainingSummary
@@ -13,6 +16,7 @@ from .repair_utility import RepairUtilityModel, RepairUtilityScorer, RepairUtili
 from .retained_repair_programs import RetainedRepairProgramLibrary, RetainedRepairProgramModel, RetainedRepairProgramRecord, RetainedRepairProgramTrainer, RetainedRepairProgramTrainingSummary, train_retained_repair_programs_from_graphs
 from .unified_benchmark import AnalogyEvalCase, BenchmarkGateDecision, BenchmarkGateThresholds, BenchmarkGatedContinuousTrainer, BenchmarkGatedTrainingSummary, BenchmarkSliceSummary, CompilerRepairEvalCase, GroundedExplanationEvalCase, PersistentBenchmarkCorpusSummary, PromotedReviewBenchmarkCases, UnifiedBenchmarkHarness, UnifiedBenchmarkSummary, UnifiedSemOpArtifacts, UnifiedSemOpTrainer, UnifiedSemOpTrainingSummary
 from .generalization_proof import GeneralizationGoalAxis, GeneralizationGoalTracker, GeneralizationProofEvidence, GeneralizationProofHarness, GeneralizationProofRound, GeneralizationProofSummary
+from .grounding_self_evolution import GroundingReflection, GroundingSelfEvolutionRound, GroundingSelfEvolutionRunner, GroundingSelfEvolutionSummary
 from .cp_knowledge import CpAlgorithmKnowledge, CpDslOperator, CpKnowledgeBase, CpKnowledgeLoader, CpLogicalFrame
 from .cp_corpus import CpCorpusBuilder, CpCorpusRecord
 from .cp_dataset import CpDslExample, load_cp_dsl_examples, save_cp_dsl_examples
@@ -27,6 +31,11 @@ from .cp_training import CpDslDatasetBuilder, CpParserTrainConfig, CpParserTrain
 from .cp_validation import CpSampleCase, CpSolutionValidator, CpValidationReport, CppBuildResult, CppRunResult, CppProgramRunner
 from .cp_repair import CpRepairAttempt, CppRepairEngine
 from .contest_programmer import CompetitiveProgrammingReasoner, ContestProblemStructure, ContestSolution
+from .capability_audit import CapabilityAuditRunner, CapabilityAuditSummary, CapabilityAxisStatus
+from .capability_coach import CapabilityImprovementRunner, CapabilityImprovementSummary, CapabilityCurriculumRound
+from .rtx4060_coach import RTX4060CollectionLane, RTX4060OptimizationSummary, RTX4060ReasoningCoach
+from .concept_fusion import ConceptFusionEngine, ConceptFusionHypothesis, ConceptFusionSummary
+from .ultimate_agi_readiness import UltimateAGIAxis, UltimateAGIReadinessRunner, UltimateAGIReadinessSummary
 from .common_eval import SemOpCommonEvaluator, SemOpEvalSnapshot
 from .corpus_builder import CorpusBuilder
 from .corpus_learning import CorpusReasoningLearner
@@ -40,8 +49,11 @@ from .domain_templates import DOMAIN_TEMPLATES
 from .emergent_operators import EmergentOperatorInducer
 from .feedback_rules import FeedbackRule, FeedbackRuleSet
 from .hard_problem_engine import HardProblemCandidate, HardProblemEngine, HardProblemReport, PatternOutcomeTrainer, VerificationCheck
+from .hardware_profiles import LocalDependencyStatus, LocalHardwareProfile, detect_local_hardware, detect_local_ml_stack, recommended_generation_tokens, should_force_4bit
 from .intelligence_map import IntelligenceAxis, IntelligenceSubsystem, OperatorIntelligenceMap, build_operator_intelligence_map
 from .labeled_eval import LabeledOpsCase, LabeledOpsCaseResult, LabeledOpsEvaluator, load_labeled_ops_cases
+from .leworldmodel_adapter import LeWorldModelAdapter, LeWorldModelAlignment, LeWorldModelArtifact, LeWorldModelSequenceRecord
+from .leworldmodel_planner import LeWorldModelPlan, LeWorldModelPlannedAction, LeWorldModelTrajectoryPlanner
 from .logical_grammar import GrammarInductionResult, LogicalGrammarInducer, LogicalPattern, LogicalPatternMatch, LogicalPatternMatcher
 from .memory_prior_eval import MemoryPriorEvaluationResult, MemoryPriorEvaluator, QueryPriorEffect
 from .multimodal_alignment_memory import MultimodalAlignmentMemory, MultimodalAlignmentModel, MultimodalAlignmentRecord, MultimodalAlignmentTrainer, MultimodalAlignmentTrainingSummary, train_multimodal_alignment_from_graphs
@@ -68,16 +80,24 @@ from .public_corpus_pipeline import ManifestEntry, ManifestRunSummary, PublicCor
 from .rag_baseline import PlainRagBaseline, RagBaselineResult
 from .remote_datasets import DownloadedArtifact, RemoteDatasetDownloader
 from .response_synthesizer import ResponseSynthesizer, SynthesizedResponse
+from .runtime_ops import BeginnerOneClickSummary, RuntimeDoctorReport, RuntimeLaunchEntry, RuntimeLaunchSummary, RuntimeSurfaceSpec, build_runtime_doctor_report, launch_beginner_one_click, launch_runtime_stack
 from .script_compatibility import ScriptCompatibilityBreakdown, ScriptCompatibilityModel, ScriptCompatibilityScorer, ScriptCompatibilityTrainer, ScriptCompatibilityTrainingSummary
 from .review_queue import ReviewQueueItem, ReviewQueueStore, infer_review_severity, normalize_review_severity, review_reasons_from_graph, review_reasons_from_graph_and_kpis, review_reasons_from_kpis, severity_weight
+from .prompt_understanding import PromptUnderstandingAnalyzer, PromptUnderstandingSummary
+from .multimodal_scene_understanding import FrameSituationSummary, TemporalSceneReasoner, TemporalSituationSummary
 from .symbolic_arithmetic import ArithmeticReasoner
 from .symbolic_document import DocumentEvidenceReasoner
 from .symbolic_reasoners import SymbolicReasoner
 from .structures import ClaimGrounding, ContextFrame, FunctorHypothesis as GraphFunctorHypothesis, GoalPreservationCheck, OperatorDecomposition as GraphOperatorDecomposition, OperatorExecutionReport, OperatorInstruction, PremiseCandidate, PremiseValidation, SymbolicResult
 from .transfer_eval import TransferEvaluator
+from .turboquant_review import QuantizedReviewAssignment, TurboQuantReviewPlanner, TurboQuantReviewSummary
 from .understanding_eval import SemOpUnderstandingEvaluator, UnderstandingEvalSummary
+from .world_model_math import MathStrategyPrior, MathWorldCandidate, MathWorldCheck, WorldModelMathReasoner, WorldModelMathReport
+from .world_model_math_service import ProductionMathDecision, ProductionMathMetrics, ProductionMathReadiness, ProductionMathSelfTestCase, ProductionMathSelfTestResult, ProductionMathSelfTestSummary, ProductionMathServiceConfig, ProductionMathServiceResponse, WorldModelMathProductionService
+from .world_model_math_training import MathCaseEvaluation, MathTrainingCase, MathWorldModelEvaluationSummary, MathWorldModelTrainingSummary, WorldModelMathTrainer, ensure_starter_math_cases, load_math_training_cases
+from .visual_geometry_3d import Scene3DReconstruction, ScenePrimitive3D, SceneRelation3D, VisualGeometry3DWorkbench, VisualGeometryBatchReconstructionSummary, VisualGeometryCollectionSummary, VisualGeometryDatasetSummary
 from .vlso.real_image_eval import RealImageEvalBuilder, RealImageEvalCaseCandidate, RealImageEvalBuildSummary, RealImageEvalFinalizeSummary
-from .vlso import AffordanceLabelDataset, AffordanceLabelExample, AffordanceLabelTarget, AffordancePrediction, AffordanceTrainingSummary, AffordanceWeightTrainer, DEFAULT_VISION_MODEL_ROOT, DetectorOutputAdapter, GeometryPrimitiveBackbone, GeometryPrimitiveResult, GeometryReasoningResult, GeometryTopologyExtractor, GeometryTopologyResult, HybridMemoryMatch, ImageMaskPreprocessor, ImageParseResult, ImagePreprocessResult, JepaStructuralPredictor, PredictivePriorResult, LocalTextGenerator, OpenImagesAnnotationAdapter, OpenImagesPayloadSummary, OperatorType, RawImageObservationParser, SharedWorldModel, StructuralOperatorBinding, SyntheticGeometryScene, SyntheticGeometrySceneBuilder, VisualAffordanceCandidate, VisualAffordanceFeatureExtractor, VisualClusterReviewDecision, VisualClusterReviewStore, VisualApprovedReviewRetrainer, VisualReviewRetrainSummary, VisualCollectionPlanItem, VisualCollectionRecord, VisualCollectionRunSummary, VisualCollectionSource, VisualConceptDataset, VisualConceptExample, VisualConceptLabelRecommender, VisualConceptLearningSummary, VisualConceptMatch, VisualConceptMemory, VisualConceptPrototypeTrainer, VisualConceptRecord, VisualConceptSelfTrainer, VisualConceptTarget, VisualDataCollector, VisualDownloadEntry, VisualDownloadSummary, VisualFamilyBatchSummary, VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore, VisualGeometryReasoner, VisualHybridMemory, VisualHybridMemoryResult, VisualObjectReasoner, VisualObjectReasoningResult, VisualObservation, VisualOperatorLearningSummary, VisualOperatorMatch, VisualOperatorMemory, VisualOperatorPrototypeTrainer, VisualOperatorRecord, VisualPseudoCluster, VisualSelfTrainingSummary, VisualStructuralOperatorInducer, VisualStructuralReasoningResult, VISION_BACKBONE_SPECS, VLSOAligner, VLSOAnswer, VLSOEntity, VLSOLanguageParser, VLSOOperator, VLSOQuestionAnswerer, VLSOReasoner, VLSORelation, VLSOVisualParser, VLSO_OPERATOR_TYPES, VisionBackboneSpec, VisionEmbeddingExtractor, WeakAffordanceClassifier, PseudoLabelAcceptanceConfig, GeometryPipelineSummary, VisualGeometryBootstrapPipeline, VlsoEvalCase, VlsoEvalResult, VlsoEvalSummary, VlsoGroundedEvaluator, VlsoReviewImpactEvaluator, VlsoStoreComparisonSummary, build_object_family_manifest, build_geometry_seed_manifest, resolve_local_vision_model_path
+from .vlso import AffordanceLabelDataset, AffordanceLabelExample, AffordanceLabelTarget, AffordancePrediction, AffordanceTrainingSummary, AffordanceWeightTrainer, DEFAULT_VISION_MODEL_ROOT, DetectorOutputAdapter, FrontierBundleItem, FrontierInstallSummary, FrontierSetupSummary, FrontierVisionInstaller, FrontierVisualSummary, FrontierVisionAdapter, FrontierVisionSpec, VisualSceneAdjudication, VisualSceneAdjudicator, GeometryPrimitiveBackbone, GeometryPrimitiveResult, GeometryReasoningResult, GeometryTopologyExtractor, GeometryTopologyResult, HybridMemoryMatch, ImageMaskPreprocessor, ImageParseResult, ImagePreprocessResult, JepaStructuralPredictor, PredictivePriorResult, LocalTextGenerator, OpenImagesAnnotationAdapter, OpenImagesPayloadSummary, OperatorType, RawImageObservationParser, SemanticRegionHypothesis, SemanticSceneAnalyzer, SemanticSceneHypothesis, SemanticSceneSummary, SharedWorldModel, StructuralOperatorBinding, SyntheticGeometryScene, SyntheticGeometrySceneBuilder, VisualAffordanceCandidate, VisualAffordanceFeatureExtractor, VisualClusterReviewDecision, VisualClusterReviewStore, VisualApprovedReviewRetrainer, VisualReviewRetrainSummary, VisualCollectionPlanItem, VisualCollectionRecord, VisualCollectionRunSummary, VisualCollectionSource, VisualConceptDataset, VisualConceptExample, VisualConceptLabelRecommender, VisualConceptLearningSummary, VisualConceptMatch, VisualConceptMemory, VisualConceptPrototypeTrainer, VisualConceptRecord, VisualConceptSelfTrainer, VisualConceptTarget, VisualDataCollector, VisualDownloadEntry, VisualDownloadSummary, VisualFamilyBatchSummary, VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore, VisualGeometryReasoner, VisualHybridMemory, VisualHybridMemoryResult, VisualObjectReasoner, VisualObjectReasoningResult, VisualObservation, VisualOperatorLearningSummary, VisualOperatorMatch, VisualOperatorMemory, VisualOperatorPrototypeTrainer, VisualOperatorRecord, VisualPseudoCluster, VisualSelfTrainingSummary, VisualStructuralOperatorInducer, VisualStructuralReasoningResult, VISION_BACKBONE_SPECS, VLSOAligner, VLSOAnswer, VLSOEntity, VLSOLanguageParser, VLSOOperator, VLSOQuestionAnswerer, VLSOReasoner, VLSORelation, VLSOVisualParser, VLSO_OPERATOR_TYPES, VisionBackboneSpec, VisionEmbeddingExtractor, WeakAffordanceClassifier, PseudoLabelAcceptanceConfig, GeometryPipelineSummary, VisualGeometryBootstrapPipeline, VlsoEvalCase, VlsoEvalResult, VlsoEvalSummary, VlsoGroundedEvaluator, VlsoReviewImpactEvaluator, VlsoStoreComparisonSummary, build_object_family_manifest, build_geometry_seed_manifest, resolve_local_vision_model_path
 
 __all__ = [
     "AffordanceLabelDataset",
@@ -154,6 +174,21 @@ __all__ = [
     "AnalogyPolicyScorer",
     "AnalogyPolicyTrainer",
     "AnalogyPolicyTrainingSummary",
+    "CapabilityAuditRunner",
+    "CapabilityAuditSummary",
+    "CapabilityAxisStatus",
+    "CapabilityImprovementRunner",
+    "CapabilityImprovementSummary",
+    "CapabilityCurriculumRound",
+    "RTX4060CollectionLane",
+    "ConceptFusionEngine",
+    "ConceptFusionHypothesis",
+    "ConceptFusionSummary",
+    "UltimateAGIAxis",
+    "UltimateAGIReadinessRunner",
+    "UltimateAGIReadinessSummary",
+    "RTX4060OptimizationSummary",
+    "RTX4060ReasoningCoach",
     "UnifiedParserModel",
     "UnifiedParserTrainer",
     "UnifiedParserTrainingSummary",
@@ -185,12 +220,30 @@ __all__ = [
     "GeneralizationProofHarness",
     "GeneralizationProofRound",
     "GeneralizationProofSummary",
+    "GroundingReflection",
+    "GroundingSelfEvolutionRound",
+    "GroundingSelfEvolutionRunner",
+    "GroundingSelfEvolutionSummary",
     "AnalogyEvalCase",
     "GroundedExplanationEvalCase",
     "CompilerRepairEvalCase",
     "OperatorContextAnalyzer",
     "ContinuousLearningBundleBuilder",
     "ContinuousLearningBundleSummary",
+    "EnvironmentBrainRunner",
+    "EnvironmentBrainSummary",
+    "EnvironmentConceptStat",
+    "EnvironmentRoutineStat",
+    "EnvironmentProbe",
+    "AdaptiveActionRehearsal",
+    "AdaptiveActionStep",
+    "AdaptiveEnvironmentAxis",
+    "AdaptiveEnvironmentLearningRunner",
+    "AdaptiveEnvironmentLearningSummary",
+    "EvolvingImprovementProgram",
+    "RecursiveSelfEvolutionRunner",
+    "RecursiveSelfEvolutionSummary",
+    "SelfEvolutionGenerationSummary",
     "GraphSupervisionExample",
     "GraphSupervisionExporter",
     "GraphSupervisionExportSummary",
@@ -211,6 +264,15 @@ __all__ = [
     "FeedbackRule",
     "FeedbackRuleSet",
     "GeometryPrimitiveBackbone",
+    "FrontierBundleItem",
+    "FrontierInstallSummary",
+    "FrontierSetupSummary",
+    "FrontierVisionInstaller",
+    "FrontierVisualSummary",
+    "FrontierVisionAdapter",
+    "FrontierVisionSpec",
+    "VisualSceneAdjudication",
+    "VisualSceneAdjudicator",
     "FunctorHypothesis",
     "OperatorAlgebraLearner",
     "OperatorAlgebraSummary",
@@ -246,11 +308,21 @@ __all__ = [
     "OperatorIntelligenceProgress",
     "GeometryPrimitiveResult",
     "LocalTextGenerator",
+    "SemanticRegionHypothesis",
+    "SemanticSceneAnalyzer",
+    "SemanticSceneHypothesis",
+    "SemanticSceneSummary",
     "LogicalPatternMatcher",
     "LogicalPatternMatch",
     "VerificationCheck",
     "PatternOutcomeTrainer",
     "HardProblemReport",
+    "LocalDependencyStatus",
+    "LocalHardwareProfile",
+    "detect_local_hardware",
+    "detect_local_ml_stack",
+    "recommended_generation_tokens",
+    "should_force_4bit",
     "JepaStructuralPredictor",
     "PredictivePriorResult",
     "IntelligenceAxis",
@@ -267,6 +339,13 @@ __all__ = [
     "LabeledOpsCase",
     "LabeledOpsCaseResult",
     "LabeledOpsEvaluator",
+    "LeWorldModelAdapter",
+    "LeWorldModelAlignment",
+    "LeWorldModelArtifact",
+    "LeWorldModelSequenceRecord",
+    "LeWorldModelPlan",
+    "LeWorldModelPlannedAction",
+    "LeWorldModelTrajectoryPlanner",
     "LogicalPattern",
     "LogicalGrammarInducer",
     "GrammarInductionResult",
@@ -310,8 +389,18 @@ __all__ = [
     "RegistryNode",
     "RemoteDatasetDownloader",
     "ResponseSynthesizer",
+    "BeginnerOneClickSummary",
+    "RuntimeDoctorReport",
+    "RuntimeLaunchEntry",
+    "RuntimeLaunchSummary",
+    "RuntimeSurfaceSpec",
     "ReviewQueueItem",
     "ReviewQueueStore",
+    "PromptUnderstandingAnalyzer",
+    "PromptUnderstandingSummary",
+    "FrameSituationSummary",
+    "TemporalSceneReasoner",
+    "TemporalSituationSummary",
     "infer_review_severity",
     "normalize_review_severity",
     "severity_weight",
@@ -340,8 +429,16 @@ __all__ = [
     "SynthesizedResponse",
     "TextChunk",
     "TransferEvaluator",
+    "QuantizedReviewAssignment",
+    "TurboQuantReviewPlanner",
+    "TurboQuantReviewSummary",
     "SemOpUnderstandingEvaluator",
     "UnderstandingEvalSummary",
+    "MathStrategyPrior",
+    "MathWorldCandidate",
+    "MathWorldCheck",
+    "WorldModelMathReasoner",
+    "WorldModelMathReport",
     "VLSO_OPERATOR_TYPES",
     "VLSOVisualParser",
     "VLSOQuestionAnswerer",
@@ -431,6 +528,9 @@ __all__ = [
     "ReviewPromotionDecision",
     "OPERATING_POLICIES",
     "resolve_embedding_model_id",
+    "build_runtime_doctor_report",
+    "launch_beginner_one_click",
+    "launch_runtime_stack",
     "review_reasons_from_kpis",
     "review_reasons_from_graph",
     "review_reasons_from_graph_and_kpis",

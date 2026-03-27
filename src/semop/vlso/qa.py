@@ -5,8 +5,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..hardware_profiles import detect_local_hardware, recommended_generation_tokens, should_force_4bit
 from ..llm_client import LocalLLMConfig
 from .types import SharedWorldModel
+from .world_model_narrator import WorldModelNarrator
 
 
 @dataclass
@@ -15,6 +17,7 @@ class VLSOAnswer:
     answer_mode: str
     evidence: list[str]
     warnings: list[str]
+    scene_semantic_level: str = ''
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -22,6 +25,7 @@ class VLSOAnswer:
             "answer_mode": self.answer_mode,
             "evidence": list(self.evidence),
             "warnings": list(self.warnings),
+            "scene_semantic_level": self.scene_semantic_level,
         }
 
 
@@ -31,6 +35,7 @@ class LocalTextGenerator:
         self._loaded = False
         self._tokenizer = None
         self._model = None
+        self._hardware_profile = detect_local_hardware(self.config.hardware_profile)
 
     def _lazy_load(self) -> None:
         if self._loaded:
@@ -41,8 +46,8 @@ class LocalTextGenerator:
         except ImportError as exc:
             raise RuntimeError("llm answer mode requires torch and transformers.") from exc
 
-        model_kwargs: dict[str, Any] = {"device_map": "auto"}
-        use_4bit = bool(self.config.use_4bit and torch.cuda.is_available())
+        model_kwargs: dict[str, Any] = {"device_map": "auto", "low_cpu_mem_usage": True}
+        use_4bit = bool(should_force_4bit(self._hardware_profile, self.config.use_4bit) and torch.cuda.is_available())
         if use_4bit:
             try:
                 import bitsandbytes  # noqa: F401
@@ -77,7 +82,7 @@ class LocalTextGenerator:
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
         outputs = self._model.generate(
             **inputs,
-            max_new_tokens=min(512, self.config.max_new_tokens),
+            max_new_tokens=min(512, recommended_generation_tokens(self._hardware_profile, self.config.max_new_tokens)),
             temperature=self.config.temperature,
             do_sample=self.config.temperature > 0,
         )
@@ -93,9 +98,14 @@ class VLSOQuestionAnswerer:
 
     def __init__(self, generator: LocalTextGenerator | None = None) -> None:
         self.generator = generator
+        self.narrator = WorldModelNarrator()
+
+    def narrate_world_model(self, query: str, world: SharedWorldModel) -> str:
+        return self.narrator.describe(query, world)
 
     def answer(self, query: str, world: SharedWorldModel, answer_mode: str = "structured") -> VLSOAnswer:
         evidence = self._evidence_lines(world)
+        semantic_level = self._scene_semantic_level(query, world)
         if answer_mode == "llm":
             if self.generator is None:
                 raise RuntimeError("llm answer mode requested but no text generator is configured.")
@@ -103,17 +113,26 @@ class VLSOQuestionAnswerer:
                 self.SYSTEM_PROMPT,
                 self._llm_user_prompt(query, world, evidence),
             )
+            warnings = list(world.warnings)
+            if semantic_level == 'structural_only':
+                warnings.append('Scene semantic grounding is still structural-only for this image.')
             return VLSOAnswer(
                 answer_text=answer_text,
                 answer_mode="llm",
                 evidence=evidence,
-                warnings=list(world.warnings),
+                warnings=warnings,
+                scene_semantic_level=semantic_level,
             )
+        answer_text = self._structured_answer(query, world, evidence)
+        warnings = list(world.warnings)
+        if semantic_level == 'structural_only':
+            warnings.append('Scene semantic grounding is still structural-only for this image.')
         return VLSOAnswer(
-            answer_text=self._structured_answer(query, world, evidence),
+            answer_text=answer_text,
             answer_mode="structured",
             evidence=evidence,
-            warnings=list(world.warnings),
+            warnings=warnings,
+            scene_semantic_level=semantic_level,
         )
 
     def _structured_answer(self, query: str, world: SharedWorldModel, evidence: list[str]) -> str:
@@ -165,6 +184,27 @@ class VLSOQuestionAnswerer:
                     container_entities.append(text_label)
                 elif upper_labels:
                     part_entities.append(text_label)
+            prefers_structural_inventory = any(
+                token in lowered
+                for token in [
+                    "opening",
+                    "openings",
+                    "access",
+                    "inside",
+                    "interior",
+                    "container",
+                    "containers",
+                    "part",
+                    "parts",
+                    "개구부",
+                    "입구",
+                    "내부",
+                    "부품",
+                ]
+            )
+            visual_scene_answer = self._scene_description_answer(query, world, spatial_lines)
+            if not prefers_structural_inventory and visual_scene_answer != self._weak_evidence_answer():
+                return visual_scene_answer
             if structural_containers or structural_access or container_entities or part_entities:
                 parts = []
                 if structural_containers:
@@ -176,9 +216,16 @@ class VLSOQuestionAnswerer:
                 if part_entities:
                     parts.append("parts/openings: " + ", ".join(part_entities[:6]))
                 return "Visible entities in the current world model: " + " | ".join(parts)
+            if visual_scene_answer != self._weak_evidence_answer():
+                return visual_scene_answer
             if entity_labels:
                 return "Visible entities in the current world model: " + ", ".join(entity_labels[:8])
+            if any(item.modality == 'vision' for item in world.entities):
+                return self._structural_visual_answer(query, world)
             return self._weak_evidence_answer()
+
+        if self._looks_like_scene_description_question(lowered):
+            return self._scene_description_answer(query, world, spatial_lines)
 
         if "state" in lowered or lowered.startswith("is ") or lowered.startswith("are "):
             matched_entities = self._query_entity_matches(query, entity_ids, entity_labels)
@@ -246,6 +293,9 @@ class VLSOQuestionAnswerer:
             names = [str(item.get('name')) for item in functors if isinstance(item, dict)]
             return 'Cross-modal operator alignments: ' + ', '.join(names[:4])
 
+        if self._looks_like_general_visual_question(lowered) and any(item.modality == 'vision' for item in world.entities):
+            return self._scene_description_answer(query, world, spatial_lines)
+
         if evidence:
             return "Best grounded answer from the current world model: " + evidence[0]
         if constraint_set & {'container_like_object_detected', 'opening_candidate_detected', 'handle_like_part_detected'}:
@@ -310,8 +360,332 @@ class VLSOQuestionAnswerer:
             "what can you see",
             "visible here",
             "what do you see",
+            "\uc774 \uc0ac\uc9c4\uc5d0\uc11c \ubb50\uac00 \ubcf4\uc5ec",
+            "\ubb50\uac00 \ubcf4\uc5ec",
+            "\ubb34\uc5c7\uc774 \ubcf4\uc5ec",
+            "\ubcf4\uc774\ub294 \ubb3c\uccb4",
+            "\uc5b4\ub5a4 \ubb3c\uccb4",
+            "\ubb34\uc2a8 \ubb3c\uccb4",
         ]
         return any(token in lowered for token in triggers)
+
+    @staticmethod
+    def _looks_like_scene_description_question(lowered: str) -> bool:
+        triggers = [
+            "describe this image",
+            "describe this photo",
+            "describe this picture",
+            "describe this screenshot",
+            "describe the scene",
+            "what is happening",
+            "what's happening",
+            "what is in this image",
+            "what does this show",
+            "explain this image",
+            "scene description",
+            "\uc124\uba85",
+            "\uc0ac\uc9c4\uc744 \uc124\uba85",
+            "\uc774\ubbf8\uc9c0\ub97c \uc124\uba85",
+            "\ud654\uba74\uc744 \uc124\uba85",
+            "\ubb34\uc2a8 \uc7a5\uba74",
+            "\ubb34\uc2a8 \uc0c1\ud669",
+        ]
+        return any(token in lowered for token in triggers)
+
+    @classmethod
+    def _looks_like_general_visual_question(cls, lowered: str) -> bool:
+        return cls._looks_like_scene_description_question(lowered) or cls._looks_like_object_inventory_question(lowered)
+
+    @staticmethod
+    def _is_korean_query(query: str) -> bool:
+        return bool(re.search(r'[\uac00-\ud7a3]', str(query or '')))
+
+    @staticmethod
+    def _dedupe_labels(items: list[str]) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            normalized = str(item or '').strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            ordered.append(normalized)
+            seen.add(key)
+        return ordered
+
+    @classmethod
+    def _translate_visual_label(cls, label: str, language: str) -> str:
+        normalized = str(label or '').strip()
+        if not normalized or language != 'ko':
+            return normalized
+        translations = {
+            'video game screenshot': '게임 스크린샷',
+            'first-person shooter game screenshot': '1인칭 슈팅 게임 화면',
+            'combat video game scene': '전투 게임 장면',
+            'third-person action game scene': '3인칭 액션 게임 장면',
+            'urban street': '도시 거리',
+            'market street': '시장 거리',
+            'shopfront': '상점 앞',
+            'street market': '노점 거리',
+            'alley': '골목',
+            'outdoor daytime scene': '야외 낮 장면',
+            'warehouse aisle': '창고 통로',
+            'indoor room': '실내 공간',
+            'construction site': '공사 현장',
+            'parking lot': '주차장',
+            'close-up object photo': '사물 근접 사진',
+            'product photo': '제품 사진',
+            'bag or backpack photo': '가방 또는 백팩 사진',
+            'street scene': '거리 장면',
+            'person': '사람',
+            'human character': '사람형 캐릭터',
+            'female game character': '여성 게임 캐릭터',
+            'soldier': '병사',
+            'handgun': '권총',
+            'pistol': '권총',
+            'rifle': '소총',
+            'gun held in first person view': '플레이어가 들고 있는 총',
+            'weapon': '무기',
+            'player hands': '플레이어 손',
+            'hands': '손',
+            'arms': '팔',
+            'backpack': '백팩',
+            'bag': '가방',
+            'travel bag': '여행 가방',
+            'suitcase': '여행용 가방',
+            'market stall': '노점',
+            'shop awning': '상점 차양',
+            'cart': '수레',
+            'street cart': '거리 수레',
+            'building': '건물',
+            'building facade': '건물 외벽',
+            'signboard': '간판',
+            'dome': '돔 지붕',
+            'store counter': '매대',
+            'kiosk': '가판대',
+            'doorway': '출입구',
+            'bicycle': '자전거',
+            'car': '자동차',
+            'game HUD': '게임 HUD',
+            'mini-map overlay': '미니맵',
+            'crosshair overlay': '조준선',
+            'scoreboard overlay': '점수판',
+            'timer overlay': '타이머',
+            'ammo counter overlay': '탄약 표시',
+            'kill feed overlay': '킬 피드',
+            'chat overlay': '채팅창',
+        }
+        return translations.get(normalized, normalized)
+
+    def _localized_visual_scene_answer(self, query: str, world: SharedWorldModel, semantic_summary: dict[str, Any]) -> str | None:
+        if not self._is_korean_query(query):
+            return None
+        scene_hypotheses = semantic_summary.get('scene_hypotheses', []) if isinstance(semantic_summary, dict) and isinstance(semantic_summary.get('scene_hypotheses'), list) else []
+        object_hypotheses = semantic_summary.get('object_hypotheses', []) if isinstance(semantic_summary, dict) and isinstance(semantic_summary.get('object_hypotheses'), list) else []
+        overlay_hypotheses = semantic_summary.get('overlay_hypotheses', []) if isinstance(semantic_summary, dict) and isinstance(semantic_summary.get('overlay_hypotheses'), list) else []
+        region_hypotheses = semantic_summary.get('region_hypotheses', []) if isinstance(semantic_summary, dict) and isinstance(semantic_summary.get('region_hypotheses'), list) else []
+        scene_label = ''
+        if scene_hypotheses and float(scene_hypotheses[0].get('score', 0.0) or 0.0) >= 0.22:
+            scene_label = str(scene_hypotheses[0].get('label') or '').strip()
+        semantic_entities, structural_entities = self._scene_description_profile(world)
+        object_labels = self._dedupe_labels(
+            list(semantic_entities)
+            + [str(item.get('label') or '').strip() for item in region_hypotheses if isinstance(item, dict) and float(item.get('score', 0.0) or 0.0) >= 0.18]
+            + [str(item.get('label') or '').strip() for item in object_hypotheses if isinstance(item, dict) and float(item.get('score', 0.0) or 0.0) >= 0.22]
+        )
+        overlay_labels = self._dedupe_labels(
+            [str(item.get('label') or '').strip() for item in overlay_hypotheses if isinstance(item, dict) and float(item.get('score', 0.0) or 0.0) >= 0.22]
+        )
+        translated_scene = self._translate_visual_label(scene_label, 'ko')
+        translated_objects = self._dedupe_labels([self._translate_visual_label(item, 'ko') for item in object_labels])
+        translated_overlays = self._dedupe_labels([self._translate_visual_label(item, 'ko') for item in overlay_labels])
+        scene_game_like = scene_label in {'video game screenshot', 'first-person shooter game screenshot', 'combat video game scene'}
+        has_weapon = any(item in {'handgun', 'pistol', 'rifle', 'gun held in first person view', 'weapon'} for item in object_labels)
+        has_person = any(item in {'person', 'human character', 'female game character', 'soldier'} for item in object_labels)
+        if scene_game_like or (has_weapon and (has_person or translated_overlays)):
+            sentences = ['1인칭 전투 게임 화면처럼 보입니다.']
+            if has_weapon:
+                sentences.append('화면 앞쪽에는 플레이어가 들고 있는 총이나 무기가 보입니다.')
+            if has_person:
+                sentences.append('앞쪽에는 사람형 게임 캐릭터가 적어도 한 명 보입니다.')
+            extras = [item for item in translated_objects if item not in {'권총', '소총', '플레이어가 들고 있는 총', '무기', '사람', '사람형 캐릭터', '여성 게임 캐릭터', '병사'}]
+            if extras:
+                sentences.append('주변에는 ' + ', '.join(extras[:4]) + ' 같은 요소가 보입니다.')
+            if translated_overlays:
+                sentences.append('화면 UI로는 ' + ', '.join(translated_overlays[:4]) + ' 등이 보입니다.')
+            return ' '.join(sentences)
+        if translated_scene or translated_objects or translated_overlays:
+            sentences: list[str] = []
+            if translated_scene:
+                sentences.append('이 이미지는 ' + translated_scene + '처럼 보입니다.')
+            if translated_objects:
+                sentences.append('보이는 요소로는 ' + ', '.join(translated_objects[:6]) + ' 등이 있습니다.')
+            if translated_overlays:
+                sentences.append('화면에는 ' + ', '.join(translated_overlays[:4]) + ' 같은 UI도 보입니다.')
+            return ' '.join(sentences)
+        if structural_entities or any(item.modality == 'vision' for item in world.entities):
+            return self._structural_visual_answer(query, world, structural_entities=structural_entities)
+        return None
+
+    def _structural_visual_answer(
+        self,
+        query: str,
+        world: SharedWorldModel,
+        *,
+        structural_entities: list[str] | None = None,
+        semantic_caption: str = '',
+    ) -> str:
+        structural = list(structural_entities or [])
+        if not structural:
+            _, structural = self._scene_description_profile(world)
+        vision_entities = [item for item in world.entities if item.modality == 'vision']
+        if self._is_korean_query(query):
+            if structural:
+                answer = (
+                    '현재 로컬 비전 스택은 이 이미지를 아직 사람처럼 의미적으로 해석하지는 못했고, '
+                    + ', '.join(structural[:4])
+                    + ' 같은 거친 구조 단서만 비교적 확실하게 잡았습니다.'
+                )
+            else:
+                answer = (
+                    f'현재 로컬 비전 스택은 보이는 영역 {len(vision_entities)}개와 관계 {len(world.relations)}개 정도를 잡았지만, '
+                    '믿을 만한 의미 라벨까지는 복원하지 못했습니다.'
+                )
+            if semantic_caption:
+                answer += ' 의미 가설은 있지만 아직 최종 답으로 쓰기엔 검증이 부족합니다.'
+            if world.warnings:
+                answer += ' 경고: ' + ' | '.join(str(item) for item in list(world.warnings)[:1])
+            return answer
+        if structural:
+            answer = (
+                'This image is not yet being semantically understood at a human level by the current local vision stack. '
+                'Right now I can only ground coarse structural regions such as '
+                + ', '.join(structural[:4])
+                + '.'
+            )
+        else:
+            answer = (
+                f'The current local visual parser recovered {len(vision_entities)} visible regions and {len(world.relations)} grounded relations, '
+                'but it did not recover trustworthy semantic object labels for this image. '
+                'I can ground coarse structural evidence, but not a reliable natural-language scene description yet.'
+            )
+        if semantic_caption:
+            answer += ' Semantic hypothesis exists, but it is not yet trustworthy enough to present as the final answer.'
+        if world.warnings:
+            answer += ' Warning: ' + ' | '.join(str(item) for item in list(world.warnings)[:1])
+        return answer
+
+    def _scene_description_answer(self, query: str, world: SharedWorldModel, spatial_lines: list[str]) -> str:
+        narrated = self.narrate_world_model(query, world)
+        if narrated:
+            return narrated
+        semantic_entities, structural_entities = self._scene_description_profile(world)
+        if semantic_entities:
+            summary = 'Visible scene summary: ' + ', '.join(semantic_entities[:6]) + '.'
+            if spatial_lines:
+                summary += ' Key grounded relations: ' + ' | '.join(spatial_lines[:3])
+            return summary
+        if structural_entities or any(item.modality == 'vision' for item in world.entities):
+            return self._structural_visual_answer(query, world, structural_entities=structural_entities)
+        return self._weak_evidence_answer()
+
+    def _scene_description_profile(self, world: SharedWorldModel) -> tuple[list[str], list[str]]:
+        semantic: list[str] = []
+        structural: list[str] = []
+        for entity in world.entities:
+            if entity.modality != 'vision':
+                continue
+            semantic_label = str(entity.attributes.get('semantic_label') or '').strip()
+            if semantic_label:
+                semantic.append(semantic_label)
+                continue
+            label = str(getattr(entity, 'label', '') or '').strip()
+            if self._is_semantic_scene_label(label):
+                semantic.append(label)
+                continue
+            description = self._structural_scene_description(entity)
+            if description:
+                structural.append(description)
+        return self._unique_descriptions(semantic), self._unique_descriptions(structural)
+
+    @classmethod
+    def _is_semantic_scene_label(cls, label: str) -> bool:
+        normalized = str(label or '').strip()
+        if not normalized:
+            return False
+        if cls._is_generic_visual_label(normalized):
+            return False
+        if '[' in normalized and ']' in normalized:
+            return False
+        lowered = normalized.lower()
+        if lowered in {'shape', 'part', 'object', 'container', 'opening'}:
+            return False
+        return True
+
+    @classmethod
+    def _structural_scene_description(cls, entity: Any) -> str | None:
+        labels = getattr(entity, 'attributes', {}).get('concept_labels') or []
+        upper = {str(item).upper() for item in labels} if isinstance(labels, list) else set()
+        if {'ACCESS_OPENING_CANDIDATE', 'ACCESS_CONTROL_PART', 'ACCESS_PORT_CANDIDATE', 'EDGE_OPENING'} & upper:
+            return 'opening or access-control region'
+        if {'HANDLE_CANDIDATE', 'HANDLE_LIKE_PART', 'GRASPABLE_PART', 'STRAP_LIKE_PART', 'KNOB_LIKE_PART', 'TOOL_GRIP_PART'} & upper:
+            return 'handle or graspable region'
+        if {'HAS_INTERIOR', 'STRUCTURAL_CONTAINER_CANDIDATE', 'MANIPULABLE_CONTAINER', 'BAG_LIKE_CONTAINER', 'DRAWER_LIKE_CONTAINER', 'BOTTLE_LIKE_CONTAINER', 'ACCESSIBLE_INTERIOR_PATH'} & upper:
+            return 'container-like region'
+        entity_type = str(getattr(entity, 'entity_type', '') or '').lower()
+        if entity_type == 'opening':
+            return 'opening region'
+        if entity_type == 'container':
+            return 'container-like region'
+        if entity_type == 'person':
+            return 'person-like region'
+        if entity_type == 'vehicle':
+            return 'vehicle-like region'
+        return None
+
+    def _scene_semantic_level(self, query: str, world: SharedWorldModel) -> str:
+        if not self._looks_like_general_visual_question(str(query or '').lower()):
+            return ''
+        adjudication = world.metadata.get('scene_adjudication', {}) if isinstance(world.metadata, dict) else {}
+        adjudicated_level = str(adjudication.get('stack_level') or '').strip() if isinstance(adjudication, dict) else ''
+        if adjudicated_level and adjudicated_level != 'structural_only':
+            return adjudicated_level
+        frontier_summary = world.metadata.get('frontier_scene_summary', {}) if isinstance(world.metadata, dict) else {}
+        frontier_level = str(frontier_summary.get('semantic_level') or '').strip() if isinstance(frontier_summary, dict) else ''
+        if frontier_level == 'frontier_vlm' and frontier_summary.get('backend_ready'):
+            return 'frontier_vlm'
+        semantic_summary = world.metadata.get('semantic_scene_summary', {}) if isinstance(world.metadata, dict) else {}
+        summary_level = str(semantic_summary.get('semantic_level') or '').strip() if isinstance(semantic_summary, dict) else ''
+        if summary_level:
+            if summary_level == 'semantic_grounded':
+                return 'semantic_grounded'
+            if summary_level == 'semantic_candidate':
+                return 'semantic_candidate'
+        semantic_entities, structural_entities = self._scene_description_profile(world)
+        if semantic_entities:
+            return 'semantic_grounded'
+        if structural_entities or any(item.modality == 'vision' for item in world.entities):
+            return 'structural_only'
+        return 'weak'
+
+    @staticmethod
+    def _is_generic_visual_label(label: str) -> bool:
+        lowered = str(label or '').strip().lower()
+        return bool(re.match(r'^(shape|polygon)_\d+', lowered))
+
+    @staticmethod
+    def _unique_descriptions(items: list[str]) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            normalized = str(item or '').strip()
+            if not normalized or normalized in seen:
+                continue
+            ordered.append(normalized)
+            seen.add(normalized)
+        return ordered
 
     @staticmethod
     def _weak_evidence_answer() -> str:

@@ -177,6 +177,7 @@ class StructuredMeaningGraph:
     query: str
     intent: str
     domain: str = "general"
+    scenario: str = "qa"
     source_context: str = ""
     nodes: List[Node] = field(default_factory=list)
     edges: List[Edge] = field(default_factory=list)
@@ -249,6 +250,7 @@ class StructuredMeaningGraph:
             query=data["query"],
             intent=data["intent"],
             domain=data.get("domain", "general"),
+            scenario=data.get("scenario", "qa"),
             source_context=data.get("source_context", ""),
         )
         graph.nodes = [Node(**item) for item in data.get("nodes", [])]

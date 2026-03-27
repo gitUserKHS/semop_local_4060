@@ -103,6 +103,7 @@ class DomainCopilot:
         graph = self.pipeline.run(pipeline_input)
         graph.query = request.query
         graph.domain = profile.name
+        graph.scenario = request.scenario
         graph.source_context = request.context
         self._apply_profile_guards(graph, profile)
         self._apply_feedback_rules(graph, request)

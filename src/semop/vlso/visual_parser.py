@@ -61,13 +61,35 @@ class VLSOVisualParser:
             relation = item.get('relation')
             target = item.get('target')
             if source and relation and target:
-                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision', confidence=float(item.get('confidence', 1.0) or 1.0), attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}}))
+                model.add_relation(
+                    VLSORelation(
+                        source=str(source),
+                        relation=str(relation),
+                        target=str(target),
+                        modality='vision',
+                        confidence=float(item.get('confidence', 1.0) or 1.0),
+                        attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}},
+                    )
+                )
         for item in observation.affordances:
             subject = item.get('subject') or item.get('source')
             value = item.get('value') or item.get('affordance')
             if subject and value:
-                model.add_operator(VLSOOperator(name=str(value), axis='action', description=f'visual affordance for {subject}', source_modality='vision', confidence=0.75))
+                affordance_name = str(value)
+                model.add_operator(VLSOOperator(name=affordance_name, axis='action', description=f'visual affordance for {subject}', source_modality='vision', confidence=0.75))
                 model.add_entity(VLSOEntity(id=str(subject), label=str(subject), modality='vision', entity_type='object'))
+                for action_id, action_label in self._affordance_actions(affordance_name):
+                    model.add_entity(VLSOEntity(id=action_id, label=action_label, modality='shared', entity_type='action'))
+                    model.add_relation(
+                        VLSORelation(
+                            source=str(subject),
+                            relation='AFFORDS',
+                            target=action_id,
+                            modality='shared',
+                            confidence=0.74,
+                            attributes={'source_affordance': affordance_name},
+                        )
+                    )
         for item in observation.states:
             subject = item.get('subject') or item.get('source')
             value = item.get('value') or item.get('state')
@@ -96,7 +118,16 @@ class VLSOVisualParser:
             relation = item.get('relation')
             target = item.get('target')
             if source and relation and target:
-                model.add_relation(VLSORelation(source=str(source), relation=str(relation), target=str(target), modality='vision', confidence=float(item.get('confidence', 1.0) or 1.0), attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}}))
+                model.add_relation(
+                    VLSORelation(
+                        source=str(source),
+                        relation=str(relation),
+                        target=str(target),
+                        modality='vision',
+                        confidence=float(item.get('confidence', 1.0) or 1.0),
+                        attributes={k: v for k, v in item.items() if k not in {'source', 'relation', 'target', 'confidence'}},
+                    )
+                )
         derived = self.geometry_extractor.extract(observation)
         for item in derived.derived_relations:
             model.add_relation(VLSORelation(source=str(item['source']), relation=str(item['relation']), target=str(item['target']), modality='vision', confidence=0.7))
@@ -160,3 +191,27 @@ class VLSOVisualParser:
         if 'blocked' in lowered:
             observation.constraints.append('path_blocked')
         return observation
+
+    @staticmethod
+    def _affordance_actions(value: str) -> list[tuple[str, str]]:
+        upper = str(value or '').upper()
+        actions: list[tuple[str, str]] = []
+        if any(token in upper for token in {'OPEN', 'ACCESS', 'ZIPPER', 'EDGE_OPENING', 'CONTROL_PART', 'PORT'}):
+            actions.append(('open_access_action', 'open access'))
+        if any(token in upper for token in {'HANDLE', 'GRASP', 'STRAP', 'GRIP', 'KNOB', 'PULL'}):
+            actions.append(('grasp_or_carry_action', 'grasp or carry'))
+        if any(token in upper for token in {'INTERIOR', 'CONTAINER', 'PORTABLE_CONTAINER'}):
+            actions.append(('store_items_action', 'store items'))
+        if any(token in upper for token in {'TOOL', 'WEAPON'}):
+            actions.append(('control_tool_action', 'control tool'))
+        if not actions:
+            normalized = ''.join(ch if ch.isalnum() else '_' for ch in str(value or '').lower()).strip('_') or 'visual_action'
+            actions.append((f'afford:{normalized}', normalized.replace('_', ' ')))
+        deduped: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for action_id, action_label in actions:
+            if action_id in seen:
+                continue
+            seen.add(action_id)
+            deduped.append((action_id, action_label))
+        return deduped
