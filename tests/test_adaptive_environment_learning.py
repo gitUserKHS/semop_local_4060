@@ -100,12 +100,21 @@ class AdaptiveEnvironmentLearningRunnerTests(unittest.TestCase):
 
         self.assertGreater(summary.capability_scores.get('local_intelligence', 0.0), 0.0)
         self.assertGreater(summary.capability_scores.get('embodied_planning', 0.0), 0.0)
-        self.assertEqual(summary.improved_cases, 3)
-        self.assertEqual(summary.refined_graph_copies, 5)
+        self.assertEqual(summary.improved_cases, 6)
+        self.assertEqual(summary.refined_graph_copies, 10)
         self.assertTrue(summary.completed_skills)
         self.assertTrue(summary.next_actions)
         self.assertTrue(summary.action_rehearsals)
-        self.assertEqual(summary.grounding_cases_used, 1)
+        self.assertEqual(summary.grounding_cases_used, 2)
+        self.assertTrue(summary.integrated_world)
+        self.assertTrue(summary.integrated_reasoning)
+        self.assertIn('world_model_integration', summary.capability_scores)
+        self.assertTrue(summary.self_learning_report_path)
+        self.assertTrue(summary.self_learning_objective)
+        self.assertTrue(summary.self_learning_plan)
+        self.assertTrue(summary.self_learning_summary_text)
+        self.assertTrue(summary.solver_guidance)
+        self.assertIn('applied', summary.guided_refinement)
 
 
 if __name__ == '__main__':

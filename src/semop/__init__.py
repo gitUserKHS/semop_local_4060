@@ -2,6 +2,7 @@
 from .baseline_runner import BASELINE_SPECS, BaselineRunner, BaselineSpec
 from .context_chunks import TextChunk, split_context_into_chunks
 from .context_understanding import OperatorContextAnalyzer
+from .common_world_tasks import CommonWorldTaskEngine, CommonWorldTaskResult
 from .continuous_learning import ContinuousLearningBundleBuilder, ContinuousLearningBundleSummary, build_continuous_learning_bundle
 from .environment_brain import EnvironmentBrainRunner, EnvironmentBrainSummary, EnvironmentConceptStat, EnvironmentRoutineStat, EnvironmentProbe
 from .adaptive_environment_learning import AdaptiveActionRehearsal, AdaptiveActionStep, AdaptiveEnvironmentAxis, AdaptiveEnvironmentLearningRunner, AdaptiveEnvironmentLearningSummary
@@ -84,6 +85,10 @@ from .runtime_ops import BeginnerOneClickSummary, RuntimeDoctorReport, RuntimeLa
 from .script_compatibility import ScriptCompatibilityBreakdown, ScriptCompatibilityModel, ScriptCompatibilityScorer, ScriptCompatibilityTrainer, ScriptCompatibilityTrainingSummary
 from .review_queue import ReviewQueueItem, ReviewQueueStore, infer_review_severity, normalize_review_severity, review_reasons_from_graph, review_reasons_from_graph_and_kpis, review_reasons_from_kpis, severity_weight
 from .prompt_understanding import PromptUnderstandingAnalyzer, PromptUnderstandingSummary
+from .unified_responder import UnifiedResponder, UnifiedResponderConfig, UnifiedResponderResult
+from .unified_world_model import UnifiedWorldModelEngine, UnifiedWorldReasoning
+from .unified_world_self_learning import UnifiedWorldSelfLearningEngine, UnifiedWorldSelfLearningObjective, UnifiedWorldSelfLearningPlan, UnifiedWorldSelfLearningReport, UnifiedWorldSelfLearningTarget
+from .unified_world_solver_guidance import UnifiedWorldSolverGuidance, UnifiedWorldSolverGuidanceEngine
 from .multimodal_scene_understanding import FrameSituationSummary, TemporalSceneReasoner, TemporalSituationSummary
 from .symbolic_arithmetic import ArithmeticReasoner
 from .symbolic_document import DocumentEvidenceReasoner
@@ -167,6 +172,8 @@ __all__ = [
     "CppSyntaxChecker",
     "CopilotRequest",
     "CopilotResult",
+    "CommonWorldTaskEngine",
+    "CommonWorldTaskResult",
     "SemOpCommonEvaluator",
     "SemOpEvalSnapshot",
     "CorpusBuilder",
@@ -398,6 +405,18 @@ __all__ = [
     "ReviewQueueStore",
     "PromptUnderstandingAnalyzer",
     "PromptUnderstandingSummary",
+    "UnifiedResponder",
+    "UnifiedResponderConfig",
+    "UnifiedResponderResult",
+    "UnifiedWorldModelEngine",
+    "UnifiedWorldReasoning",
+    "UnifiedWorldSelfLearningEngine",
+    "UnifiedWorldSelfLearningObjective",
+    "UnifiedWorldSelfLearningPlan",
+    "UnifiedWorldSelfLearningReport",
+    "UnifiedWorldSelfLearningTarget",
+    "UnifiedWorldSolverGuidance",
+    "UnifiedWorldSolverGuidanceEngine",
     "FrameSituationSummary",
     "TemporalSceneReasoner",
     "TemporalSituationSummary",

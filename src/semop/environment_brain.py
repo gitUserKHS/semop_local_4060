@@ -10,6 +10,7 @@ from .corpus_store import CorpusMemoryStore
 from .domain_copilot import CopilotRequest, CopilotResult, DomainCopilot
 from .review_queue import ReviewQueueStore
 from .unified_benchmark import UnifiedSemOpTrainer, UnifiedSemOpTrainingSummary
+from .unified_world_solver_guidance import UnifiedWorldSolverGuidance, UnifiedWorldSolverGuidanceEngine
 from .vlso import VLSOReasoner
 from .structures import StructuredMeaningGraph
 
@@ -112,6 +113,8 @@ class EnvironmentBrainRunner:
         concept_store_path: str | None = None,
         operator_store_path: str | None = None,
         affordance_weights_path: str | None = None,
+        self_learning_plan: dict[str, Any] | None = None,
+        integrated_reasoning: dict[str, Any] | None = None,
     ) -> EnvironmentBrainSummary:
         env_name = str(environment_name or '').strip() or f'{domain}_{scenario}'
         env_source = self._environment_source(env_name, domain, scenario)
@@ -120,8 +123,15 @@ class EnvironmentBrainRunner:
         store = CorpusMemoryStore(store_path)
         review_store = ReviewQueueStore(review_queue_path) if review_queue_path else None
         copilot = DomainCopilot(mode=self.mode, review_queue_path=review_queue_path)
+        guidance = UnifiedWorldSolverGuidanceEngine().build(
+            plan=self_learning_plan,
+            reasoning=integrated_reasoning,
+            context=context,
+            domain=domain,
+            scenario=scenario,
+        )
 
-        queries = list(seed_queries or self._default_queries(context, domain, scenario))
+        queries = self._compose_queries(seed_queries, context, domain, scenario, guidance)
         results: list[CopilotResult] = []
         for query in queries:
             result = copilot.run(CopilotRequest(query=query, context=context, domain=domain, scenario=scenario))
@@ -158,12 +168,14 @@ class EnvironmentBrainRunner:
         routine_patterns = self._routine_patterns(graphs)
         hazard_patterns = self._hazard_patterns(graphs)
         mastery_scores = self._mastery_scores(graphs, stable_concepts, routine_patterns, approved_count, visual_entities)
-        next_probes = self._next_probes(mastery_scores, context, domain, scenario)
+        next_probes = self._next_probes(mastery_scores, context, domain, scenario, guidance=guidance)
         notes = [
             f'Environment source: {env_source}',
             f'Training graphs: {len(graphs)}',
             f'Augmented graphs: {training_summary.augmented_graph_count}',
         ]
+        if guidance.summary:
+            notes.append(f'Shared-world solver guidance: {guidance.summary}')
         report_path = out_dir / 'environment_brain_report.json'
         summary = EnvironmentBrainSummary(
             environment_name=env_name,
@@ -195,6 +207,27 @@ class EnvironmentBrainRunner:
         raw = f'{environment_name}_{domain}_{scenario}'.strip().lower()
         slug = re.sub(r'[^a-z0-9]+', '_', raw).strip('_') or 'environment'
         return f'environment_brain_{slug}'
+
+    @staticmethod
+    def _compose_queries(
+        seed_queries: Sequence[str] | None,
+        context: str,
+        domain: str,
+        scenario: str,
+        guidance: UnifiedWorldSolverGuidance | None,
+    ) -> list[str]:
+        queries = list(seed_queries or EnvironmentBrainRunner._default_queries(context, domain, scenario))
+        if guidance is not None:
+            queries = list(guidance.priority_queries) + queries
+            if guidance.hidden_constraints:
+                queries.append(
+                    f'Which hidden constraint must stay explicit before acting here? Constraint: {guidance.hidden_constraints[0]}'
+                )
+            if guidance.operator_focus:
+                queries.append(
+                    f'Which local routine proves operator {guidance.operator_focus[0]} is valid in this environment?'
+                )
+        return EnvironmentBrainRunner._unique_texts(queries)[:8]
 
     @staticmethod
     def _default_queries(context: str, domain: str, scenario: str) -> list[str]:
@@ -365,8 +398,22 @@ class EnvironmentBrainRunner:
         }
 
     @staticmethod
-    def _next_probes(mastery_scores: dict[str, float], context: str, domain: str, scenario: str) -> list[EnvironmentProbe]:
+    def _next_probes(
+        mastery_scores: dict[str, float],
+        context: str,
+        domain: str,
+        scenario: str,
+        guidance: UnifiedWorldSolverGuidance | None = None,
+    ) -> list[EnvironmentProbe]:
         probes: list[EnvironmentProbe] = []
+        if guidance is not None:
+            for query in guidance.priority_queries[:2]:
+                probes.append(EnvironmentProbe(query=query, purpose='follow shared self-learning plan'))
+            if guidance.operator_focus:
+                probes.append(EnvironmentProbe(
+                    query=f'Which observation would verify operator {guidance.operator_focus[0]} in this environment?',
+                    purpose='ground operator focus from the shared world model',
+                ))
         if float(mastery_scores.get('grounding_strength', 0.0) or 0.0) < 0.72:
             probes.append(EnvironmentProbe(
                 query=f'In this {domain} environment, which exact evidence must ground the next answer before action?',

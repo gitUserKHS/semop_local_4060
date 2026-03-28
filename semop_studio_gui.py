@@ -36,6 +36,8 @@ from semop import (
     SemOpUnderstandingEvaluator,
     StructuredMeaningPipeline,
     UnifiedSemOpTrainer,
+    UnifiedResponder,
+    UnifiedResponderConfig,
     VLSOReasoner,
     VisualGeometry3DWorkbench,
     VlsoGroundedEvaluator,
@@ -903,22 +905,7 @@ def _chat_video_like(prompt: str) -> bool:
 
 
 def _chat_route(prompt: str, image_path: str = '') -> dict[str, str]:
-    action = _chat_command_action(prompt)
-    if action:
-        return {'kind': 'action', 'target': action}
-    has_image = bool(str(image_path or '').strip())
-    temporal_input = _is_temporal_visual_input(image_path) if has_image else False
-    if _chat_3d_like(prompt):
-        return {'kind': 'visual_3d', 'target': 'reconstruct'}
-    if has_image and (temporal_input or _chat_video_like(prompt)):
-        return {'kind': 'video', 'target': 'summarize'}
-    if has_image and _chat_math_like(prompt):
-        return {'kind': 'math', 'target': 'solve'}
-    if has_image:
-        return {'kind': 'vision', 'target': 'answer'}
-    if _chat_math_like(prompt):
-        return {'kind': 'math', 'target': 'solve'}
-    return {'kind': 'ops', 'target': 'reason'}
+    return UnifiedResponder.route_request(prompt, image_path)
 
 
 def _guided_bootstrap_requests(state: StudioState) -> list[CopilotRequest]:
@@ -1622,6 +1609,7 @@ def _frontier_setup_snapshot(state: StudioState) -> dict[str, Any]:
 def _render_vision_summary(payload: dict[str, object]) -> str:
     answer = payload.get('answer', {}) if isinstance(payload.get('answer'), dict) else {}
     world = payload.get('world', {}) if isinstance(payload.get('world'), dict) else {}
+    prompt_understanding = answer.get('prompt_understanding', {}) if isinstance(answer.get('prompt_understanding'), dict) else {}
     semantic_scene = world.get('metadata', {}).get('semantic_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('semantic_scene_summary'), dict) else {}
     frontier_scene = world.get('metadata', {}).get('frontier_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('frontier_scene_summary'), dict) else {}
     adjudication = world.get('metadata', {}).get('scene_adjudication', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('scene_adjudication'), dict) else {}
@@ -1640,6 +1628,7 @@ def _render_vision_summary(payload: dict[str, object]) -> str:
     ])
     details = ''.join([
         _info_block('Answer', answer.get('answer_text') or '-'),
+        _info_block('Prompt understanding', prompt_understanding.get('summary') or '-'),
         _info_block('Reality check', 'This result is structural-only scene grounding.' if answer.get('scene_semantic_level') == 'structural_only' else 'This result includes semantic scene grounding.' if answer.get('scene_semantic_level') == 'semantic_grounded' else '-'),
         _info_block('Adjudicated scene answer', adjudication.get('preferred_answer') or '-'),
         _info_block('Scene stack', adjudication.get('stack_level') or '-'),
@@ -4187,6 +4176,87 @@ class StudioApp:
                 return candidate
         return ''
 
+    def _unified_responder(self, state: StudioState, *, operating_domain: str, scenario_hint: str) -> UnifiedResponder:
+        return UnifiedResponder(
+            UnifiedResponderConfig(
+                ops_context=state.ops_context,
+                operating_domain=operating_domain,
+                scenario_hint=scenario_hint,
+                review_queue_path=state.unified_review_queue_path,
+                vision_mode=state.vision_mode or 'deep',
+                vision_answer_mode=state.vision_answer_mode or 'structured',
+                vision_concept_store=state.vision_concept_store or '',
+                vision_operator_store=state.vision_operator_store or '',
+                vision_weights=state.vision_weights or '',
+                math_output_dir=_chat_math_output_dir(state),
+                visual_output_dir=_chat_visual_output_dir(state),
+            ),
+            ops_runner=lambda query, context, domain, scenario: self._copilot(state.unified_review_queue_path).run(
+                CopilotRequest(query=query, context=context, domain=domain, scenario=scenario)
+            ),
+            vision_payload_builder=lambda query, visual_input: build_vision_payload(
+                query,
+                str(visual_input or ''),
+                state.vision_mode or 'deep',
+                state.vision_answer_mode or 'structured',
+                state.vision_concept_store,
+                state.vision_operator_store,
+                state.vision_weights,
+            ),
+            video_payload_builder=lambda query, visual_input: build_video_payload(
+                query,
+                str(visual_input or ''),
+                state.vision_mode or 'deep',
+                state.vision_answer_mode or 'structured',
+                state.vision_concept_store,
+                state.vision_operator_store,
+                state.vision_weights,
+            ),
+            visual_reconstructor=lambda query, visual_input: self._visual_workbench(state).reconstruct_scene(
+                query,
+                str(visual_input or ''),
+                _chat_visual_output_dir(state),
+            ),
+            math_solver=lambda query, context, visual_input: self._math_service(state).solve_request(
+                query,
+                source_context=context,
+                visual_input=visual_input,
+                task_mode='auto',
+                metadata={'surface': 'semop_studio_chat'},
+            ),
+        )
+
+    def _finish_unified_chat_with_responder(
+        self,
+        next_state: StudioState,
+        *,
+        prompt: str,
+        image_path: str,
+        kind: str,
+        operating_domain: str,
+        scenario_hint: str,
+    ) -> tuple[StudioState, ActionOutcome]:
+        responder = self._unified_responder(next_state, operating_domain=operating_domain, scenario_hint=scenario_hint)
+        result = responder.respond(prompt, visual_input=image_path or None, force_route=kind)
+        self._append_chat_message('assistant', result.answer_text, route=result.route, status=result.status)
+        updated_state = next_state
+        if result.route == 'ops':
+            domain = str(result.domain or result.prompt_understanding.get('likely_domain') or operating_domain).strip() or 'general'
+            scenario = str(result.scenario or result.prompt_understanding.get('likely_scenario') or scenario_hint).strip() or 'qa'
+            updated_state = replace(updated_state, ops_query=prompt, ops_domain=domain, ops_scenario=scenario)
+        elif result.route in {'vision', 'video'}:
+            updated_state = replace(updated_state, vision_query=prompt, vision_image=image_path)
+        elif result.route == 'visual_3d':
+            updated_state = replace(updated_state, vision_image=image_path)
+        elif result.route in {'math', 'cp'}:
+            updated_state = replace(updated_state, vision_image=image_path or updated_state.vision_image)
+        return updated_state, ActionOutcome(
+            flash=result.flash_text or 'Unified chat finished.',
+            flash_tone=result.flash_tone or 'success',
+            result_kind='unified_chat',
+            result_payload=result.model_dump(),
+        )
+
     def _run_unified_chat(self, state: StudioState) -> tuple[StudioState, ActionOutcome]:
         prompt = str(state.chat_prompt or '').strip()
         image_path = str(state.chat_image or '').strip()
@@ -4258,173 +4328,13 @@ class StudioApp:
                     'concept_fusion': _build_concept_fusion_payload(prompt, kind, prompt_understanding.model_dump()),
                 },
             )
-        if kind == 'ops':
-            domain = str(prompt_understanding.likely_domain or operating_domain).strip() or 'general'
-            scenario = str(prompt_understanding.likely_scenario or scenario_hint).strip() or 'qa'
-            request = CopilotRequest(query=prompt, context=next_state.ops_context, domain=domain, scenario=scenario)
-            result = self._copilot(next_state.unified_review_queue_path).run(request)
-            answer_text = result.answer_text
-            prompt_understanding = prompt_analyzer.enrich_with_ops_result(prompt_understanding, result)
-            notes = [
-                f'Plan executability: {result.kpis.plan_executability:.3f}',
-                f'Relation recovery: {result.kpis.relation_recovery:.3f}',
-            ]
-            if result.graph.context_frame is not None and result.graph.context_frame.summary:
-                notes.append(result.graph.context_frame.summary)
-            self._append_chat_message('assistant', answer_text, route='ops', status='completed')
-            next_state = replace(next_state, ops_query=prompt, ops_domain=domain, ops_scenario=scenario)
-            return next_state, ActionOutcome(
-                flash='Unified chat routed your prompt to context reasoning.',
-                flash_tone='success',
-                result_kind='unified_chat',
-                result_payload={
-                    'route': 'ops',
-                    'status': 'completed',
-                    'prompt': prompt,
-                    'answer_text': answer_text,
-                    'notes': notes,
-                    'ops_payload': result.model_dump(),
-                    'prompt_understanding': prompt_understanding.model_dump(),
-                    'concept_fusion': _build_concept_fusion_payload(prompt, 'ops', prompt_understanding.model_dump(), result.model_dump()),
-                },
-            )
-        if kind == 'vision':
-            next_state = replace(next_state, vision_query=prompt, vision_image=image_path)
-            payload = build_vision_payload(
-                prompt,
-                image_path,
-                next_state.vision_mode,
-                next_state.vision_answer_mode,
-                next_state.vision_concept_store,
-                next_state.vision_operator_store,
-                next_state.vision_weights,
-            )
-            answer = payload.get('answer', {}) if isinstance(payload.get('answer'), dict) else {}
-            world = payload.get('world', {}) if isinstance(payload.get('world'), dict) else {}
-            answer_text = str(answer.get('answer_text') or 'Vision reasoning finished.')
-            frontier_scene = world.get('metadata', {}).get('frontier_scene_summary', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('frontier_scene_summary'), dict) else {}
-            adjudication = world.get('metadata', {}).get('scene_adjudication', {}) if isinstance(world.get('metadata'), dict) and isinstance(world.get('metadata', {}).get('scene_adjudication'), dict) else {}
-            notes = [
-                f'Openings or reachable candidates: {len(_opening_candidates(world))}',
-                f'Warnings: {len(world.get("warnings") or [])}',
-                f'Likely scenario: {prompt_understanding.likely_scenario}',
-                f'Scene semantic level: {answer.get("scene_semantic_level") or "-"}',
-                f'Frontier VLM: {"ready" if frontier_scene.get("backend_ready") else "fallback"}',
-                f'Scene stack: {adjudication.get("stack_level") or "-"}',
-            ]
-            if answer.get('scene_semantic_level') == 'structural_only':
-                notes.append('This is still structural-only scene grounding, not strong human-level semantic vision.')
-            prompt_understanding = prompt_analyzer.enrich_with_visual_payload(prompt_understanding, payload, temporal=False)
-            self._append_chat_message('assistant', answer_text, route='vision', status='completed')
-            return next_state, ActionOutcome(
-                flash='Unified chat routed your prompt to vision reasoning.',
-                flash_tone='success',
-                result_kind='unified_chat',
-                result_payload={
-                    'route': 'vision',
-                    'status': 'completed',
-                    'prompt': prompt,
-                    'answer_text': answer_text,
-                    'notes': notes,
-                    'vision_payload': payload,
-                    'prompt_understanding': prompt_understanding.model_dump(),
-                    'concept_fusion': _build_concept_fusion_payload(prompt, 'vision', prompt_understanding.model_dump(), payload),
-                },
-            )
-        if kind == 'video':
-            next_state = replace(next_state, vision_query=prompt, vision_image=image_path)
-            payload = build_video_payload(
-                prompt,
-                image_path,
-                next_state.vision_mode,
-                next_state.vision_answer_mode,
-                next_state.vision_concept_store,
-                next_state.vision_operator_store,
-                next_state.vision_weights,
-            )
-            answer_text = str(payload.get('answer_text') or payload.get('situation_summary') or 'Video reasoning finished.')
-            notes = [
-                f"Frames aggregated: {payload.get('frame_count', 0)}",
-                f"Stable entities: {len(payload.get('stable_entities') or [])}",
-                f"Temporal events: {len(payload.get('temporal_events') or [])}",
-                f"Video backend: {payload.get('extraction_backend') or '-'}",
-            ]
-            prompt_understanding = prompt_analyzer.enrich_with_visual_payload(prompt_understanding, payload, temporal=True)
-            self._append_chat_message('assistant', answer_text, route='video', status='completed')
-            return next_state, ActionOutcome(
-                flash='Unified chat routed your prompt to video situation reasoning.',
-                flash_tone='success',
-                result_kind='unified_chat',
-                result_payload={
-                    'route': 'video',
-                    'status': 'completed',
-                    'prompt': prompt,
-                    'answer_text': answer_text,
-                    'notes': notes,
-                    'video_payload': payload,
-                    'prompt_understanding': prompt_understanding.model_dump(),
-                    'concept_fusion': _build_concept_fusion_payload(prompt, 'video', prompt_understanding.model_dump(), payload),
-                },
-            )
-        if kind == 'visual_3d':
-            next_state = replace(next_state, vision_image=image_path)
-            reconstruction = self._visual_workbench(next_state).reconstruct_scene(prompt, image_path, _chat_visual_output_dir(next_state))
-            answer_text = reconstruction.answer_text or '3D reconstruction finished.'
-            self._append_chat_message('assistant', answer_text, route='visual_3d', status='completed')
-            return next_state, ActionOutcome(
-                flash='Unified chat routed your prompt to 3D reconstruction.',
-                flash_tone='success',
-                result_kind='unified_chat',
-                result_payload={
-                    'route': 'visual_3d',
-                    'status': 'completed',
-                    'prompt': prompt,
-                    'answer_text': answer_text,
-                    'notes': [
-                        f'Primitives: {len(reconstruction.primitives)}',
-                        f'Relations: {len(reconstruction.relations)}',
-                        f'Warnings: {len(reconstruction.warnings)}',
-                    ],
-                    'reconstruction_path': str(Path(_chat_visual_output_dir(next_state)) / 'scene_3d_reconstruction.json'),
-                    'visual_3d_payload': reconstruction.model_dump(),
-                    'prompt_understanding': prompt_understanding.model_dump(),
-                    'concept_fusion': _build_concept_fusion_payload(prompt, 'visual_3d', prompt_understanding.model_dump(), reconstruction.model_dump()),
-                },
-            )
-        math_service = self._math_service(next_state)
-        response = math_service.solve_request(
-            prompt,
-            source_context=next_state.ops_context,
-            visual_input=image_path or None,
-            task_mode='auto',
-            metadata={'surface': 'semop_studio_chat'},
-        )
-        prompt_understanding = prompt_analyzer.enrich_with_math_response(prompt_understanding, response)
-        answer_text = response.safe_answer
-        status = response.status
-        notes = [f'Likely scenario: {prompt_understanding.likely_scenario}'] + list(response.warnings[:3])
-        if len(notes) == 1 and not response.warnings:
-            notes = [', '.join(response.decision.reasons) or 'No warnings were emitted.']
-        self._append_chat_message('assistant', answer_text, route='math', status=status)
-        next_state = replace(next_state, vision_image=image_path or next_state.vision_image)
-        math_training_path = str(Path(_chat_math_output_dir(next_state)) / 'math_training_summary.json')
-        return next_state, ActionOutcome(
-            flash='Unified chat routed your prompt to the math world model.',
-            flash_tone='success' if response.accepted else 'neutral',
-            result_kind='unified_chat',
-            result_payload={
-                'route': 'math',
-                'status': status,
-                'prompt': prompt,
-                'answer_text': answer_text,
-                'notes': notes,
-                'audit_log_path': response.audit_log_path,
-                'math_training_path': math_training_path if Path(math_training_path).exists() else '',
-                'math_payload': response.model_dump(),
-                'decision': response.decision.model_dump(),
-                'prompt_understanding': prompt_understanding.model_dump(),
-                'concept_fusion': _build_concept_fusion_payload(prompt, 'math', prompt_understanding.model_dump(), response.model_dump()),
-            },
+        return self._finish_unified_chat_with_responder(
+            next_state,
+            prompt=prompt,
+            image_path=image_path,
+            kind=kind,
+            operating_domain=operating_domain,
+            scenario_hint=scenario_hint,
         )
 
     def _run_universal_bootcamp(self, state: StudioState, progress_callback: Any = None) -> tuple[StudioState, ActionOutcome]:

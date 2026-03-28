@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..hardware_profiles import detect_local_hardware, recommended_generation_tokens, should_force_4bit
 from ..llm_client import LocalLLMConfig
+from .question_understanding import VisualQuestionUnderstandingEngine
 from .types import SharedWorldModel
 from .world_model_narrator import WorldModelNarrator
 
@@ -18,6 +19,7 @@ class VLSOAnswer:
     evidence: list[str]
     warnings: list[str]
     scene_semantic_level: str = ''
+    prompt_understanding: dict[str, Any] = field(default_factory=dict)
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -26,6 +28,7 @@ class VLSOAnswer:
             "evidence": list(self.evidence),
             "warnings": list(self.warnings),
             "scene_semantic_level": self.scene_semantic_level,
+            "prompt_understanding": dict(self.prompt_understanding),
         }
 
 
@@ -99,6 +102,7 @@ class VLSOQuestionAnswerer:
     def __init__(self, generator: LocalTextGenerator | None = None) -> None:
         self.generator = generator
         self.narrator = WorldModelNarrator()
+        self.question_understanding = VisualQuestionUnderstandingEngine()
 
     def narrate_world_model(self, query: str, world: SharedWorldModel) -> str:
         return self.narrator.describe(query, world)
@@ -106,6 +110,7 @@ class VLSOQuestionAnswerer:
     def answer(self, query: str, world: SharedWorldModel, answer_mode: str = "structured") -> VLSOAnswer:
         evidence = self._evidence_lines(world)
         semantic_level = self._scene_semantic_level(query, world)
+        prompt_understanding = world.metadata.get('prompt_understanding', {}) if isinstance(world.metadata, dict) and isinstance(world.metadata.get('prompt_understanding'), dict) else {}
         if answer_mode == "llm":
             if self.generator is None:
                 raise RuntimeError("llm answer mode requested but no text generator is configured.")
@@ -122,6 +127,7 @@ class VLSOQuestionAnswerer:
                 evidence=evidence,
                 warnings=warnings,
                 scene_semantic_level=semantic_level,
+                prompt_understanding=dict(prompt_understanding),
             )
         answer_text = self._structured_answer(query, world, evidence)
         warnings = list(world.warnings)
@@ -133,10 +139,13 @@ class VLSOQuestionAnswerer:
             evidence=evidence,
             warnings=warnings,
             scene_semantic_level=semantic_level,
+            prompt_understanding=dict(prompt_understanding),
         )
 
     def _structured_answer(self, query: str, world: SharedWorldModel, evidence: list[str]) -> str:
         lowered = query.lower()
+        question_prediction = self.question_understanding.predict(query)
+        predicted_intent = question_prediction.intent
         operator_names = {item.name for item in world.operators}
         structural_bindings = world.metadata.get('structural_operator_bindings', []) if isinstance(world.metadata, dict) else []
         hidden_premises = world.metadata.get('hidden_premises', []) if isinstance(world.metadata, dict) else []
@@ -153,7 +162,7 @@ class VLSOQuestionAnswerer:
             if item.relation in {"LEFT_OF", "RIGHT_OF", "ABOVE", "BELOW", "CONTAINS", "PART_OF", "INTERSECTS", "PARALLEL"}
         ]
 
-        if any(token in lowered for token in ["geometric", "geometry", "parallel", "perpendicular", "equal length", "shape", "triangle", "rectangle", "square", "quadrilateral", "parallelogram"]):
+        if predicted_intent == 'geometry' or any(token in lowered for token in ["geometric", "geometry", "parallel", "perpendicular", "equal length", "shape", "triangle", "rectangle", "square", "quadrilateral", "parallelogram"]):
             geometry_lines = [
                 f"{item.source} {item.relation.lower()} {item.target}"
                 for item in world.relations
@@ -168,7 +177,7 @@ class VLSOQuestionAnswerer:
                 return "Visible shape hypotheses: " + ", ".join(shape_mentions[:8])
             return self._weak_evidence_answer()
 
-        if self._looks_like_object_inventory_question(lowered):
+        if predicted_intent == 'object_inventory' or self._looks_like_object_inventory_question(lowered):
             container_entities = []
             part_entities = []
             structural_containers = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') in {'CONTAINER_BODY_OPERATOR', 'MANIPULABLE_CONTAINER_OPERATOR'}]
@@ -224,21 +233,21 @@ class VLSOQuestionAnswerer:
                 return self._structural_visual_answer(query, world)
             return self._weak_evidence_answer()
 
-        if self._looks_like_scene_description_question(lowered):
+        if predicted_intent == 'scene_description' or self._looks_like_scene_description_question(lowered):
             return self._scene_description_answer(query, world, spatial_lines)
 
-        if "state" in lowered or lowered.startswith("is ") or lowered.startswith("are "):
+        if predicted_intent == 'state_check' or "state" in lowered or lowered.startswith("is ") or lowered.startswith("are "):
             matched_entities = self._query_entity_matches(query, entity_ids, entity_labels)
             if matched_entities and state_lines:
                 relevant = [line for line in state_lines if any(name.lower() in line.lower() for name in matched_entities)]
                 if relevant:
                     return "Observed state evidence: " + " | ".join(relevant[:4])
 
-        if "where" in lowered or "relation" in lowered or "position" in lowered:
+        if predicted_intent == 'spatial_relation' or "where" in lowered or "relation" in lowered or "position" in lowered:
             if spatial_lines:
                 return "Key grounded relations: " + " | ".join(spatial_lines[:5])
 
-        if any(token in lowered for token in ["open", "access", "inside", "interior"]):
+        if predicted_intent == 'access_reasoning' or any(token in lowered for token in ["open", "access", "inside", "interior"]):
             opening_candidates = self._opening_candidates(world)
             handle_candidates = self._handle_candidates(world)
             structural_openings = [str(item.get('subject', '')) for item in structural_bindings if isinstance(item, dict) and item.get('operator_name') == 'ACCESS_PORT_OPERATOR']
@@ -293,7 +302,7 @@ class VLSOQuestionAnswerer:
             names = [str(item.get('name')) for item in functors if isinstance(item, dict)]
             return 'Cross-modal operator alignments: ' + ', '.join(names[:4])
 
-        if self._looks_like_general_visual_question(lowered) and any(item.modality == 'vision' for item in world.entities):
+        if (predicted_intent in {'generic_visual', 'scene_description', 'object_inventory'} or self._looks_like_general_visual_question(lowered)) and any(item.modality == 'vision' for item in world.entities):
             return self._scene_description_answer(query, world, spatial_lines)
 
         if evidence:
@@ -646,7 +655,8 @@ class VLSOQuestionAnswerer:
         return None
 
     def _scene_semantic_level(self, query: str, world: SharedWorldModel) -> str:
-        if not self._looks_like_general_visual_question(str(query or '').lower()):
+        visual_intent = self.question_understanding.predict(query).intent
+        if visual_intent not in {'generic_visual', 'scene_description', 'object_inventory'} and not self._looks_like_general_visual_question(str(query or '').lower()):
             return ''
         adjudication = world.metadata.get('scene_adjudication', {}) if isinstance(world.metadata, dict) else {}
         adjudicated_level = str(adjudication.get('stack_level') or '').strip() if isinstance(adjudication, dict) else ''

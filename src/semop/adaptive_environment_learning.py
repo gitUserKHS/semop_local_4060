@@ -9,9 +9,13 @@ from .corpus_store import CorpusMemoryStore
 from .environment_brain import EnvironmentBrainRunner, EnvironmentBrainSummary, EnvironmentRoutineStat
 from .generalization_proof import GeneralizationProofHarness
 from .grounding_self_evolution import GroundingSelfEvolutionRunner, GroundingSelfEvolutionSummary
+from .operator_evolution import OperatorSelfEvolutionEngine
 from .multimodal_scene_understanding import TemporalSceneReasoner, TemporalSituationSummary
 from .structures import StructuredMeaningGraph
 from .unified_benchmark import GroundedExplanationEvalCase, UnifiedSemOpTrainer
+from .unified_world_model import UnifiedWorldModelEngine
+from .unified_world_self_learning import UnifiedWorldSelfLearningEngine
+from .unified_world_solver_guidance import UnifiedWorldSolverGuidance, UnifiedWorldSolverGuidanceEngine
 
 
 @dataclass
@@ -92,6 +96,15 @@ class AdaptiveEnvironmentLearningSummary:
     self_evolution: dict[str, Any] = field(default_factory=dict)
     training: dict[str, Any] = field(default_factory=dict)
     temporal_scene: dict[str, Any] = field(default_factory=dict)
+    integrated_world: dict[str, Any] = field(default_factory=dict)
+    integrated_reasoning: dict[str, Any] = field(default_factory=dict)
+    integrated_reasoning_text: str = ""
+    self_learning_report_path: str = ""
+    self_learning_objective: dict[str, Any] = field(default_factory=dict)
+    self_learning_plan: dict[str, Any] = field(default_factory=dict)
+    self_learning_summary_text: str = ""
+    solver_guidance: dict[str, Any] = field(default_factory=dict)
+    guided_refinement: dict[str, Any] = field(default_factory=dict)
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -122,6 +135,15 @@ class AdaptiveEnvironmentLearningSummary:
             "self_evolution": dict(self.self_evolution),
             "training": dict(self.training),
             "temporal_scene": dict(self.temporal_scene),
+            "integrated_world": dict(self.integrated_world),
+            "integrated_reasoning": dict(self.integrated_reasoning),
+            "integrated_reasoning_text": self.integrated_reasoning_text,
+            "self_learning_report_path": self.self_learning_report_path,
+            "self_learning_objective": dict(self.self_learning_objective),
+            "self_learning_plan": dict(self.self_learning_plan),
+            "self_learning_summary_text": self.self_learning_summary_text,
+            "solver_guidance": dict(self.solver_guidance),
+            "guided_refinement": dict(self.guided_refinement),
         }
 
 
@@ -179,7 +201,7 @@ class AdaptiveEnvironmentLearningRunner:
             source_prefix=evolution_prefix,
             cases=grounding_cases,
         )
-        refined_graph_copies = self._merge_refined_graphs(
+        initial_refined_graph_copies = self._merge_refined_graphs(
             store,
             destination_source=brain.environment_source,
             evolution_source_prefix=evolution_prefix,
@@ -204,11 +226,159 @@ class AdaptiveEnvironmentLearningRunner:
             affordance_weights_path=affordance_weights_path,
         )
         action_rehearsals = self._action_rehearsals(brain, temporal_scene)
-        capability_scores = self._capability_scores(brain, self_evolution, merged_graphs, temporal_scene, action_rehearsals)
+        integrated_world, integrated_reasoning = self._build_integrated_world_and_reasoning(
+            context=context,
+            brain=brain,
+            self_evolution=self_evolution,
+            merged_graphs=merged_graphs,
+            temporal_scene=temporal_scene,
+        )
+        self_learning_report = UnifiedWorldSelfLearningEngine().build_report(
+            world=integrated_world,
+            reasoning=integrated_reasoning.model_dump(),
+            graphs=merged_graphs,
+            context=context,
+            domain=domain,
+            scenario=scenario,
+            output_path=root / "unified_world_self_learning_report.json",
+        )
+        initial_solver_guidance = UnifiedWorldSolverGuidanceEngine().build(
+            plan=dict(self_learning_report.plan),
+            reasoning=integrated_reasoning.model_dump(),
+            context=context,
+            domain=domain,
+            scenario=scenario,
+        )
+
+        guided_brain: EnvironmentBrainSummary | None = None
+        guided_self_evolution: GroundingSelfEvolutionSummary | None = None
+        guided_operator_summary = None
+        guided_cases: list[GroundedExplanationEvalCase] = []
+        guided_refined_graph_copies = 0
+        retained_guided_operators: list[str] = []
+        if self._should_apply_guided_refinement(initial_solver_guidance):
+            guided_brain = EnvironmentBrainRunner(mode=self.mode).run(
+                environment_name=environment_name,
+                domain=domain,
+                scenario=scenario,
+                context=context,
+                store_path=store_path,
+                review_queue_path=review_queue_path,
+                output_dir=str(root / "guided_environment_brain"),
+                visual_input=visual_input,
+                concept_store_path=concept_store_path,
+                operator_store_path=operator_store_path,
+                affordance_weights_path=affordance_weights_path,
+                seed_queries=seed_queries,
+                self_learning_plan=dict(self_learning_report.plan),
+                integrated_reasoning=integrated_reasoning.model_dump(),
+            )
+            guided_graphs = self._environment_graphs(store, brain.environment_source)
+            guided_cases = self._derive_local_grounding_cases(guided_graphs)
+            guided_prefix = f"{evolution_prefix}_guided"
+            guided_self_evolution = GroundingSelfEvolutionRunner(mode=self.mode).run(
+                store_path,
+                review_queue_path or "data/ops_review_queue.db",
+                root / "guided_self_evolution",
+                split="train",
+                rounds=1,
+                cases_per_round=min(max(1, int(cases_per_round)), max(4, len(guided_cases) or 4)),
+                source_prefix=guided_prefix,
+                cases=guided_cases,
+                self_learning_plan=dict(self_learning_report.plan),
+                integrated_reasoning=integrated_reasoning.model_dump(),
+            )
+            guided_refined_graph_copies = self._merge_refined_graphs(
+                store,
+                destination_source=brain.environment_source,
+                evolution_source_prefix=guided_prefix,
+                rounds=max(1, len(guided_self_evolution.rounds)),
+                split="train",
+            )
+            merged_graphs = self._environment_graphs(store, brain.environment_source)
+            guided_operator_summary = OperatorSelfEvolutionEngine().evolve(
+                merged_graphs,
+                min_support=1 if len(merged_graphs) < 4 else 2,
+                utility_threshold=0.35,
+                self_learning_plan=dict(self_learning_report.plan),
+                integrated_reasoning=integrated_reasoning.model_dump(),
+            )
+            retained_operator_proposals = [item for item in guided_operator_summary.proposals if item.retained]
+            retained_guided_operators = [item.name for item in retained_operator_proposals[:6]]
+            if retained_operator_proposals:
+                store.seed_evolved_operator_memory(
+                    retained_operator_proposals,
+                    source=f"{brain.environment_source}_guided_operator_plan",
+                    split="train",
+                )
+            training = UnifiedSemOpTrainer().train_from_store(
+                store_path,
+                root / "adaptive_bundle",
+                source=brain.environment_source,
+                split="train",
+                review_store_path=None,
+                approved_queries_only=False,
+                operating_domain=domain,
+            )
+            integrated_world, integrated_reasoning = self._build_integrated_world_and_reasoning(
+                context=context,
+                brain=guided_brain,
+                self_evolution=guided_self_evolution,
+                merged_graphs=merged_graphs,
+                temporal_scene=temporal_scene,
+            )
+            self_learning_report = UnifiedWorldSelfLearningEngine().build_report(
+                world=integrated_world,
+                reasoning=integrated_reasoning.model_dump(),
+                graphs=merged_graphs,
+                context=context,
+                domain=domain,
+                scenario=scenario,
+                output_path=root / "unified_world_self_learning_report.json",
+            )
+
+        solver_guidance = UnifiedWorldSolverGuidanceEngine().build(
+            plan=dict(self_learning_report.plan),
+            reasoning=integrated_reasoning.model_dump(),
+            context=context,
+            domain=domain,
+            scenario=scenario,
+        )
+        capability_scores = self._capability_scores(
+            guided_brain or brain,
+            guided_self_evolution or self_evolution,
+            merged_graphs,
+            temporal_scene,
+            action_rehearsals,
+            integrated_reasoning=integrated_reasoning.model_dump(),
+        )
         axes = self._axes(capability_scores, visual_input=visual_input, temporal_scene=temporal_scene)
         completed = [item.label for item in axes if item.ready]
         gaps = [item.label for item in axes if not item.ready]
-        next_actions = self._next_actions(axes, brain, self_evolution, action_rehearsals, visual_input=visual_input)
+        next_actions = self._next_actions(
+            axes,
+            guided_brain or brain,
+            guided_self_evolution or self_evolution,
+            action_rehearsals,
+            visual_input=visual_input,
+            integrated_reasoning=integrated_reasoning.model_dump(),
+        )
+        learning_queries = [
+            str(item)
+            for item in (self_learning_report.plan.get("next_learning_queries", []) if isinstance(self_learning_report.plan, dict) else [])[:3]
+            if str(item).strip()
+        ]
+        if learning_queries:
+            next_actions = list(dict.fromkeys(learning_queries + list(next_actions)))[:10]
+        guided_refinement = {
+            "applied": bool(guided_brain or guided_self_evolution or guided_operator_summary),
+            "initial_guidance": initial_solver_guidance.model_dump(),
+            "guided_query_count": int(guided_brain.seeded_query_count) if guided_brain is not None else 0,
+            "guided_case_count": len(guided_cases),
+            "guided_improved_cases": int(guided_self_evolution.improved_cases) if guided_self_evolution is not None else 0,
+            "guided_refined_graph_copies": guided_refined_graph_copies,
+            "guided_retained_operator_names": retained_guided_operators,
+        }
         report_path = root / "adaptive_environment_learning_report.json"
         summary = AdaptiveEnvironmentLearningSummary(
             environment_name=brain.environment_name,
@@ -218,13 +388,18 @@ class AdaptiveEnvironmentLearningRunner:
             output_dir=str(root),
             report_path=str(report_path),
             visual_input=str(visual_input or ""),
-            seeded_query_count=brain.seeded_query_count,
+            seeded_query_count=brain.seeded_query_count + (guided_brain.seeded_query_count if guided_brain is not None else 0),
             local_graph_count=len(merged_graphs),
-            approved_review_count=brain.auto_approved_review_count + int(self_evolution.approved_reviews),
-            pending_review_count=brain.pending_review_count,
-            grounding_cases_used=len(grounding_cases),
-            refined_graph_copies=refined_graph_copies,
-            improved_cases=int(self_evolution.improved_cases),
+            approved_review_count=(
+                brain.auto_approved_review_count
+                + (guided_brain.auto_approved_review_count if guided_brain is not None else 0)
+                + int(self_evolution.approved_reviews)
+                + (int(guided_self_evolution.approved_reviews) if guided_self_evolution is not None else 0)
+            ),
+            pending_review_count=(guided_brain.pending_review_count if guided_brain is not None else brain.pending_review_count),
+            grounding_cases_used=len(grounding_cases) + len(guided_cases),
+            refined_graph_copies=initial_refined_graph_copies + guided_refined_graph_copies,
+            improved_cases=int(self_evolution.improved_cases) + (int(guided_self_evolution.improved_cases) if guided_self_evolution is not None else 0),
             capability_scores=capability_scores,
             ready_axes=sum(1 for item in axes if item.ready),
             total_axes=len(axes),
@@ -234,18 +409,44 @@ class AdaptiveEnvironmentLearningRunner:
             notes=[
                 f"Environment source: {brain.environment_source}",
                 f"Local grounding cases: {len(grounding_cases)}",
-                f"Refined graph copies merged back into the same environment source: {refined_graph_copies}",
+                f"Refined graph copies merged back into the same environment source: {initial_refined_graph_copies + guided_refined_graph_copies}",
                 f"Action rehearsals synthesized: {len(action_rehearsals)}",
+                f"Integrated world-model summary: {integrated_reasoning.summary}",
+                f"Self-learning summary: {self_learning_report.summary_text}",
+                f"Guided refinement applied: {guided_refinement['applied']}",
+                f"Retained guided operators: {', '.join(retained_guided_operators) if retained_guided_operators else 'none'}",
             ],
             axes=axes,
             action_rehearsals=action_rehearsals,
-            environment_brain=brain.model_dump(),
-            self_evolution=self_evolution.model_dump(),
+            environment_brain={
+                "initial": brain.model_dump(),
+                "guided_refinement": guided_brain.model_dump() if guided_brain is not None else {},
+            },
+            self_evolution={
+                "initial": self_evolution.model_dump(),
+                "guided_refinement": guided_self_evolution.model_dump() if guided_self_evolution is not None else {},
+                "guided_operator_evolution": guided_operator_summary.model_dump() if guided_operator_summary is not None else {},
+            },
             training=training.model_dump(),
             temporal_scene=temporal_scene.model_dump() if temporal_scene is not None else {},
+            integrated_world=integrated_world.model_dump(),
+            integrated_reasoning=integrated_reasoning.model_dump(),
+            integrated_reasoning_text=integrated_reasoning.summary,
+            self_learning_report_path=self_learning_report.report_path,
+            self_learning_objective=dict(self_learning_report.objective),
+            self_learning_plan=dict(self_learning_report.plan),
+            self_learning_summary_text=self_learning_report.summary_text,
+            solver_guidance=solver_guidance.model_dump(),
+            guided_refinement=guided_refinement,
         )
         report_path.write_text(json.dumps(summary.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         return summary
+
+    @staticmethod
+    def _should_apply_guided_refinement(guidance: UnifiedWorldSolverGuidance | None) -> bool:
+        if guidance is None:
+            return False
+        return bool(guidance.priority_queries or guidance.hidden_constraints or guidance.operator_focus)
 
     @staticmethod
     def _environment_graphs(store: CorpusMemoryStore, source: str) -> list[StructuredMeaningGraph]:
@@ -303,6 +504,45 @@ class AdaptiveEnvironmentLearningRunner:
             return None
 
     @staticmethod
+    def _build_integrated_world_and_reasoning(
+        *,
+        context: str,
+        brain: EnvironmentBrainSummary,
+        self_evolution: GroundingSelfEvolutionSummary,
+        merged_graphs: Sequence[StructuredMeaningGraph],
+        temporal_scene: TemporalSituationSummary | None,
+    ):
+        engine = UnifiedWorldModelEngine()
+        worlds = [engine.from_environment_brain_summary(brain), engine.from_grounding_self_evolution_summary(self_evolution, query=context)]
+        for graph in merged_graphs:
+            worlds.append(engine.from_graph(graph, source="environment_graph"))
+        if temporal_scene is not None:
+            worlds.append(engine.from_video_payload(context, temporal_scene.model_dump()))
+        merged = engine.merge(*worlds, query=context or brain.source_context)
+        reasoning = engine.reason(merged)
+        return merged, reasoning
+
+    @staticmethod
+    def _integration_score(reasoning: dict[str, Any] | None) -> float:
+        payload = reasoning or {}
+        domain_score = min(1.0, len(payload.get("active_domains", []) or []) / 3.0)
+        blocker_score = min(1.0, len(payload.get("blockers", []) or []) / 3.0)
+        prerequisite_score = min(1.0, len(payload.get("prerequisites", []) or []) / 3.0)
+        evidence_score = min(1.0, len(payload.get("evidence", []) or []) / 4.0)
+        next_step_score = min(1.0, len(payload.get("next_steps", []) or []) / 3.0)
+        return round(
+            min(
+                1.0,
+                (domain_score * 0.18)
+                + (blocker_score * 0.22)
+                + (prerequisite_score * 0.2)
+                + (evidence_score * 0.2)
+                + (next_step_score * 0.2),
+            ),
+            4,
+        )
+
+    @staticmethod
     def _action_rehearsals(
         brain: EnvironmentBrainSummary,
         temporal_scene: TemporalSituationSummary | None,
@@ -357,6 +597,8 @@ class AdaptiveEnvironmentLearningRunner:
         merged_graphs: list[StructuredMeaningGraph],
         temporal_scene: TemporalSituationSummary | None,
         action_rehearsals: Sequence[AdaptiveActionRehearsal],
+        *,
+        integrated_reasoning: dict[str, Any] | None = None,
     ) -> dict[str, float]:
         mastery = dict(brain.mastery_scores)
         contextual = float(mastery.get("environment_mastery", 0.0))
@@ -397,16 +639,18 @@ class AdaptiveEnvironmentLearningRunner:
             ),
             4,
         )
+        integration = AdaptiveEnvironmentLearningRunner._integration_score(integrated_reasoning)
         local_intelligence = round(
             min(
                 1.0,
-                (contextual * 0.24)
-                + (grounding * 0.22)
-                + (safety * 0.13)
-                + (reflection * 0.13)
-                + (memory * 0.1)
+                (contextual * 0.21)
+                + (grounding * 0.2)
+                + (safety * 0.12)
+                + (reflection * 0.12)
+                + (memory * 0.09)
                 + (multimodal * 0.08)
-                + (embodied * 0.1),
+                + (embodied * 0.1)
+                + (integration * 0.08),
             ),
             4,
         )
@@ -418,6 +662,7 @@ class AdaptiveEnvironmentLearningRunner:
             "self_reflection": reflection,
             "environment_memory": memory,
             "embodied_planning": embodied,
+            "world_model_integration": integration,
             "local_intelligence": local_intelligence,
         }
 
@@ -469,6 +714,15 @@ class AdaptiveEnvironmentLearningRunner:
                 next_step="Run the loop again after approving a few corrected traces if this remains weak.",
             ),
             AdaptiveEnvironmentAxis(
+                key="world_model_integration",
+                label="Unified world-model reasoning",
+                score=float(scores.get("world_model_integration", 0.0)),
+                target=0.58,
+                ready=float(scores.get("world_model_integration", 0.0)) >= 0.58,
+                summary="The same hidden constraints, visual evidence, routines, and self-corrections should meet in one shared world state.",
+                next_step="Merge more grounded traces from the same environment until blockers, prerequisites, evidence, and next steps all appear in one world-model summary.",
+            ),
+            AdaptiveEnvironmentAxis(
                 key="embodied_planning",
                 label="Embodied action rehearsal in this environment",
                 score=float(scores.get("embodied_planning", 0.0)),
@@ -496,8 +750,15 @@ class AdaptiveEnvironmentLearningRunner:
         action_rehearsals: Sequence[AdaptiveActionRehearsal],
         *,
         visual_input: str | None,
+        integrated_reasoning: dict[str, Any] | None = None,
     ) -> list[str]:
-        actions = [item.next_step for item in axes if not item.ready and item.next_step]
+        reasoning = integrated_reasoning or {}
+        actions = [str(item) for item in reasoning.get("next_steps", [])[:3] if str(item).strip()]
+        blockers = [str(item) for item in reasoning.get("blockers", [])[:2] if str(item).strip()]
+        prerequisites = [str(item) for item in reasoning.get("prerequisites", [])[:2] if str(item).strip()]
+        actions.extend(f"Resolve blocker first: {item}" for item in blockers)
+        actions.extend(f"Verify prerequisite first: {item}" for item in prerequisites)
+        actions.extend(item.next_step for item in axes if not item.ready and item.next_step)
         if not actions and not brain.next_probes:
             actions.append("Ask a harder local question that mixes hidden constraints with action safety.")
         actions.extend(item.query for item in brain.next_probes[:3] if item.query)

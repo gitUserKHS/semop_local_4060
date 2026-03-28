@@ -441,15 +441,27 @@ class RecursiveSelfEvolutionRunner:
     @staticmethod
     def _score_summary(summary: AdaptiveEnvironmentLearningSummary) -> float:
         metrics = dict(summary.capability_scores)
+        integrated_reasoning = getattr(summary, 'integrated_reasoning', {}) or {}
         approved_bonus = min(1.0, float(summary.approved_review_count) / 10.0)
         ready_bonus = min(1.0, float(summary.ready_axes) / float(summary.total_axes or 1))
+        integration_bonus = float(metrics.get('world_model_integration', 0.0) or 0.0)
+        if integration_bonus <= 0.0 and isinstance(integrated_reasoning, dict):
+            integration_bonus = min(
+                1.0,
+                (min(1.0, len(integrated_reasoning.get('active_domains', []) or []) / 3.0) * 0.2)
+                + (min(1.0, len(integrated_reasoning.get('blockers', []) or []) / 3.0) * 0.2)
+                + (min(1.0, len(integrated_reasoning.get('prerequisites', []) or []) / 3.0) * 0.2)
+                + (min(1.0, len(integrated_reasoning.get('evidence', []) or []) / 4.0) * 0.2)
+                + (min(1.0, len(integrated_reasoning.get('next_steps', []) or []) / 3.0) * 0.2)
+            )
         score = (
-            float(metrics.get('local_intelligence', 0.0)) * 0.3
-            + float(metrics.get('grounded_reasoning', 0.0)) * 0.16
-            + float(metrics.get('self_reflection', 0.0)) * 0.13
-            + float(metrics.get('embodied_planning', 0.0)) * 0.13
+            float(metrics.get('local_intelligence', 0.0)) * 0.27
+            + float(metrics.get('grounded_reasoning', 0.0)) * 0.15
+            + float(metrics.get('self_reflection', 0.0)) * 0.12
+            + float(metrics.get('embodied_planning', 0.0)) * 0.12
             + float(metrics.get('contextual_reasoning', 0.0)) * 0.1
-            + float(metrics.get('multimodal_understanding', 0.0)) * 0.07
+            + float(metrics.get('multimodal_understanding', 0.0)) * 0.06
+            + integration_bonus * 0.07
             + approved_bonus * 0.05
             + ready_bonus * 0.06
         )
@@ -514,8 +526,8 @@ class RecursiveSelfEvolutionRunner:
     @staticmethod
     def _research_principles() -> list[str]:
         return [
-            'AlphaEvolve and FunSearch: keep a searchable population of programs and let automated evaluators decide what survives.',
-            'Voyager: grow environment-specific reusable skills instead of solving each step from scratch.',
-            'Reflexion and Self-Refine: preserve reflection memory and let failed attempts mutate the next proposal.',
+            'DreamerV3 and MuZero: improve policy quality by keeping a learned world model in the loop, not just a raw action trace.',
+            'FunSearch and AlphaEvolve: keep a searchable population of programs and let evaluators decide what survives.',
+            'Voyager, Reflexion, and Self-Refine: preserve reflection memory and reusable skills so failed attempts mutate the next proposal.',
             'RTX 4060 constraint: evolve symbolic improvement programs and evaluators first, then retrain only the best local bundle.',
         ]

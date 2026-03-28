@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -530,6 +531,44 @@ class StudioGuiRenderTests(unittest.TestCase):
         finally:
             semop_studio_gui.build_vision_payload = original
 
+    def test_chat_route_prefers_ops_for_visual_blocked_approval_question(self) -> None:
+        image_path = Path(__file__).resolve()
+        route = semop_studio_gui._chat_route('\uc774 \ud1b5\ub85c\uac00 \ub9c9\ud600 \uc788\uace0 \uc2b9\uc778\ub3c4 \uc5c6\uc73c\uba74 \uc5b4\ub5bb\uac8c \ud574\uc57c \ud574?', str(image_path))
+        self.assertEqual(route.get('kind'), 'ops')
+
+    def test_unified_chat_delegates_non_action_requests_to_unified_responder(self) -> None:
+        app = semop_studio_gui.StudioApp()
+        image_path = Path(__file__).resolve()
+        fake_result = Mock()
+        fake_result.route = 'vision'
+        fake_result.status = 'completed'
+        fake_result.answer_text = 'Backend delegated answer'
+        fake_result.flash_text = 'Unified chat routed your prompt to vision reasoning.'
+        fake_result.flash_tone = 'success'
+        fake_result.prompt_understanding = {'likely_scenario': 'scene_understanding'}
+        fake_result.domain = ''
+        fake_result.scenario = ''
+        fake_result.model_dump.return_value = {
+            'route': 'vision',
+            'status': 'completed',
+            'prompt': 'Describe this image.',
+            'answer_text': 'Backend delegated answer',
+            'prompt_understanding': {'likely_scenario': 'scene_understanding'},
+            'concept_fusion': {},
+            'vision_payload': {'answer': {'answer_text': 'Backend delegated answer'}, 'world': {'entities': [], 'relations': [], 'metadata': {}}},
+        }
+        with patch('semop_studio_gui.UnifiedResponder.respond', return_value=fake_result):
+            app.handle(
+                {
+                    'action': ['run_unified_chat'],
+                    'chat_prompt': ['Describe this image.'],
+                    'chat_image': [str(image_path)],
+                }
+            )
+        payload = app._last_outcome.result_payload
+        self.assertEqual(payload.get('answer_text'), 'Backend delegated answer')
+        self.assertEqual(payload.get('route'), 'vision')
+
     def test_render_vision_summary_surfaces_structural_only_reality_check(self) -> None:
         html = semop_studio_gui.render_result(
             'vision',
@@ -558,6 +597,27 @@ class StudioGuiRenderTests(unittest.TestCase):
         self.assertIn('Reality check', html)
         self.assertIn('structural-only scene grounding', html)
         self.assertIn('Semantic backend', html)
+
+    def test_render_vision_summary_shows_prompt_understanding_when_available(self) -> None:
+        html = semop_studio_gui.render_result(
+            'vision',
+            {
+                'answer': {
+                    'answer_text': 'This scene looks like a game screen.',
+                    'answer_mode': 'structured',
+                    'scene_semantic_level': 'semantic_grounded',
+                    'warnings': [],
+                    'prompt_understanding': {'summary': 'Describe the visible scene and answer from grounded visual evidence.'},
+                },
+                'world': {
+                    'entities': [{'id': 'shape_1', 'label': 'shape_1', 'modality': 'vision'}],
+                    'relations': [],
+                    'metadata': {},
+                },
+            },
+        )
+        self.assertIn('Prompt understanding', html)
+        self.assertIn('Describe the visible scene', html)
 
     def test_render_unified_chat_summary_shows_semantic_caption_for_vision(self) -> None:
         html = semop_studio_gui.render_result(

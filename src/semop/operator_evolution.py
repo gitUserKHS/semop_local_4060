@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 from .structures import FunctorHypothesis, OperatorDecomposition, StructuredMeaningGraph
 from .operator_proposal import OperatorProposalEngine
+from .unified_world_solver_guidance import UnifiedWorldSolverGuidance, UnifiedWorldSolverGuidanceEngine
 
 
 @dataclass
@@ -56,10 +57,21 @@ class OperatorSelfEvolutionEngine:
     def __init__(self, proposal_engine: OperatorProposalEngine | None = None) -> None:
         self.proposal_engine = proposal_engine or OperatorProposalEngine()
 
-    def evolve(self, graphs: Sequence[StructuredMeaningGraph], min_support: int = 2, utility_threshold: float = 0.45) -> OperatorEvolutionSummary:
+    def evolve(
+        self,
+        graphs: Sequence[StructuredMeaningGraph],
+        min_support: int = 2,
+        utility_threshold: float = 0.45,
+        self_learning_plan: dict[str, Any] | None = None,
+        integrated_reasoning: dict[str, Any] | None = None,
+    ) -> OperatorEvolutionSummary:
         proposals = self._propose(graphs)
         merged = self._merge(proposals)
-        self._score_utility(merged, graphs)
+        guidance = UnifiedWorldSolverGuidanceEngine().build(
+            plan=self_learning_plan,
+            reasoning=integrated_reasoning,
+        )
+        self._score_utility(merged, graphs, guidance=guidance)
         retained = 0
         pruned = 0
         for item in merged:
@@ -111,7 +123,13 @@ class OperatorSelfEvolutionEngine:
                 current.rationale = (current.rationale + ' ' + proposal.rationale).strip()
         return list(grouped.values())
 
-    def _score_utility(self, proposals: Sequence[EvolvedOperatorProposal], graphs: Sequence[StructuredMeaningGraph]) -> None:
+    def _score_utility(
+        self,
+        proposals: Sequence[EvolvedOperatorProposal],
+        graphs: Sequence[StructuredMeaningGraph],
+        guidance: UnifiedWorldSolverGuidance | None = None,
+    ) -> None:
+        guidance_engine = UnifiedWorldSolverGuidanceEngine()
         max_support = max((item.support for item in proposals), default=1)
         graph_domains = {graph.domain or 'general' for graph in graphs} or {'general'}
         max_domain_support = max(1, len(graph_domains))
@@ -120,7 +138,15 @@ class OperatorSelfEvolutionEngine:
             transfer_score = item.domain_support / float(max_domain_support)
             compression_score = min(1.0, len(item.source_operator_names) / max(1.0, len(item.basis_signature)))
             confidence_score = min(1.0, max(0.0, float(item.confidence)))
-            item.utility_score = round((0.35 * support_score) + (0.35 * transfer_score) + (0.15 * compression_score) + (0.15 * confidence_score), 4)
+            guidance_score = guidance_engine.operator_priority(
+                guidance,
+                name=item.name,
+                basis_signature=item.basis_signature,
+            )
+            base_score = (0.3 * support_score) + (0.3 * transfer_score) + (0.15 * compression_score) + (0.15 * confidence_score)
+            item.utility_score = round(min(1.0, base_score + (0.1 * guidance_score)), 4)
+            if guidance_score > 0.0 and guidance is not None and guidance.summary and guidance.summary not in item.rationale:
+                item.rationale = (item.rationale + ' Prioritized by shared-world solver guidance.').strip()
             item.domain_support = len(item.source_domains)
 
     @staticmethod
@@ -235,6 +261,8 @@ class OperatorSelfEvolutionLoop:
         min_support: int = 2,
         utility_threshold: float = 0.45,
         transfer_cases: Sequence[OperatorTransferEvalCase] | None = None,
+        self_learning_plan: dict[str, Any] | None = None,
+        integrated_reasoning: dict[str, Any] | None = None,
     ) -> list[OperatorEvolutionRunResult]:
         results: list[OperatorEvolutionRunResult] = []
         for iteration in range(1, max(1, iterations) + 1):
@@ -243,6 +271,8 @@ class OperatorSelfEvolutionLoop:
                 graphs,
                 min_support=min_support,
                 utility_threshold=utility_threshold,
+                self_learning_plan=self_learning_plan,
+                integrated_reasoning=integrated_reasoning,
             )
             retained = [item for item in summary.proposals if item.retained]
             run_id = self.store.store_operator_evolution_result(

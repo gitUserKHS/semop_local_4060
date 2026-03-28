@@ -10,6 +10,7 @@ from .graph_supervision import GraphSupervisionExporter
 from .operating_policies import collect_review_promotion_decisions
 from .review_queue import severity_weight
 from .structures import StructuredMeaningGraph
+from .unified_world_model import UnifiedWorldModelEngine
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ContinuousLearningBundleSummary:
     filtered_review_count: int
     promoted_training_weight_total: float = 0.0
     operating_domain: str = 'general'
+    integrated_trace_count: int = 0
 
     def model_dump(self) -> dict[str, Any]:
         return asdict(self)
@@ -43,6 +45,10 @@ class ContinuousLearningBundleBuilder:
         trace_rows = [self._trace_from_graph(graph) for graph in graphs]
         trace_path = output / 'teacher_traces.jsonl'
         self._write_jsonl(trace_path, trace_rows)
+
+        integrated_trace_rows = [self._integrated_world_trace(graph) for graph in graphs]
+        integrated_trace_path = output / 'integrated_world_traces.jsonl'
+        self._write_jsonl(integrated_trace_path, integrated_trace_rows)
 
         supervision_summary = GraphSupervisionExporter().export_from_graphs(graphs, output / 'graph_supervision.jsonl')
 
@@ -86,6 +92,7 @@ class ContinuousLearningBundleBuilder:
 
         manifest = {
             'trace_path': str(trace_path),
+            'integrated_trace_path': str(integrated_trace_path),
             'graph_supervision_path': str(output / 'graph_supervision.jsonl'),
             'sft_path': str(sft_path),
             'approved_review_count': approved_review_count,
@@ -108,12 +115,16 @@ class ContinuousLearningBundleBuilder:
             filtered_review_count=filtered_review_count,
             promoted_training_weight_total=round(promoted_training_weight_total, 4),
             operating_domain=str(operating_domain or 'general'),
+            integrated_trace_count=len(integrated_trace_rows),
         )
 
     @staticmethod
     def _trace_from_graph(graph: StructuredMeaningGraph) -> TeacherTraceRecord:
         claim_groundings = ContinuousLearningBundleBuilder._claim_grounding_payload(graph)
         repair_programs = ContinuousLearningBundleBuilder._repair_program_payload(graph)
+        engine = UnifiedWorldModelEngine()
+        integrated_world = engine.from_graph(graph, source='continuous_learning')
+        integrated_reasoning = engine.reason(integrated_world)
         unsupported_claim_count = sum(1 for item in claim_groundings if not item.get('grounded', False))
         return TeacherTraceRecord(
             task='continuous_runtime_trace',
@@ -130,6 +141,8 @@ class ContinuousLearningBundleBuilder:
                 'grounding_edges': [f"{edge.source}:{edge.relation}:{edge.target}" for edge in graph.edges if edge.relation == 'GROUNDED_BY'][:8],
                 'claim_groundings': claim_groundings,
                 'repair_programs': repair_programs,
+                'integrated_world': integrated_world.model_dump(),
+                'integrated_reasoning': integrated_reasoning.model_dump(),
             },
             completion_payload={
                 'hidden_goals': list(graph.hidden_goals),
@@ -138,6 +151,7 @@ class ContinuousLearningBundleBuilder:
                 'claim_groundings': claim_groundings,
                 'repair_programs_applied': repair_programs['applied_programs'],
                 'repair_actions_applied': repair_programs['applied_actions'],
+                'integrated_reasoning': integrated_reasoning.model_dump(),
             },
             metadata={
                 'composition_score': float(graph.operator_execution.composition_score) if graph.operator_execution is not None else 0.0,
@@ -145,6 +159,8 @@ class ContinuousLearningBundleBuilder:
                 'unsupported_claim_count': unsupported_claim_count,
                 'repair_program_count': len(repair_programs['applied_programs']),
                 'repair_rejection_count': len(repair_programs['rejected_actions']),
+                'world_entity_count': len(integrated_world.entities),
+                'world_relation_count': len(integrated_world.relations),
                 'audit_trace': list(graph.audit_trace[:12]),
             },
         )
@@ -153,6 +169,9 @@ class ContinuousLearningBundleBuilder:
     def _sft_from_graph(graph: StructuredMeaningGraph) -> DistillationSftRecord:
         claim_groundings = ContinuousLearningBundleBuilder._claim_grounding_payload(graph)
         repair_programs = ContinuousLearningBundleBuilder._repair_program_payload(graph)
+        engine = UnifiedWorldModelEngine()
+        integrated_world = engine.from_graph(graph, source='continuous_learning')
+        integrated_reasoning = engine.reason(integrated_world)
         completion = {
             'intent': graph.intent,
             'domain': graph.domain,
@@ -162,10 +181,11 @@ class ContinuousLearningBundleBuilder:
             'claim_groundings': claim_groundings,
             'repair_programs_applied': repair_programs['applied_programs'],
             'repair_actions_applied': repair_programs['applied_actions'],
+            'integrated_reasoning': integrated_reasoning.model_dump(),
         }
         prompt = (
             'Read the query and return the operator-graph slots. '
-            'Output JSON fields: intent, domain, hidden_goals, required_premises, operator_decompositions, claim_groundings, repair_programs_applied, repair_actions_applied.\n\n'
+            'Output JSON fields: intent, domain, hidden_goals, required_premises, operator_decompositions, claim_groundings, repair_programs_applied, repair_actions_applied, integrated_reasoning.\n\n'
             f'Query:\n{graph.query}\n\n'
             f'Source context:\n{graph.source_context[:400]}'
         )
@@ -179,8 +199,24 @@ class ContinuousLearningBundleBuilder:
                 'unsupported_claim_count': sum(1 for item in claim_groundings if not item.get('grounded', False)),
                 'repair_program_count': len(repair_programs['applied_programs']),
                 'repair_rejection_count': len(repair_programs['rejected_actions']),
+                'world_entity_count': len(integrated_world.entities),
+                'world_relation_count': len(integrated_world.relations),
             },
         )
+
+    @staticmethod
+    def _integrated_world_trace(graph: StructuredMeaningGraph) -> dict[str, Any]:
+        engine = UnifiedWorldModelEngine()
+        world = engine.from_graph(graph, source='continuous_learning')
+        reasoning = engine.reason(world)
+        return {
+            'query': graph.query,
+            'intent': graph.intent,
+            'domain': graph.domain,
+            'integrated_world': world.model_dump(),
+            'integrated_reasoning': reasoning.model_dump(),
+            'integrated_reasoning_text': reasoning.summary,
+        }
 
     @staticmethod
     def _sft_from_review(detail: dict[str, Any]) -> DistillationSftRecord:

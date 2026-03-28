@@ -35,11 +35,33 @@ class OpsHeuristicExtractor:
 
     def extract(self, query: str) -> StructuredMeaningGraph:
         lowered = query.lower()
+        if self._looks_like_blocked_access_case(lowered):
+            return self._blocked_access_case(query)
         if self._looks_like_forklift_case(lowered):
             return self._forklift_exception_case(query)
         if self._looks_like_label_case(lowered):
             return self._label_mismatch_case(query)
         return self._generic_ops_case(query)
+
+    @staticmethod
+    def _looks_like_blocked_access_case(lowered: str) -> bool:
+        mentions_route = any(token in lowered for token in [
+            "aisle", "lane", "corridor", "route", "path",
+            "통로", "경로", "진입", "접근",
+        ])
+        mentions_blocker = any(token in lowered for token in [
+            "blocked", "blocking", "closed",
+            "차단", "막혀", "막혔", "막힌", "봉쇄", "불가",
+        ])
+        mentions_approval = any(token in lowered for token in [
+            "approval", "approved", "permit", "permission",
+            "승인", "허가", "결재",
+        ])
+        asks_next_step = any(token in lowered for token in [
+            "what should", "should i", "can i", "how do i", "how should",
+            "어떻게", "해야", "되나", "되나요", "괜찮", "가능", "해도", "어쩌",
+        ])
+        return mentions_route and (mentions_blocker or mentions_approval) and asks_next_step
 
     @staticmethod
     def _looks_like_forklift_case(lowered: str) -> bool:
@@ -75,6 +97,74 @@ class OpsHeuristicExtractor:
         from .commonsense_kb import lookup_concept
 
         return lookup_concept(concept_id).get("kind", "concept")
+
+    def _blocked_access_case(self, query: str) -> StructuredMeaningGraph:
+        concepts = [
+            "worker",
+            "aisle",
+            "blocked_aisle",
+            "supervisor_approval",
+            "safety_clearance",
+            "staging_area",
+            "incident_report",
+            "stop_work",
+        ]
+        graph = self._seed_graph(query, "warehouse_access_exception_response", concepts)
+        graph.add_node(Node(id="move_through_blocked_aisle", label="막힌 통로로 직접 진입", kind="task", provenance=["ops:task:move_through_blocked_aisle"]))
+
+        apply_operator(graph, "REQUIRES", "move_through_blocked_aisle", "supervisor_approval", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "REQUIRES", "move_through_blocked_aisle", "safety_clearance", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "BLOCKED_BY", "move_through_blocked_aisle", "blocked_aisle", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "ALTERNATIVE", "move_through_blocked_aisle", "staging_area", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "ALTERNATIVE", "move_through_blocked_aisle", "incident_report", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "ALTERNATIVE", "move_through_blocked_aisle", "stop_work", provenance=["ops:blocked_access_case"])
+        apply_operator(graph, "GOAL_OF", "move_through_blocked_aisle", "worker", provenance=["ops:blocked_access_case"])
+
+        graph.candidate_actions.extend([
+            "통로 차단 상태와 실제 위험 요인을 먼저 확인한다",
+            "승인 없이는 직접 진입이나 진행을 멈춘다",
+            "우회 경로, 스테이징, hold 중 가능한 대체 흐름을 고른다",
+            "위험이 지속되면 보고하고 stop work로 전환한다",
+        ])
+        graph.creative_alternatives.extend([
+            "승인이 늦으면 같은 목표를 유지한 채 대체 작업 순서를 먼저 재배치한다.",
+            "통로 복구 전까지 스테이징 구역이나 hold 상태로 전환해 현장 충돌을 막는다.",
+        ])
+        graph.plan = [
+            PlanStep(
+                id="step1",
+                action="통로가 실제로 막혀 있는지, 왜 막혔는지, 안전 구역이 함께 영향을 받는지 먼저 확인한다.",
+                rationale="차단 상태는 BLOCKED_BY 관계의 근거이므로 먼저 사실로 잠가야 한다.",
+                requires=["blocked_aisle"],
+            ),
+            PlanStep(
+                id="step2",
+                action="승인이 없으면 직접 진입이나 진행을 멈추고 승인 요청 또는 상위 보고로 올린다.",
+                rationale="REQUIRES 관계가 충족되지 않으면 실행보다 승인 확보가 먼저다.",
+                requires=["supervisor_approval"],
+            ),
+            PlanStep(
+                id="step3",
+                action="작업이 급하면 우회 경로를 찾거나 스테이징 구역으로 전환해서 목표를 보류된 형태로 유지한다.",
+                rationale="ALTERNATIVE 연산자는 목표를 버리지 않고 위험한 직접 실행만 피하게 한다.",
+                requires=["staging_area"],
+            ),
+            PlanStep(
+                id="step4",
+                action="차단과 승인 문제가 계속되면 incident report를 남기고 stop work 상태로 묶는다.",
+                rationale="차단과 승인 누락이 동시에 남아 있으면 현장 예외 대응은 보고와 작업 중지가 우선이다.",
+                requires=["incident_report", "stop_work"],
+            ),
+        ]
+        graph.invalid_advice.extend([
+            "승인 없이 그냥 들어가 보라는 조언",
+            "막힌 통로라도 일단 진행하라는 조언",
+        ])
+        graph.warnings.extend([
+            "blocked aisle 상태에서는 직접 진입보다 차단 해소와 우회 판단이 먼저다.",
+            "승인 없는 진행은 현장 SOP와 안전 규칙을 동시에 어길 수 있다.",
+        ])
+        return graph
 
     def _forklift_exception_case(self, query: str) -> StructuredMeaningGraph:
         concepts = [

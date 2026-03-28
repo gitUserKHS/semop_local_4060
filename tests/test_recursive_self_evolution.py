@@ -62,6 +62,14 @@ class RecursiveSelfEvolutionRunnerTests(unittest.TestCase):
                     remaining_gaps=[item.label for item in axes if not item.ready],
                     next_actions=['keep evolving'],
                     axes=axes,
+                    integrated_reasoning={
+                        'active_domains': ['environment_brain', 'self_evolution', 'video'],
+                        'blockers': ['route blocked'],
+                        'prerequisites': ['approval confirmed'],
+                        'evidence': ['door observed', 'action rehearsal'],
+                        'next_steps': ['verify approval before movement'],
+                    },
+                    integrated_reasoning_text='route blocked -> verify approval before movement',
                     action_rehearsals=[
                         AdaptiveActionRehearsal(
                             label='Routine rehearsal 1',

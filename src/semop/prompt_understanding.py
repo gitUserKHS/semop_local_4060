@@ -9,14 +9,16 @@ from .pipeline import StructuredMeaningPipeline
 WAREHOUSE_EXCEPTION_TERMS = (
     'warehouse', 'aisle', 'lane', 'forklift', 'pallet', 'manager approval', 'manager', 'work zone', 'zone',
     'approval token', 'route blocker', 'blocked lane', 'tote', 'shelf', 'pick face',
+    '창고', '통로', '막힌 통로', '승인', '관리자 승인', '허가', '작업 구역', '안전 구역', '지게차', '팔레트', '랙', '피킹',
 )
 WAREHOUSE_ONBOARDING_TERMS = (
     'onboarding', 'new worker', 'new hire', 'first day', 'walkthrough', 'training aisle',
+    '온보딩', '신입', '신입 작업자', '첫날', '교육', '교육 통로',
 )
 VISUAL_TERMS = ('image', 'diagram', 'scene', 'photo', 'picture', 'screenshot', 'camera', 'visible')
 TEMPORAL_TERMS = ('video', 'clip', 'frame', 'temporal', 'sequence', 'motion', 'timeline')
 GEOMETRY_TERMS = ('geometry', 'triangle', 'circle', 'angle', 'parallel', 'perpendicular', 'quadrilateral')
-PREREQUISITE_TERMS = ('before', 'first', 'prior', 'prerequisite', 'verify', 'check', 'confirm')
+PREREQUISITE_TERMS = ('before', 'first', 'prior', 'prerequisite', 'verify', 'check', 'confirm', '먼저', '사전', '미리', '확인', '점검', '승인')
 
 
 @dataclass
@@ -57,6 +59,9 @@ class PromptUnderstandingAnalyzer:
         required_inputs = self._required_inputs(prompt, route, visual_input=visual_input)
         hidden_context.extend(self._heuristic_context_hints(prompt, route))
         hidden_constraints.extend(self._heuristic_constraint_hints(prompt, route))
+        if route == 'ops' and visual_input:
+            hidden_context.append('A local visual input is attached and should ground blockers, access state, and safety conditions.')
+            hidden_constraints.append('The answer should fuse visible state with approvals, prerequisites, and safety constraints before suggesting an action.')
         likely_domain = self._infer_domain(prompt, source_context=source_context, route=route, configured_domain=domain, graph=graph)
         likely_scenario = self._infer_scenario(route, configured_scenario=scenario, graph=graph)
         primary_intent = self._primary_intent(route, graph=graph)
@@ -156,6 +161,42 @@ class PromptUnderstandingAnalyzer:
         base.summary = self._build_summary(base.primary_intent, base.hidden_context, base.hidden_constraints, base.required_inputs)
         return base
 
+    def enrich_with_cp_result(
+        self,
+        base: PromptUnderstandingSummary,
+        solution: Any,
+        *,
+        structure: Any | None = None,
+    ) -> PromptUnderstandingSummary:
+        hidden_context = list(base.hidden_context)
+        hidden_constraints = list(base.hidden_constraints)
+        if structure is not None:
+            goals = list(getattr(structure, 'goal_types', []) or [])
+            frames = list(getattr(structure, 'logical_frames', []) or [])
+            if goals:
+                hidden_context.append('CP goal types: ' + ', '.join(str(item) for item in goals[:4]))
+            if frames:
+                hidden_context.append('CP logical frames: ' + ', '.join(str(item) for item in frames[:4]))
+        category = str(getattr(solution, 'category', '') or '').strip()
+        if category:
+            hidden_context.append('Chosen CP category: ' + category.replace('_', ' '))
+        time_complexity = str(getattr(solution, 'time_complexity', '') or '').strip()
+        memory_complexity = str(getattr(solution, 'memory_complexity', '') or '').strip()
+        if time_complexity or memory_complexity:
+            hidden_constraints.append('Complexity target: ' + ', '.join(item for item in [time_complexity, memory_complexity] if item))
+        compile_ok = getattr(solution, 'compile_ok', None)
+        validation = getattr(solution, 'validation_report', None)
+        if compile_ok is False:
+            hidden_constraints.append('The current CP candidate did not pass the compile check yet.')
+        if isinstance(validation, dict) and validation.get('overall_ok') is False:
+            hidden_constraints.append('The current CP candidate still has a validator failure to repair.')
+        base.hidden_context = self._unique(hidden_context)[:6]
+        base.hidden_constraints = self._unique(hidden_constraints)[:6]
+        base.likely_domain = 'competitive_programming'
+        base.likely_scenario = 'competitive_programming'
+        base.summary = self._build_summary(base.primary_intent, base.hidden_context, base.hidden_constraints, base.required_inputs)
+        return base
+
     def _graph_for(self, prompt: str, *, source_context: str, route: str) -> Any | None:
         if route in {'action', 'vision', 'video', 'visual_3d'}:
             return None
@@ -230,6 +271,8 @@ class PromptUnderstandingAnalyzer:
             required.append('Frame folders and JSON manifests are the most stable temporal input format.')
         if route == 'math' and any(term in lowered for term in GEOMETRY_TERMS) and not visual_input:
             required.append('Attach a diagram path for stronger geometry grounding and safer proof steps.')
+        if route == 'cp' and any(term in lowered for term in GEOMETRY_TERMS) and not visual_input:
+            required.append('Attach a diagram only if the contest problem depends on geometry figures; otherwise keep the reasoning text-first.')
         if route == 'visual_3d' and not visual_input:
             required.append('Attach an image or diagram path so the 3D workbench has visible structure to reconstruct.')
         return required
@@ -246,13 +289,15 @@ class PromptUnderstandingAnalyzer:
             lines.append('The request depends on visible entities and relations rather than text-only recall.')
         if route == 'math':
             lines.append('The request likely needs a proof path or verification trace, not only a final answer.')
+        if route == 'cp':
+            lines.append('The request likely needs constraint recovery, algorithm selection, and complexity verification together.')
         return lines
 
     @staticmethod
     def _heuristic_constraint_hints(prompt: str, route: str) -> list[str]:
         lowered = str(prompt or '').lower()
         lines: list[str] = []
-        if route == 'ops' and any(token in lowered for token in ('blocked', 'approval', 'access', 'safe', 'risk')):
+        if route == 'ops' and any(token in lowered for token in ('blocked', 'approval', 'access', 'safe', 'risk', '\ub9c9\ud788', '\uc2b9\uc778', '\uc811\uadfc', '\uc548\uc804', '\uc704\ud5d8', '\ud1b5\ub85c', '\ud5c8\uac00')):
             lines.append('There may be hidden safety, access, or approval constraints that should be verified first.')
         if route in {'vision', 'video'}:
             lines.append('The answer should stay grounded in visible evidence and avoid hallucinating unseen entities.')
@@ -260,10 +305,12 @@ class PromptUnderstandingAnalyzer:
             lines.append('The reconstruction should preserve coarse topology even when exact geometry is uncertain.')
         if route == 'action':
             lines.append('The prompt requests a workflow change such as training, testing, or evaluation.')
+        if route == 'cp':
+            lines.append('The answer should preserve contest constraints, algorithm fit, and validation signals before presenting code advice.')
         return lines
 
     def _infer_domain(self, prompt: str, *, source_context: str, route: str, configured_domain: str, graph: Any | None) -> str:
-        text = str(prompt or '').lower() if route in {'math', 'vision', 'video', 'visual_3d'} else f'{prompt} {source_context}'.lower()
+        text = str(prompt or '').lower() if route in {'math', 'cp', 'vision', 'video', 'visual_3d'} else f'{prompt} {source_context}'.lower()
         if any(term in text for term in WAREHOUSE_ONBOARDING_TERMS):
             return 'warehouse_onboarding'
         if any(term in text for term in WAREHOUSE_EXCEPTION_TERMS):
@@ -271,9 +318,11 @@ class PromptUnderstandingAnalyzer:
         graph_domain = str(getattr(graph, 'domain', '') or '').strip()
         if graph_domain and graph_domain != 'general':
             return graph_domain
+        if route == 'cp':
+            return 'competitive_programming'
         if route in {'math', 'vision', 'video', 'visual_3d'}:
             return 'general'
-        if configured_domain and configured_domain != 'general' and any(term in text for term in ('warehouse', 'aisle', 'lane', 'manager', 'zone', 'approval')):
+        if configured_domain and configured_domain != 'general' and any(term in text for term in ('warehouse', 'aisle', 'lane', 'manager', 'zone', 'approval', '\ucc3d\uace0', '\ud1b5\ub85c', '\uc2b9\uc778', '\ud5c8\uac00', '\uc791\uc5c5 \uad6c\uc5ed')):
             return configured_domain
         return 'general'
 
@@ -281,6 +330,8 @@ class PromptUnderstandingAnalyzer:
     def _infer_scenario(route: str, *, configured_scenario: str, graph: Any | None) -> str:
         if route == 'math':
             return 'math_reasoning'
+        if route == 'cp':
+            return 'competitive_programming'
         if route == 'vision':
             return 'scene_understanding'
         if route == 'video':
@@ -305,6 +356,7 @@ class PromptUnderstandingAnalyzer:
             'video': 'Track the scene across frames and summarize the temporal situation.',
             'visual_3d': 'Reconstruct the visible structure into a coarse 3D/topological view.',
             'math': 'Build a rigorous solution or proof path for the problem.',
+            'cp': 'Recover constraints and choose an algorithm on one shared world model before giving code advice.',
             'action': 'Launch a training, test, or improvement workflow.',
         }.get(route, 'Interpret the request and route it to the safest reasoning path.')
 
@@ -318,9 +370,13 @@ class PromptUnderstandingAnalyzer:
             return 'A visual input is attached, so grounded scene reasoning takes priority over text-only inference.'
         if route == 'ops':
             detail = f' The prompt structure suggests {frame_type}.' if frame_type else ''
+            if visual_input:
+                return 'The prompt asks for situational reasoning, and the attached visual input should ground blockers, permissions, and safe alternatives.' + detail
             return 'The prompt looks like a situational reasoning question, so hidden goals, constraints, and safe actions are inferred.' + detail
         if route == 'math':
             return 'The prompt looks like a mathematical problem, so the world-model math solver is used.'
+        if route == 'cp':
+            return 'The prompt looks like a competitive programming problem, so constraint recovery, algorithm ranking, and verification are combined.'
         if route == 'visual_3d':
             return 'The prompt asks for reconstruction, so the geometry/topology 3D workbench is used.'
         if route == 'action':

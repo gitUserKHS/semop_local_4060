@@ -7,6 +7,7 @@ from .aligner import VLSOAligner
 from .embedding_store import VisualEmbeddingRecord, VisualEmbeddingStore
 from .frontier_vlm import FrontierVisionAdapter, VisualSceneAdjudicator
 from ..llm_client import LocalLLMConfig
+from ..prompt_understanding import PromptUnderstandingAnalyzer
 from .language_parser import VLSOLanguageParser
 from .qa import LocalTextGenerator, VLSOAnswer, VLSOQuestionAnswerer
 from .semantic_scene import SemanticSceneAnalyzer
@@ -393,9 +394,35 @@ class VLSOReasoner:
 
     def answer(self, query: str, visual_input: str | dict | None = None, remember_visual: bool = False, visual_key: str = '') -> tuple[SharedWorldModel, VLSOAnswer]:
         world = self.run(query, visual_input=visual_input, remember_visual=remember_visual, visual_key=visual_key)
+        prompt_analyzer = PromptUnderstandingAnalyzer()
+        prompt_understanding = prompt_analyzer.analyze_base(
+            query,
+            'vision',
+            visual_input=self._visual_input_hint(visual_input),
+            domain='general',
+            scenario='scene_understanding',
+        )
+        world.metadata['prompt_understanding'] = prompt_understanding.model_dump()
         answer = self.answerer.answer(query, world, answer_mode=self.answer_mode)
+        prompt_understanding = prompt_analyzer.enrich_with_visual_payload(
+            prompt_understanding,
+            {'world': world.model_dump(), 'answer': answer.model_dump()},
+            temporal=False,
+        )
+        world.metadata['prompt_understanding'] = prompt_understanding.model_dump()
+        answer.prompt_understanding = prompt_understanding.model_dump()
         world.metadata['answer'] = answer.model_dump()
         return world, answer
+
+    @staticmethod
+    def _visual_input_hint(visual_input: str | dict | None) -> str:
+        if isinstance(visual_input, str):
+            return visual_input
+        if isinstance(visual_input, dict):
+            metadata = visual_input.get('metadata', {}) if isinstance(visual_input.get('metadata'), dict) else {}
+            image_path = str(metadata.get('image_path') or visual_input.get('image_path') or '').strip()
+            return image_path or '[inline_visual_input]'
+        return ''
 
     @staticmethod
     def _contains_any(text: str, needles: list[str]) -> bool:

@@ -13,6 +13,8 @@ from .pipeline import StructuredMeaningPipeline
 from .review_queue import ReviewQueueStore, infer_review_severity
 from .structures import Edge, Node, StructuredMeaningGraph, SymbolicResult
 from .unified_benchmark import GroundedExplanationEvalCase
+from .unified_world_model import UnifiedWorldModelEngine
+from .unified_world_solver_guidance import UnifiedWorldSolverGuidance, UnifiedWorldSolverGuidanceEngine
 
 
 @dataclass
@@ -49,6 +51,7 @@ class GroundingSelfEvolutionRound:
 class GroundingSelfEvolutionSummary:
     output_path: str
     reflection_memory_path: str
+    integrated_world_path: str = ""
     rounds: list[GroundingSelfEvolutionRound] = field(default_factory=list)
     reflections: list[GroundingReflection] = field(default_factory=list)
     improved_cases: int = 0
@@ -56,11 +59,15 @@ class GroundingSelfEvolutionSummary:
     stored_graphs: int = 0
     final_grounding_score: float = 0.0
     strategy_labels: list[str] = field(default_factory=list)
+    integrated_world: dict[str, Any] = field(default_factory=dict)
+    integrated_reasoning: dict[str, Any] = field(default_factory=dict)
+    integrated_reasoning_text: str = ""
 
     def model_dump(self) -> dict[str, Any]:
         return {
             "output_path": self.output_path,
             "reflection_memory_path": self.reflection_memory_path,
+            "integrated_world_path": self.integrated_world_path,
             "rounds": [item.model_dump() for item in self.rounds],
             "reflections": [item.model_dump() for item in self.reflections],
             "improved_cases": self.improved_cases,
@@ -68,6 +75,9 @@ class GroundingSelfEvolutionSummary:
             "stored_graphs": self.stored_graphs,
             "final_grounding_score": self.final_grounding_score,
             "strategy_labels": list(self.strategy_labels),
+            "integrated_world": dict(self.integrated_world),
+            "integrated_reasoning": dict(self.integrated_reasoning),
+            "integrated_reasoning_text": self.integrated_reasoning_text,
         }
 
 
@@ -87,11 +97,14 @@ class GroundingSelfEvolutionRunner:
         source_prefix: str = "grounding_self_evolution",
         cases: Sequence[GroundedExplanationEvalCase] | None = None,
         progress_callback: Any = None,
+        self_learning_plan: dict[str, Any] | None = None,
+        integrated_reasoning: dict[str, Any] | None = None,
     ) -> GroundingSelfEvolutionSummary:
         root = Path(output_dir)
         root.mkdir(parents=True, exist_ok=True)
         output_path = root / "grounding_self_evolution_report.json"
         reflection_path = root / "grounding_reflection_memory.json"
+        integrated_world_path = root / "grounding_integrated_world.json"
         store = CorpusMemoryStore(store_path)
         review_store = ReviewQueueStore(review_queue_path)
         pipeline = StructuredMeaningPipeline(mode=self.mode)
@@ -102,9 +115,14 @@ class GroundingSelfEvolutionRunner:
 
         derivation_graphs = list(store.fetch_graphs(split=split or None, source=None))
         grounding_cases = list(cases or GeneralizationProofHarness._derive_grounding_cases(derivation_graphs, limit=64))
+        guidance = UnifiedWorldSolverGuidanceEngine().build(
+            plan=self_learning_plan,
+            reasoning=integrated_reasoning,
+        )
         summary = GroundingSelfEvolutionSummary(
             output_path=str(output_path),
             reflection_memory_path=str(reflection_path),
+            integrated_world_path=str(integrated_world_path),
         )
         if not grounding_cases:
             output_path.write_text(json.dumps(summary.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -119,12 +137,12 @@ class GroundingSelfEvolutionRunner:
                 )
             round_summary = GroundingSelfEvolutionRound(round_index=round_index)
             source_name = f"{source_prefix}_round_{round_index:02d}"
-            ranked_cases = self._rank_cases(grounding_cases)
+            ranked_cases = self._rank_cases(grounding_cases, guidance)
             for case in ranked_cases[: max(1, int(cases_per_round))]:
                 baseline_graph = pipeline.run(case.query, source_context=case.source_context)
                 baseline_score = self._score_graph_against_case(baseline_graph, case)
-                reflection = self._build_reflection(case, baseline_graph, baseline_score)
-                improved_graph = self._synthesize_grounded_graph(case, reflection, pipeline)
+                reflection = self._build_reflection(case, baseline_graph, baseline_score, guidance=guidance)
+                improved_graph = self._synthesize_grounded_graph(case, reflection, pipeline, guidance=guidance)
                 improved_score = self._score_graph_against_case(improved_graph, case)
                 round_summary.attempted_cases += 1
                 round_summary.average_score_before += baseline_score
@@ -136,7 +154,7 @@ class GroundingSelfEvolutionRunner:
                 self._persist_graph(store, improved_graph, source_name, split)
                 summary.stored_graphs += 1
                 round_summary.improved_cases += 1
-                variant_graphs = self._store_variants(store, improved_graph, source_name, split)
+                variant_graphs = self._store_variants(store, improved_graph, source_name, split, guidance=guidance)
                 summary.stored_graphs += variant_graphs
                 round_summary.variant_graphs += variant_graphs
                 review_key = (case.domain, case.scenario, improved_graph.query)
@@ -197,20 +215,54 @@ class GroundingSelfEvolutionRunner:
             ]
             summary.final_grounding_score = round(sum(final_scores) / float(len(final_scores) or 1), 4)
         summary.strategy_labels = sorted({item.strategy for item in summary.reflections if item.strategy})
+        integrated_world, integrated_reasoning = self._build_integrated_summary(
+            summary,
+            store=store,
+            source_prefix=source_prefix,
+            split=split,
+            rounds=max(1, int(rounds)),
+        )
+        summary.integrated_world = integrated_world.model_dump()
+        summary.integrated_reasoning = integrated_reasoning.model_dump()
+        summary.integrated_reasoning_text = integrated_reasoning.summary
 
         output_path.write_text(json.dumps(summary.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         reflection_path.write_text(
             json.dumps({"reflections": [item.model_dump() for item in summary.reflections]}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        integrated_world_path.write_text(
+            json.dumps(
+                {
+                    "integrated_world": summary.integrated_world,
+                    "integrated_reasoning": summary.integrated_reasoning,
+                    "integrated_reasoning_text": summary.integrated_reasoning_text,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return summary
 
     @staticmethod
-    def _rank_cases(cases: Sequence[GroundedExplanationEvalCase]) -> list[GroundedExplanationEvalCase]:
-        def priority(case: GroundedExplanationEvalCase) -> tuple[float, float, int]:
+    def _rank_cases(
+        cases: Sequence[GroundedExplanationEvalCase],
+        guidance: UnifiedWorldSolverGuidance | None = None,
+    ) -> list[GroundedExplanationEvalCase]:
+        guidance_engine = UnifiedWorldSolverGuidanceEngine()
+
+        def priority(case: GroundedExplanationEvalCase) -> tuple[float, float, float, int]:
             evidence_count = len(getattr(case, "expected_evidence_terms", []) or [])
             claim_count = len(getattr(case, "expected_claim_terms", []) or [])
-            return (float(getattr(case, "case_weight", 1.0) or 1.0), claim_count, evidence_count)
+            guidance_score = guidance_engine.case_priority(
+                guidance,
+                query=case.query,
+                context=case.source_context,
+                evidence_terms=getattr(case, "expected_evidence_terms", []) or [],
+                claim_terms=getattr(case, "expected_claim_terms", []) or [],
+            )
+            return (guidance_score, float(getattr(case, "case_weight", 1.0) or 1.0), claim_count, evidence_count)
 
         return sorted(cases, key=priority, reverse=True)
 
@@ -219,9 +271,16 @@ class GroundingSelfEvolutionRunner:
         store.upsert_graph(graph, source=source, split=split)
         store.upsert_premise_operator_memory(graph, source=source, split=split)
 
-    def _store_variants(self, store: CorpusMemoryStore, graph: StructuredMeaningGraph, source: str, split: str) -> int:
+    def _store_variants(
+        self,
+        store: CorpusMemoryStore,
+        graph: StructuredMeaningGraph,
+        source: str,
+        split: str,
+        guidance: UnifiedWorldSolverGuidance | None = None,
+    ) -> int:
         count = 0
-        for query in self._variant_queries(graph.query):
+        for query in self._variant_queries(graph.query, guidance=guidance):
             if not query.strip():
                 continue
             variant = StructuredMeaningGraph.from_dict(graph.model_dump())
@@ -231,7 +290,7 @@ class GroundingSelfEvolutionRunner:
         return count
 
     @staticmethod
-    def _variant_queries(query: str) -> list[str]:
+    def _variant_queries(query: str, guidance: UnifiedWorldSolverGuidance | None = None) -> list[str]:
         normalized = str(query or "").strip()
         if not normalized:
             return []
@@ -240,6 +299,10 @@ class GroundingSelfEvolutionRunner:
             f"Grounded-only answer: {normalized}",
             f"{stem}. Cite the first supporting SOP evidence only.",
         ]
+        if guidance is not None and guidance.priority_queries:
+            variants.append(guidance.priority_queries[0])
+        if guidance is not None and guidance.hidden_constraints:
+            variants.append(f"{stem}. Keep the hidden constraint {guidance.hidden_constraints[0]} explicit.")
         return list(dict.fromkeys(item for item in variants if item and item != normalized))
 
     @staticmethod
@@ -256,6 +319,7 @@ class GroundingSelfEvolutionRunner:
         case: GroundedExplanationEvalCase,
         baseline_graph: StructuredMeaningGraph,
         baseline_score: float,
+        guidance: UnifiedWorldSolverGuidance | None = None,
     ) -> GroundingReflection:
         weakness = "Grounding is weak because the answer echoes the question or lacks direct evidence clauses."
         strategy = "cite_first_supporting_clause_then_trim_question_echo"
@@ -265,6 +329,19 @@ class GroundingSelfEvolutionRunner:
                 weakness = "Unsupported claims are present, so the corrected trace should keep only directly grounded clauses."
                 strategy = "self_refine_trim_unsupported_claims"
         evidence_focus = list(case.expected_evidence_terms[:3] or case.expected_claim_terms[:3])
+        if guidance is not None:
+            if guidance.hidden_constraints:
+                weakness = "Grounding is weak because hidden constraints from the shared world model are not explicitly tied to the answer."
+                strategy = "ground_hidden_constraints_before_final_claim"
+            if baseline_graph.operator_execution is not None and baseline_graph.operator_execution.claim_groundings:
+                unsupported = [item.claim for item in baseline_graph.operator_execution.claim_groundings if not item.grounded]
+                if unsupported and guidance.hidden_constraints:
+                    strategy = "trim_unsupported_claims_and_bind_hidden_constraints"
+            evidence_focus = self._merge_unique_texts(
+                evidence_focus
+                + list(guidance.priority_evidence[:3])
+                + list(guidance.hidden_constraints[:2])
+            )[:4]
         preview = ". ".join(evidence_focus[:2]).strip()
         return GroundingReflection(
             query=case.query,
@@ -282,6 +359,7 @@ class GroundingSelfEvolutionRunner:
         case: GroundedExplanationEvalCase,
         reflection: GroundingReflection,
         pipeline: StructuredMeaningPipeline,
+        guidance: UnifiedWorldSolverGuidance | None = None,
     ) -> StructuredMeaningGraph:
         graph = pipeline.run(case.query, source_context=case.source_context)
         graph.domain = case.domain
@@ -304,6 +382,16 @@ class GroundingSelfEvolutionRunner:
             )
         ]
         self._inject_evidence_nodes(graph, evidence_terms[:3], reflection.strategy)
+        if guidance is not None:
+            if guidance.primary_goal:
+                graph.hidden_goals = self._merge_unique_texts(list(graph.hidden_goals) + [guidance.primary_goal])
+            if guidance.hidden_constraints:
+                graph.required_premises = self._merge_unique_texts(list(graph.required_premises) + list(guidance.hidden_constraints[:3]))
+                self._inject_constraint_nodes(graph, guidance.hidden_constraints[:2], reflection.strategy)
+            if guidance.operator_focus:
+                graph.semantic_operators = self._merge_unique_texts(list(graph.semantic_operators) + list(guidance.operator_focus[:3]))
+            if guidance.summary:
+                graph.audit_trace.append(f"shared-world guidance: {guidance.summary}")
         graph.audit_trace.append(f"self-evolution reflection: {reflection.strategy}")
         graph = compile_and_execute(graph)
         return graph
@@ -339,6 +427,53 @@ class GroundingSelfEvolutionRunner:
                     provenance=["self_evolution"],
                 )
             )
+
+    @staticmethod
+    def _inject_constraint_nodes(graph: StructuredMeaningGraph, constraints: Sequence[str], strategy: str) -> None:
+        existing_ids = graph.node_ids()
+        for index, constraint in enumerate(constraints, 1):
+            text = " ".join(str(constraint or "").split())
+            if not text:
+                continue
+            node_id = f"self_constraint_{index:02d}"
+            suffix = 2
+            while node_id in existing_ids:
+                node_id = f"self_constraint_{index:02d}_{suffix}"
+                suffix += 1
+            existing_ids.add(node_id)
+            graph.add_node(
+                Node(
+                    id=node_id,
+                    label=text,
+                    kind="constraint",
+                    attributes={"text": text, "source": "shared_world_plan", "strategy": strategy},
+                    provenance=["self_evolution", "shared_world_plan"],
+                )
+            )
+            graph.add_edge(
+                Edge(
+                    source="question",
+                    relation="REQUIRES",
+                    target=node_id,
+                    confidence=0.91,
+                    provenance=["shared_world_plan"],
+                )
+            )
+
+    @staticmethod
+    def _merge_unique_texts(items: Sequence[str]) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in items:
+            text = " ".join(str(item or "").split()).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(text)
+        return ordered
 
     @staticmethod
     def _evidence_terms(case: GroundedExplanationEvalCase) -> list[str]:
@@ -396,3 +531,24 @@ class GroundingSelfEvolutionRunner:
         if not components:
             return 1.0 if grounded_claim_text or evidence_text else 0.0
         return sum(components) / float(len(components))
+
+    def _build_integrated_summary(
+        self,
+        summary: GroundingSelfEvolutionSummary,
+        *,
+        store: CorpusMemoryStore,
+        source_prefix: str,
+        split: str,
+        rounds: int,
+    ):
+        engine = UnifiedWorldModelEngine()
+        worlds = []
+        for round_index in range(1, max(1, int(rounds)) + 1):
+            source_name = f"{source_prefix}_round_{round_index:02d}"
+            for graph in store.fetch_graphs(split=split, source=source_name):
+                worlds.append(engine.from_graph(graph, source="self_evolution_graph"))
+        query = summary.reflections[0].query if summary.reflections else ""
+        worlds.append(engine.from_grounding_self_evolution_summary(summary, query=query))
+        merged = engine.merge(*worlds, query=query)
+        reasoning = engine.reason(merged)
+        return merged, reasoning

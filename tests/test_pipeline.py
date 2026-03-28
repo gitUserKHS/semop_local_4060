@@ -106,6 +106,8 @@ from semop import (
     RawImageObservationParser,
     StructuredMeaningPipeline,
     TransferEvaluator,
+    UnifiedResponder,
+    UnifiedResponderConfig,
     VLSOQuestionAnswerer,
     VLSOReasoner,
     curated_manifest,
@@ -127,6 +129,7 @@ from semop import (
     OperatorTrainConfig,
 )
 from semop.llm_client import LocalLLMConfig, LocalTransformersExtractor
+from semop.vlso.question_understanding import VisualQuestionUnderstandingEngine
 
 
 class StructuredMeaningPipelineTests(unittest.TestCase):
@@ -3791,6 +3794,101 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(base_dir)
 
+    def test_visual_question_understanding_engine_supports_korean_polite_inventory_queries(self) -> None:
+        prediction = VisualQuestionUnderstandingEngine().predict('이 사진에서 뭐가 보이나요?')
+        self.assertEqual(prediction.intent, 'object_inventory')
+        self.assertGreater(prediction.confidence, 0.4)
+
+    def test_structured_meaning_pipeline_recovers_blocked_aisle_and_approval_relations_for_korean_exception_prompt(self) -> None:
+        graph = StructuredMeaningPipeline(mode='heuristic').run('\uc774 \ud1b5\ub85c\uac00 \ub9c9\ud600 \uc788\uace0 \uc2b9\uc778\ub3c4 \uc5c6\uc73c\uba74 \uc5b4\ub5bb\uac8c \ud574\uc57c \ud574?')
+        relations = {(edge.source, edge.relation, edge.target) for edge in graph.edges}
+        self.assertIn(('move_through_blocked_aisle', 'BLOCKED_BY', 'blocked_aisle'), relations)
+        self.assertIn(('move_through_blocked_aisle', 'REQUIRES', 'supervisor_approval'), relations)
+        self.assertTrue(any('\uc2b9\uc778' in step.action or '\ud1b5\ub85c' in step.action for step in graph.plan))
+
+    def test_vlso_reasoner_answer_attaches_prompt_understanding_to_visual_answer(self) -> None:
+        world, answer = VLSOReasoner(mode='deep').answer(
+            '\uc774 \uc0ac\uc9c4\uc5d0\uc11c \ubb50\uac00 \ubcf4\uc774\ub098\uc694?',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [0, 0, 200, 200]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [50, 40, 120, 180]},
+                ],
+            },
+        )
+        self.assertIn('prompt_understanding', world.metadata)
+        prompt_understanding = world.metadata['prompt_understanding']
+        self.assertEqual(prompt_understanding.get('likely_scenario'), 'scene_understanding')
+        self.assertEqual(answer.prompt_understanding.get('likely_scenario'), 'scene_understanding')
+        self.assertTrue(any('Visible entities detected' in item for item in prompt_understanding.get('hidden_context', [])))
+
+    def test_unified_responder_routes_visual_prompt_through_one_box_backend(self) -> None:
+        responder = UnifiedResponder(UnifiedResponderConfig())
+        result = responder.respond(
+            '\uc774 \uc0ac\uc9c4\uc5d0\uc11c \ubb50\uac00 \ubcf4\uc774\ub098\uc694?',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [10, 10, 180, 160]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [40, 12, 150, 24]},
+                ],
+                'relations': [
+                    {'source': 'shape_2', 'relation': 'PART_OF', 'target': 'shape_1'},
+                ],
+            },
+        )
+        self.assertEqual(result.route, 'vision')
+        self.assertEqual(result.prompt_understanding.get('likely_scenario'), 'scene_understanding')
+        self.assertNotIn('Best grounded answer', result.answer_text)
+        self.assertIn('vision_payload', result.model_dump())
+
+    def test_unified_responder_routes_visual_ops_prompt_to_grounded_ops_and_keeps_vision_payload(self) -> None:
+        class DummyKpis:
+            plan_executability = 1.0
+            relation_recovery = 1.0
+
+        class DummyRequest:
+            domain = 'warehouse_exception'
+            scenario = 'exception_response'
+
+        class DummyResult:
+            def __init__(self, graph) -> None:
+                self.graph = graph
+                self.answer_text = ''
+                self.kpis = DummyKpis()
+                self.request = DummyRequest()
+
+            def model_dump(self) -> dict[str, object]:
+                return {
+                    'graph': self.graph.model_dump(),
+                    'answer_text': self.answer_text,
+                    'kpis': {'plan_executability': 1.0, 'relation_recovery': 1.0},
+                    'request': {'domain': 'warehouse_exception', 'scenario': 'exception_response'},
+                }
+
+        prompt = '\uc774 \ud1b5\ub85c\uac00 \ub9c9\ud600 \uc788\uace0 \uc2b9\uc778\ub3c4 \uc5c6\uc73c\uba74 \uc5b4\ub5bb\uac8c \ud574\uc57c \ud574?'
+        graph = StructuredMeaningPipeline(mode='heuristic').run(prompt)
+        responder = UnifiedResponder(
+            UnifiedResponderConfig(),
+            ops_runner=lambda query, context, domain, scenario: DummyResult(graph),
+            vision_payload_builder=lambda query, visual_input: {
+                'kind': 'vision',
+                'world': {
+                    'entities': [{'id': 'shape_1', 'label': 'shape_1', 'modality': 'vision'}],
+                    'relations': [],
+                    'metadata': {'scene_adjudication': {'stack_level': 'structural_only'}},
+                    'warnings': [],
+                },
+                'answer': {'answer_text': 'structural fallback', 'scene_semantic_level': 'structural_only', 'warnings': []},
+            },
+        )
+        self.assertEqual(UnifiedResponder.route_request(prompt, {'image_path': 'inline'}).get('kind'), 'ops')
+        result = responder.respond(prompt, visual_input={'image_path': 'inline'})
+        self.assertEqual(result.route, 'ops')
+        self.assertIn('\ud310\ub2e8 \uc774\uc720', result.answer_text)
+        self.assertIn('\uad8c\uc7a5 \uc21c\uc11c', result.answer_text)
+        self.assertIn('vision_payload', result.model_dump())
+        self.assertEqual(result.model_dump().get('grounding_mode'), 'multimodal_ops')
+
     def test_vlso_question_answerer_describes_structural_access_parts_for_inventory_questions(self) -> None:
         world = VLSOReasoner(mode='deep').run(
             'What objects or openings are visible here?',
@@ -3919,6 +4017,48 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
             'used_frontier': False,
         }
         answer = VLSOQuestionAnswerer().answer('이 사진에서 뭐가 보여?', world, answer_mode='structured')
+        self.assertEqual(answer.scene_semantic_level, 'semantic_grounded')
+        self.assertNotIn('Best grounded answer', answer.answer_text)
+        self.assertIn('게임', answer.answer_text)
+        self.assertTrue('무기' in answer.answer_text or '권총' in answer.answer_text)
+
+    def test_vlso_question_answerer_answers_korean_polite_inventory_queries_with_semantic_scene_summary(self) -> None:
+        world = VLSOReasoner(mode='deep').run(
+            '이 사진에서 뭐가 보이나요?',
+            visual_input={
+                'objects': [
+                    {'id': 'shape_1', 'label': 'shape_1', 'kind': 'shape', 'bbox': [0, 0, 200, 200]},
+                    {'id': 'shape_2', 'label': 'shape_2', 'kind': 'part', 'bbox': [50, 40, 120, 180]},
+                ],
+            },
+        )
+        world.metadata['semantic_scene_summary'] = {
+            'backend': 'openclip_local',
+            'backend_ready': True,
+            'semantic_level': 'semantic_grounded',
+            'caption': 'This appears to be a first-person shooter game screenshot.',
+            'scene_hypotheses': [
+                {'label': 'first-person shooter game screenshot', 'score': 0.33, 'category': 'scene'},
+            ],
+            'object_hypotheses': [
+                {'label': 'weapon', 'score': 0.31, 'category': 'object'},
+                {'label': 'human character', 'score': 0.29, 'category': 'object'},
+                {'label': 'shop awning', 'score': 0.26, 'category': 'object'},
+            ],
+            'overlay_hypotheses': [
+                {'label': 'mini-map overlay', 'score': 0.28, 'category': 'overlay'},
+            ],
+            'region_hypotheses': [
+                {'entity_id': 'shape_2', 'label': 'human character', 'score': 0.31, 'candidates': []},
+            ],
+        }
+        world.metadata['scene_adjudication'] = {
+            'preferred_answer': 'This appears to be a first-person shooter game screenshot.',
+            'stack_level': 'semantic_grounded',
+            'confidence': 0.72,
+            'used_frontier': False,
+        }
+        answer = VLSOQuestionAnswerer().answer('이 사진에서 뭐가 보이나요?', world, answer_mode='structured')
         self.assertEqual(answer.scene_semantic_level, 'semantic_grounded')
         self.assertNotIn('Best grounded answer', answer.answer_text)
         self.assertIn('게임', answer.answer_text)

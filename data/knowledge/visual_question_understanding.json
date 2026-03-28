@@ -1,0 +1,337 @@
+{
+  "weights": {
+    "token_votes": {
+      "image": {
+        "scene_description": 2.0,
+        "object_inventory": 1.0
+      },
+      "this": {
+        "scene_description": 3.9,
+        "object_inventory": 1.0,
+        "access_reasoning": 1.0,
+        "geometry": 2.0
+      },
+      "describe": {
+        "scene_description": 2.0
+      },
+      "photo": {
+        "scene_description": 1.0
+      },
+      "is": {
+        "scene_description": 1.0,
+        "object_inventory": 1.0,
+        "spatial_relation": 1.9,
+        "geometry": 2.0,
+        "state_check": 2.0
+      },
+      "what": {
+        "scene_description": 1.9,
+        "object_inventory": 3.0,
+        "spatial_relation": 0.9,
+        "geometry": 1.0,
+        "state_check": 1.0
+      },
+      "in": {
+        "scene_description": 1.0,
+        "object_inventory": 1.0,
+        "state_check": 1.0
+      },
+      "happening": {
+        "scene_description": 1.0
+      },
+      "show": {
+        "scene_description": 0.9
+      },
+      "does": {
+        "scene_description": 0.9
+      },
+      "screenshot": {
+        "scene_description": 0.9
+      },
+      "설명해봐": {
+        "scene_description": 1.1
+      },
+      "사진을": {
+        "scene_description": 1.1
+      },
+      "이": {
+        "scene_description": 2.2,
+        "object_inventory": 3.7,
+        "geometry": 1.0
+      },
+      "설명해줘": {
+        "scene_description": 1.1
+      },
+      "이미지를": {
+        "scene_description": 1.1
+      },
+      "무슨": {
+        "scene_description": 2.0
+      },
+      "장면인가요": {
+        "scene_description": 1.0
+      },
+      "상황인가요": {
+        "scene_description": 1.0
+      },
+      "see": {
+        "object_inventory": 1.0
+      },
+      "you": {
+        "object_inventory": 1.0
+      },
+      "do": {
+        "object_inventory": 1.0,
+        "access_reasoning": 1.0
+      },
+      "here": {
+        "object_inventory": 1.0
+      },
+      "objects": {
+        "object_inventory": 1.0
+      },
+      "visible": {
+        "object_inventory": 2.0
+      },
+      "are": {
+        "object_inventory": 1.0
+      },
+      "뭐가": {
+        "object_inventory": 4.7
+      },
+      "보여": {
+        "object_inventory": 1.2
+      },
+      "사진에서": {
+        "object_inventory": 2.5
+      },
+      "보이나요": {
+        "object_inventory": 3.3
+      },
+      "있나요": {
+        "object_inventory": 1.2,
+        "spatial_relation": 1.0,
+        "access_reasoning": 1.0,
+        "state_check": 1.9
+      },
+      "사진에": {
+        "object_inventory": 1.2
+      },
+      "무엇이": {
+        "object_inventory": 1.0
+      },
+      "object": {
+        "spatial_relation": 1.0
+      },
+      "where": {
+        "spatial_relation": 1.0
+      },
+      "the": {
+        "spatial_relation": 1.9,
+        "access_reasoning": 1.1,
+        "state_check": 2.0
+      },
+      "of": {
+        "spatial_relation": 0.9
+      },
+      "position": {
+        "spatial_relation": 0.9
+      },
+      "handle": {
+        "spatial_relation": 0.9
+      },
+      "어디에": {
+        "spatial_relation": 1.0
+      },
+      "위치가": {
+        "spatial_relation": 1.0
+      },
+      "어디인가요": {
+        "spatial_relation": 1.0
+      },
+      "opening": {
+        "access_reasoning": 1.1
+      },
+      "how": {
+        "access_reasoning": 2.1
+      },
+      "i": {
+        "access_reasoning": 2.1
+      },
+      "can": {
+        "access_reasoning": 1.1
+      },
+      "access": {
+        "access_reasoning": 1.1
+      },
+      "bag": {
+        "access_reasoning": 1.0
+      },
+      "open": {
+        "access_reasoning": 1.0,
+        "state_check": 1.0
+      },
+      "어떻게": {
+        "access_reasoning": 1.0
+      },
+      "수": {
+        "access_reasoning": 1.0
+      },
+      "열": {
+        "access_reasoning": 1.0
+      },
+      "접근하나요": {
+        "access_reasoning": 1.0
+      },
+      "어디로": {
+        "access_reasoning": 1.0
+      },
+      "shape": {
+        "geometry": 1.0
+      },
+      "that": {
+        "geometry": 1.0
+      },
+      "parallel": {
+        "geometry": 1.0
+      },
+      "triangle": {
+        "geometry": 1.0
+      },
+      "to": {
+        "geometry": 1.0
+      },
+      "line": {
+        "geometry": 1.0
+      },
+      "도형은": {
+        "geometry": 1.0
+      },
+      "무엇인가요": {
+        "geometry": 1.0
+      },
+      "평행한가요": {
+        "geometry": 1.0
+      },
+      "door": {
+        "state_check": 1.0
+      },
+      "state": {
+        "state_check": 1.0
+      },
+      "drawer": {
+        "state_check": 1.0
+      },
+      "문이": {
+        "state_check": 1.0
+      },
+      "열려": {
+        "state_check": 1.0
+      },
+      "닫혀": {
+        "state_check": 0.9
+      }
+    },
+    "phrase_votes": {
+      "describe this image": {
+        "scene_description": 1.35
+      },
+      "describe this photo": {
+        "scene_description": 1.35
+      },
+      "what is happening in this image": {
+        "scene_description": 1.35
+      },
+      "what does this screenshot show": {
+        "scene_description": 1.215
+      },
+      "이 사진을 설명해봐": {
+        "scene_description": 1.485
+      },
+      "이 이미지를 설명해줘": {
+        "scene_description": 1.485
+      },
+      "무슨 장면인가요": {
+        "scene_description": 1.35
+      },
+      "무슨 상황인가요": {
+        "scene_description": 1.35
+      },
+      "what do you see": {
+        "object_inventory": 1.35
+      },
+      "what objects are visible here": {
+        "object_inventory": 1.35
+      },
+      "what is visible in this image": {
+        "object_inventory": 1.35
+      },
+      "이 사진에서 뭐가 보여": {
+        "object_inventory": 1.62
+      },
+      "이 사진에서 뭐가 보이나요": {
+        "object_inventory": 1.755
+      },
+      "이 사진에 뭐가 있나요": {
+        "object_inventory": 1.62
+      },
+      "무엇이 보이나요": {
+        "object_inventory": 1.35
+      },
+      "뭐가 보이나요": {
+        "object_inventory": 1.35
+      },
+      "where is the object": {
+        "spatial_relation": 1.35
+      },
+      "what is the position of the handle": {
+        "spatial_relation": 1.215
+      },
+      "어디에 있나요": {
+        "spatial_relation": 1.35
+      },
+      "위치가 어디인가요": {
+        "spatial_relation": 1.35
+      },
+      "how can i access the opening": {
+        "access_reasoning": 1.485
+      },
+      "how do i open this bag": {
+        "access_reasoning": 1.35
+      },
+      "어떻게 열 수 있나요": {
+        "access_reasoning": 1.35
+      },
+      "어디로 접근하나요": {
+        "access_reasoning": 1.35
+      },
+      "what shape is this": {
+        "geometry": 1.35
+      },
+      "is this triangle parallel to that line": {
+        "geometry": 1.35
+      },
+      "이 도형은 무엇인가요": {
+        "geometry": 1.35
+      },
+      "평행한가요": {
+        "geometry": 1.35
+      },
+      "is the door open": {
+        "state_check": 1.35
+      },
+      "what state is the drawer in": {
+        "state_check": 1.35
+      },
+      "문이 열려 있나요": {
+        "state_check": 1.35
+      },
+      "닫혀 있나요": {
+        "state_check": 1.215
+      }
+    },
+    "min_vote": 0.55,
+    "dominance_threshold": 0.58,
+    "trained_examples": 32
+  }
+}
