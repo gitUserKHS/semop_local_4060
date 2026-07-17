@@ -15,10 +15,33 @@ for path in (SRC, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
+from evaluate_typed_self_learning import evaluate_self_learning
 from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_verifier_gated_self_learning_report_is_promotable(self) -> None:
+        report = evaluate_self_learning(
+            examples_per_domain=1,
+            seed=31,
+            min_expansion_reduction=0.10,
+            max_expansions=2_000,
+        )
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["data"]["training_tasks"], 3)
+        self.assertEqual(report["data"]["heldout_negative_controls"], 3)
+        self.assertTrue(report["policy"]["promoted"])
+        self.assertLess(report["policy"]["parameters"], 100)
+        self.assertEqual(report["after"]["proof_soundness"], 1.0)
+        self.assertEqual(report["after"]["false_positives"], 0)
+        self.assertGreater(
+            report["ab"]["positive_expansions_before"],
+            report["ab"]["positive_expansions_after"],
+        )
+        self.assertFalse(report["macros"]["active"])
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_report_is_honest_and_machine_readable(self) -> None:
         report = evaluate(max_expansions=2_000)
 

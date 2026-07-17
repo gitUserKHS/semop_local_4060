@@ -12,12 +12,15 @@ from .features import (
     stable_bucket,
 )
 from .numpy_runtime import NumpyTinyController, TinyControllerConfig
+from .linear_policy import StructuralLinearPolicy, StructuralPolicyLearner
 
 __all__ = [
     "CanonicalAction",
     "CanonicalProblemGraph",
     "CanonicalRelation",
     "NumpyTinyController",
+    "StructuralLinearPolicy",
+    "StructuralPolicyLearner",
     "TinyControllerConfig",
     "canonicalize_problem",
     "stable_bucket",

@@ -156,6 +156,86 @@ class TraceCorpus:
                 handle.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
         return destination
 
+    @classmethod
+    def load_jsonl(
+        cls,
+        path: str | Path,
+        *,
+        max_synthetic_per_domain: int = 5_000,
+        max_synthetic_depth: int = 6,
+        hard_negatives_per_positive: int = 4,
+    ) -> "TraceCorpus":
+        """Restore the portable audit records used by a learning checkpoint."""
+
+        corpus = cls(
+            max_synthetic_per_domain=max_synthetic_per_domain,
+            max_synthetic_depth=max_synthetic_depth,
+            hard_negatives_per_positive=hard_negatives_per_positive,
+        )
+        identifiers: set[str] = set()
+        for line_number, line in enumerate(
+            Path(path).read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+                record = VerifiedTraceRecord(
+                    trace_id=str(raw["trace_id"]),
+                    domain=str(raw["domain"]),
+                    source=str(raw["source"]),
+                    reviewed=bool(raw["reviewed"]),
+                    initial_facts=tuple(map(str, raw["initial_facts"])),
+                    goals=tuple(map(str, raw["goals"])),
+                    actions=tuple(
+                        TraceActionRecord(
+                            operator=str(action["operator"]),
+                            bindings=tuple(
+                                (str(name), str(term), str(type_name))
+                                for name, term, type_name in action["bindings"]
+                            ),
+                            premises=tuple(map(str, action["premises"])),
+                            effects=tuple(map(str, action["effects"])),
+                        )
+                        for action in raw["actions"]
+                    ),
+                    hard_negatives=tuple(
+                        HardNegativeRecord(
+                            step=int(negative["step"]),
+                            operator=str(negative["operator"]),
+                            bindings=tuple(
+                                (str(name), str(term), str(type_name))
+                                for name, term, type_name in negative["bindings"]
+                            ),
+                        )
+                        for negative in raw.get("hard_negatives", ())
+                    ),
+                    metadata=tuple(
+                        (str(name), str(value))
+                        for name, value in raw.get("metadata", ())
+                    ),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"invalid trace JSONL record at line {line_number}"
+                ) from exc
+            if record.source not in cls.VALID_SOURCES:
+                raise ValueError(
+                    f"unknown trace source at line {line_number}: {record.source}"
+                )
+            if record.reviewed != (record.source == "reviewed"):
+                raise ValueError(
+                    f"review flag/source mismatch at line {line_number}"
+                )
+            if record.trace_id in identifiers:
+                raise ValueError(
+                    f"duplicate trace id at line {line_number}: {record.trace_id}"
+                )
+            identifiers.add(record.trace_id)
+            corpus.records.append(record)
+        return corpus
+
 
 def build_decision_training_cases(
     kernel: OperatorKernel,

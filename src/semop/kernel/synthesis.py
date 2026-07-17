@@ -18,7 +18,7 @@ from .domains import (
     parse_geometry_dsl,
     parse_grid_problem,
 )
-from .model import Fact, FactStatus, Rule, WorldState
+from .model import Fact, FactStatus, Goal, Rule, WorldState
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,74 @@ def symbolic_curriculum_domains(curriculum: str) -> tuple[str, ...]:
         )
     except KeyError as exc:
         raise ValueError(f"unknown symbolic curriculum: {curriculum}") from exc
+
+
+def generate_symbolic_negative_controls(
+    problems: Sequence[SyntheticProblem],
+) -> tuple[SyntheticProblem, ...]:
+    """Create deterministic unsolved controls without adding verifier facts."""
+
+    controls: list[SyntheticProblem] = []
+    for problem in problems:
+        instance = problem.instance
+        if problem.domain == "language":
+            state = WorldState(
+                facts=tuple(
+                    fact
+                    for fact in instance.state.facts
+                    if fact.atom.predicate.name != "SATISFIED"
+                ),
+                depth=instance.state.depth,
+                path_cost=instance.state.path_cost,
+            )
+            control = replace(instance, state=state)
+        elif problem.domain == "math":
+            goal = instance.goals[0]
+            wrong_answer = instance.registry.symbol(
+                f"wrong_answer_{problem.problem_id.replace('-', '_')}",
+                "Number",
+            )
+            control = replace(
+                instance,
+                goals=(
+                    Goal(
+                        instance.registry.atom(
+                            goal.atom.predicate,
+                            goal.atom.arguments[0],
+                            wrong_answer,
+                        ),
+                        label="intentionally false arithmetic target",
+                    ),
+                ),
+            )
+        elif problem.domain == "vision":
+            goal = instance.goals[0]
+            control = replace(
+                instance,
+                goals=(
+                    Goal(
+                        instance.registry.atom(
+                            goal.atom.predicate,
+                            goal.atom.arguments[1],
+                            goal.atom.arguments[0],
+                        ),
+                        label="intentionally reversed spatial target",
+                    ),
+                ),
+            )
+        else:
+            raise ValueError(
+                "negative controls currently support language, math, and vision; "
+                f"got {problem.domain!r}"
+            )
+        controls.append(
+            SyntheticProblem(
+                problem_id=f"negative-{problem.problem_id}",
+                domain=problem.domain,
+                instance=control,
+            )
+        )
+    return tuple(controls)
 
 
 def _curriculum_builders() -> dict[
