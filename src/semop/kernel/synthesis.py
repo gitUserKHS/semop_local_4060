@@ -78,6 +78,35 @@ class SyntheticCurriculumSplit:
             )
 
 
+@dataclass(frozen=True)
+class MacroReuseCurriculumSplit:
+    """Three-way split for learning reusable primitive operator programs."""
+
+    training: tuple[SyntheticProblem, ...]
+    validation: tuple[SyntheticProblem, ...]
+    heldout: tuple[SyntheticProblem, ...]
+    negative_controls: tuple[SyntheticProblem, ...]
+
+    def __post_init__(self) -> None:
+        groups = (self.training, self.validation, self.heldout)
+        identifiers = [
+            problem.problem_id for group in groups for problem in group
+        ]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("macro reuse split problem ids must be disjoint")
+        expected_domains = {"language", "math", "vision"}
+        for label, group in zip(
+            ("training", "validation", "heldout"),
+            groups,
+            strict=True,
+        ):
+            domains = {problem.domain for problem in group}
+            if domains != expected_domains:
+                raise ValueError(
+                    f"macro reuse {label} must cover language, math, and vision"
+                )
+
+
 @dataclass
 class _SyntheticEntity:
     id: str
@@ -228,6 +257,51 @@ def generate_semantic_flow_transfer_split(
             f"composed:semantic_flow:{variant}"
             for variant in _SEMANTIC_FLOW_HELDOUT_VARIANTS
         ),
+    )
+
+
+def generate_macro_reuse_transfer_split(
+    examples_per_domain: int = 3,
+    *,
+    validation_per_domain: int = 1,
+    heldout_per_domain: int = 1,
+    seed: int = 0,
+) -> MacroReuseCurriculumSplit:
+    """Generate disjoint grounding splits for retained macro activation."""
+
+    if not 3 <= examples_per_domain <= 1_000:
+        raise ValueError("macro training examples_per_domain must be between 3 and 1,000")
+    if not 1 <= validation_per_domain <= 1_000:
+        raise ValueError("validation_per_domain must be between 1 and 1,000")
+    if not 1 <= heldout_per_domain <= 1_000:
+        raise ValueError("heldout_per_domain must be between 1 and 1,000")
+    builders = (
+        ("language", _transfer_language_inheritance),
+        ("math", _transfer_math_equation),
+        ("vision", _macro_vision_shape),
+    )
+    partitions = (
+        ("training", examples_per_domain, 0),
+        ("validation", validation_per_domain, 100_000),
+        ("heldout", heldout_per_domain, 200_000),
+    )
+    generated: dict[str, list[SyntheticProblem]] = {
+        name: [] for name, _count, _offset in partitions
+    }
+    for partition, count, offset in partitions:
+        for domain, builder in builders:
+            rng = random.Random(f"{seed}:macro-reuse:{partition}:{domain}")
+            for local_index in range(count):
+                source = builder(offset + local_index, rng)
+                generated[partition].append(
+                    _retag_macro_problem(source, partition, local_index)
+                )
+    heldout = tuple(generated["heldout"])
+    return MacroReuseCurriculumSplit(
+        training=tuple(generated["training"]),
+        validation=tuple(generated["validation"]),
+        heldout=heldout,
+        negative_controls=generate_symbolic_negative_controls(heldout),
     )
 
 
@@ -506,6 +580,60 @@ def _transfer_vision_shape(
     )
 
 
+def _macro_vision_shape(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    white = (255, 255, 255)
+    palette = (
+        ("red", (255, 0, 0)),
+        ("blue", (0, 0, 255)),
+        ("green", (0, 255, 0)),
+    )
+    color_name, color = palette[index % len(palette)]
+    other_name, other = palette[(index + 1) % len(palette)]
+    size = 2 + rng.randrange(2)
+    partition_offset = (index // 100_000) % 3
+    target_x = 1 + partition_offset
+    distractor_x = target_x + size + 2
+    width = distractor_x + 2
+    height = size + 2
+    rows = [[white for _x in range(width)] for _y in range(height)]
+    for y in range(1, size + 1):
+        for x in range(target_x, target_x + size):
+            rows[y][x] = color
+    rows[1][distractor_x] = other
+    if height > 2:
+        rows[2][distractor_x] = other
+    image = RasterImage.from_rows(rows)
+    instance = RasterVisionAdapter().adapt(
+        RasterVisionProblem(
+            image,
+            (VisionPropertyGoal("SQUARE", color_name),),
+        )
+    )
+    problem = _transfer_problem(
+        f"macro-vision-shape-{index}",
+        "vision",
+        "macro_pixel_shape",
+        instance,
+        difficulty=2,
+        distractor_index=180_000 + index,
+    )
+    return replace(
+        problem,
+        instance=replace(
+            problem.instance,
+            metadata={
+                **problem.instance.metadata,
+                "target_color": color_name,
+                "distractor_color": other_name,
+                "target_square_size": size,
+            },
+        ),
+    )
+
+
 def _transfer_vision_quantification(
     index: int,
     _rng: random.Random,
@@ -566,6 +694,33 @@ def _transfer_problem(
         capability=capability,
         structure_key=structure_key,
         difficulty=difficulty,
+    )
+
+
+def _retag_macro_problem(
+    problem: SyntheticProblem,
+    partition: str,
+    local_index: int,
+) -> SyntheticProblem:
+    structure_key = (
+        f"{problem.domain}:macro_reuse:{problem.capability}:{partition}"
+    )
+    instance = replace(
+        problem.instance,
+        metadata={
+            **problem.instance.metadata,
+            "macro_reuse_partition": partition,
+            "macro_reuse_source_id": problem.problem_id,
+            "structure_key": structure_key,
+        },
+    )
+    return SyntheticProblem(
+        problem_id=f"macro-{partition}-{problem.domain}-{local_index}",
+        domain=problem.domain,
+        instance=instance,
+        capability=problem.capability,
+        structure_key=structure_key,
+        difficulty=problem.difficulty,
     )
 
 

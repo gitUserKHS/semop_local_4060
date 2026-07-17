@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -350,6 +351,15 @@ class TypedSelfLearningTests(unittest.TestCase):
             self.assertIsInstance(restored.policy, StructuralLinearPolicy)
             self.assertEqual(restored.policy, result.final_policy)
             self.assertFalse(tuple(store.root.rglob("*.tmp")))
+
+            macro_payload = json.loads(
+                (store.root / checkpoint.macro_artifact).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(macro_payload["format_version"], 2)
+            self.assertFalse(macro_payload["active"])
+            self.assertTrue(macro_payload["activation_supported"])
 
             policy_path = store.root / checkpoint.policy_artifact
             policy_path.write_bytes(policy_path.read_bytes() + b"tampered")

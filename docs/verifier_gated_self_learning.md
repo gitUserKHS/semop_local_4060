@@ -251,9 +251,21 @@ manifest는 policy, trace, macro artifact의 SHA-256을 기록하고 임시 파�
 갱신한다. `SelfLearningLoop`는 checkpoint resume을 지원한다. active-pool wrapper는 같은
 pool을 묵시적으로 재사용하지 않도록 현재 새 output root만 허용한다.
 
-Macro는 길이 2~6의 verified sub-program을 MDL로 압축하고 held-out proof에 같은
-sequence가 재현될 때만 보존한다. 아직 실행 operator로 자동 등록하지 않으며 checkpoint에
-`active: false`로 기록한다.
+기본 `SelfLearningLoop`는 길이 2~6의 verified sub-program을 MDL로 압축하고 held-out
+proof에 같은 sequence가 재현될 때 후보로 보존한다. 이 일반 policy 학습 루프는 macro를
+묵시적으로 활성화하지 않으므로 checkpoint에 `active: false`와
+`activation_supported: true`를 함께 기록한다.
+
+절차 기억을 실제 탐색에 쓰려면 별도 `VerifiedMacroLearningLoop`를 사용한다. 이 루프는
+train에서 후보를 유도하고, 독립 validation에서 동일한 primitive schema와 replay를 다시
+확인한 후, held-out A/B gate를 통과한 library만 승격한다. 승격된 macro도 새 operator나
+fact를 등록하지 않는다. `PrimitiveMacroPolicy`가 현재 실행 가능한 primitive action의
+순위만 조정하며, 성공 proof는 기존 `OperatorKernel.replay`로 전부 재검증된다. 자세한 계약은
+`docs/active_macro_learning.md`에 있다.
+
+```powershell
+python tools/eval/evaluate_active_macro_learning.py
+```
 
 ## Frontier LLM Judge
 
@@ -270,7 +282,7 @@ registry, state, goals에서 프로그램을 재실행하고 replay에 성공한
 - 자유로운 자연어에서 grammar와 predicate schema를 스스로 획득하는 학습
 - 자연 사진과 영상에서 새 visual concept와 시간 변화를 발견하고 검증하는 학습
 - 기하·대수·증명 문제 전반의 정리 발명과 장기 proof search
-- 실행 가능한 macro operator의 자동 등록과 sandbox rollback
+- 새 인자 구조와 효과를 가진 macro schema 자체를 발명하는 학습
 - 기본 5.84M recurrent controller의 충분한 structural-transfer 반복 실험
 - 실제 분포의 human-reviewed 20/100-shot promotion gate
 

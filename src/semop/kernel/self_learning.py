@@ -343,8 +343,9 @@ class SelfLearningStore:
         macro_relative = "macros/retained-candidates.json"
         macro_payload = json.dumps(
             {
-                "format_version": 1,
+                "format_version": MdlMacroLibrary.FORMAT_VERSION,
                 "active": False,
+                "activation_supported": True,
                 "records": [asdict(record) for record in macro_library.records],
             },
             ensure_ascii=False,
@@ -573,7 +574,7 @@ class SelfLearningLoop:
                     )
 
             reduction = (
-                _expansion_reduction(baseline_metrics, candidate_metrics)
+                learning_expansion_reduction(baseline_metrics, candidate_metrics)
                 if candidate_metrics is not None
                 else 0.0
             )
@@ -677,7 +678,7 @@ class SelfLearningLoop:
                 budget=self.budget.solve_budget,
             )
             evaluations.append(
-                _task_evaluation(task, result, process_time() - started)
+                task_evaluation_from_result(task, result, process_time() - started)
             )
             if result.success and not task.expected_solved:
                 conflicts.append(task.task_id)
@@ -704,7 +705,7 @@ class SelfLearningLoop:
             tuple(cases),
             verified_results,
             tuple(sorted(conflicts)),
-            _summarize(tuple(evaluations)),
+            summarize_task_evaluations(tuple(evaluations)),
         )
 
     def _evaluate(
@@ -728,10 +729,10 @@ class SelfLearningLoop:
             )
             results[task.task_id] = result
             evaluations.append(
-                _task_evaluation(task, result, process_time() - started)
+                task_evaluation_from_result(task, result, process_time() - started)
             )
         resolved = tuple(evaluations)
-        return _summarize(resolved), resolved, results
+        return summarize_task_evaluations(resolved), resolved, results
 
     def _promotion_rejections(
         self,
@@ -772,7 +773,7 @@ class SelfLearningLoop:
                     f"{candidate_domain.verified_solve_rate:.6f} < "
                     f"{minimum_domain_rate:.6f}"
                 )
-        reduction = _expansion_reduction(baseline, candidate)
+        reduction = learning_expansion_reduction(baseline, candidate)
         if reduction < self.budget.min_expansion_reduction:
             reasons.append(
                 "expansion_reduction_below_gate: "
@@ -844,7 +845,7 @@ class SelfLearningLoop:
         )
 
 
-def _task_evaluation(
+def task_evaluation_from_result(
     task: LearningTask,
     result: SolveResult,
     cpu_seconds: float,
@@ -866,7 +867,9 @@ def _task_evaluation(
     )
 
 
-def _summarize(evaluations: tuple[TaskEvaluation, ...]) -> LearningMetrics:
+def summarize_task_evaluations(
+    evaluations: tuple[TaskEvaluation, ...],
+) -> LearningMetrics:
     positive = tuple(item for item in evaluations if item.expected_solved)
     successes = tuple(item for item in evaluations if item.success)
     by_domain = tuple(
@@ -939,7 +942,7 @@ def _summarize_domain(
     )
 
 
-def _expansion_reduction(
+def learning_expansion_reduction(
     baseline: LearningMetrics,
     candidate: LearningMetrics | None,
 ) -> float:

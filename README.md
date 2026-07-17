@@ -35,6 +35,7 @@ python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
 python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
 python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
+python tools/eval/evaluate_active_macro_learning.py
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -64,6 +65,11 @@ counterfactuals create new tasks before the same held-out promotion gate runs.
 `evaluate_semantic_flow_self_learning.py` trains only on short verified
 vision-to-math-to-language flows, then gates promotion on new phrasing, larger images,
 reused measurements, deeper operator programs, and sound negative controls.
+`evaluate_active_macro_learning.py` learns repeated primitive programs from verified
+language, math, and raster-vision traces, validates them on a separate split, and uses
+only promoted programs as search priors on held-out groundings. The kernel still
+executes and replays every primitive step; a macro cannot inject a fact or bypass a
+guard.
 
 Optional controller training:
 
@@ -72,7 +78,7 @@ python -m pip install -r requirements-train.txt
 python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --examples-per-domain 1 --epochs 1 --debug-small
 ```
 
-- `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and MDL macro retention
+- `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and verifier-gated MDL macro activation
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
@@ -82,6 +88,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/typed_dataflow.md`: reusable numeric measurement-to-condition-to-conclusion compiler and semantic-flow holdout
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
 - `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
+- `docs/active_macro_learning.md`: primitive-expanded procedural memory, schema pinning, promotion gates, and rollback
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
@@ -89,6 +96,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_typed_self_learning.py`: machine-readable structural-transfer, active-selection, promotion, and resource gates
 - `tools/eval/evaluate_typed_task_discovery.py`: machine-readable task novelty, replay, depth extrapolation, and self-discovery transfer gates
 - `tools/eval/evaluate_semantic_flow_self_learning.py`: machine-readable cross-domain semantic-flow transfer and resource gates
+- `tools/eval/evaluate_active_macro_learning.py`: machine-readable three-domain macro induction, primitive replay, and resource gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic

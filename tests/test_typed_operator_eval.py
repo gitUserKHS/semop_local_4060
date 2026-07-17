@@ -15,6 +15,7 @@ for path in (SRC, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
+from evaluate_active_macro_learning import evaluate_active_macro_learning
 from evaluate_semantic_flow_self_learning import (
     evaluate_semantic_flow_self_learning,
 )
@@ -24,6 +25,32 @@ from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_active_macro_learning_report_passes_all_gates(self) -> None:
+        report = evaluate_active_macro_learning(
+            examples_per_domain=3,
+            validation_per_domain=1,
+            heldout_per_domain=1,
+            seed=23,
+            min_expansion_reduction=0.50,
+            max_expansions=5_000,
+        )
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["split"]["training_tasks"], 9)
+        self.assertEqual(report["split"]["validation_tasks"], 3)
+        self.assertEqual(report["split"]["heldout_positive_tasks"], 3)
+        self.assertTrue(report["learning"]["promoted"])
+        self.assertEqual(report["learning"]["retained_macros"], 3)
+        self.assertEqual(
+            set(report["learning"]["improved_domains"]),
+            {"language", "math", "vision"},
+        )
+        self.assertEqual(report["after"]["proof_soundness"], 1.0)
+        self.assertEqual(report["after"]["false_positives"], 0)
+        self.assertGreaterEqual(report["ab"]["expansion_reduction"], 0.50)
+        self.assertEqual(report["artifact"]["format_version"], 2)
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_semantic_flow_self_learning_report_passes_all_gates(self) -> None:
         report = evaluate_semantic_flow_self_learning(
             examples_per_structure=1,
