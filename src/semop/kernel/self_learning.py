@@ -693,7 +693,7 @@ class SelfLearningLoop:
                         result,
                         source=task.source,
                         hard_negatives=hard_negative_records(task_cases),
-                        metadata={"split": task.split.value},
+                        metadata=_trace_metadata(task),
                     )
                 except ValueError:
                     continue
@@ -950,6 +950,31 @@ def _expansion_reduction(
     return (
         baseline.positive_expansions - candidate.positive_expansions
     ) / baseline.positive_expansions
+
+
+def _trace_metadata(task: LearningTask) -> dict[str, str]:
+    metadata = {
+        "split": task.split.value,
+        "difficulty": str(task.difficulty),
+    }
+    if task.capability:
+        metadata["capability"] = task.capability
+    if task.structure_key:
+        metadata["structure_key"] = task.structure_key
+    for name, value in sorted(task.instance.metadata.items()):
+        if not name.startswith("discovery_"):
+            continue
+        metadata[name] = (
+            value
+            if isinstance(value, str)
+            else json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+        )
+    return metadata
 
 
 def _contains_subsequence(

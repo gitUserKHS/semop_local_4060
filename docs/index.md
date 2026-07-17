@@ -46,6 +46,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
 - `verifier_gated_self_learning.md`
   - 실제 adapter capability를 구조적으로 분리하고 능동 선택한 뒤 작은 정책을 승격·rollback하는 닫힌 루프
+- `self_discovered_curriculum.md`
+  - 검증된 seed에서 새 다중도메인 조합과 counterfactual을 발견하고 계보·중복·깊이를 통제하는 curriculum
 - `raster_vision.md`
   - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
 - `tiny_controller.md`

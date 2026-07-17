@@ -15,11 +15,39 @@ for path in (SRC, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
+from evaluate_typed_task_discovery import evaluate_self_discovery
 from evaluate_typed_self_learning import evaluate_self_learning
 from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_verifier_backed_task_discovery_report_passes_all_gates(self) -> None:
+        report = evaluate_self_discovery(
+            examples_per_structure=1,
+            seed=41,
+            min_expansion_reduction=0.10,
+            max_expansions=5_000,
+        )
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["discovery"]["training_positive"], 12)
+        self.assertEqual(report["discovery"]["training_negative"], 12)
+        self.assertEqual(report["discovery"]["heldout_positive"], 4)
+        self.assertEqual(report["discovery"]["max_training_proof_depth"], 6)
+        self.assertGreater(
+            report["discovery"]["max_heldout_proof_depth"],
+            6,
+        )
+        self.assertEqual(report["expanded_split"]["overlapping_structures"], ())
+        self.assertEqual(report["expanded_split"]["overlapping_programs"], ())
+        self.assertEqual(report["after"]["proof_soundness"], 1.0)
+        self.assertEqual(report["after"]["false_positives"], 0)
+        self.assertGreater(
+            report["ab"]["positive_expansions_before"],
+            report["ab"]["positive_expansions_after"],
+        )
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_verifier_gated_self_learning_report_is_promotable(self) -> None:
         report = evaluate_self_learning(
             examples_per_domain=1,

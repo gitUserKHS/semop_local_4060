@@ -177,6 +177,14 @@ from .curriculum import (
     audit_structural_split,
     profile_learning_task,
 )
+from .discovery import (
+    DiscoveryCandidateRecord,
+    SelfDiscoveringLearningLoop,
+    SelfDiscoveringLearningResult,
+    TaskDiscoveryBudget,
+    TaskDiscoveryResult,
+    VerifiedTaskDiscovery,
+)
 from .unification import substitute_atom, substitute_term, unify_atom, unify_term
 from .runtime import (
     DomainKind,
@@ -199,6 +207,7 @@ __all__ = [
     "CompositionComponent",
     "CurriculumDecision",
     "CurriculumSelection",
+    "DiscoveryCandidateRecord",
     "DomainInstance",
     "DomainComposition",
     "DomainKind",
@@ -276,11 +285,15 @@ __all__ = [
     "SelfLearningLoop",
     "SelfLearningResult",
     "SelfLearningStore",
+    "SelfDiscoveringLearningLoop",
+    "SelfDiscoveringLearningResult",
     "SolveBudget",
     "SolveResult",
     "Symbol",
     "SyntheticCurriculumSplit",
     "SyntheticProblem",
+    "TaskDiscoveryBudget",
+    "TaskDiscoveryResult",
     "TaskEvaluation",
     "TaskProfile",
     "Term",
@@ -309,6 +322,7 @@ __all__ = [
     "TraceActionRecord",
     "TraceCorpus",
     "VerifiedTraceRecord",
+    "VerifiedTaskDiscovery",
     "WorldState",
     "render_proof_ko",
     "build_decision_training_cases",

@@ -40,6 +40,7 @@ python examples/typed_compositional_v2_demo.py
 python examples/typed_cross_domain_scene_demo.py
 python examples/typed_frontier_judge_demo.py
 python examples/typed_self_learning_demo.py --output artifacts/self_learning_run_01 --examples-per-structure 3
+python examples/typed_self_discovery_demo.py --output artifacts/self_discovery_run_01 --examples-per-structure 1
 python examples/typed_raster_vision_demo.py
 ```
 
@@ -56,6 +57,9 @@ proposed until typed execution and proof replay admit the program to the trace c
 real language/math/vision adapter structures, replay-verified traces train a tiny
 sparse action policy, and three entirely held-out capability compositions plus
 negative controls gate promotion before an atomic hash-checked checkpoint is written.
+`typed_self_discovery_demo.py` expands the pool without an LLM: verifier-backed
+2/3-domain composition, bounded verified suffix scaffolds, and support-ablation
+counterfactuals create new tasks before the same held-out promotion gate runs.
 
 Optional controller training:
 
@@ -73,10 +77,12 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/composed_operator_runtime.md`: v4 registry composition, conjunctive scene conditions, operator frontier, and verified vision-math-language programs
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
 - `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
+- `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
 - `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
 - `tools/eval/evaluate_typed_self_learning.py`: machine-readable structural-transfer, active-selection, promotion, and resource gates
+- `tools/eval/evaluate_typed_task_discovery.py`: machine-readable task novelty, replay, depth extrapolation, and self-discovery transfer gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic
