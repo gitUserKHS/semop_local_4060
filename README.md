@@ -12,6 +12,10 @@ The current product direction is not a general chatbot. It is a Korean warehouse
 At the research level, the longer-term target is broader: learn how logical words such as `has`, `is`, `requires`, `if`, `before`, and `can` bind to concept frames, then reuse those learned grammar priors during reasoning across domain QA, math, olympiad proof search, competitive programming, and VLSO world-model reasoning.
 
 The architectural target is a logical-operator-based intelligence system organized around four axes: operator learning, world-model construction, reusable memory, and verifier loops.
+The central hypothesis is combinatorial: a small shared controller should learn to assemble many typed operator programs, while language, mathematics, and vision enter through domain adapters and every claimed result remains executor-verifiable.
+The resource doctrine is CPU-first and sample-efficient: the symbolic core should run offline on an ordinary PC, while small local models and RTX 4060-class GPUs remain optional parsing, perception, and training accelerators.
+A verifier-first typed operator core now runs beside the legacy runtime. It turns domain inputs into immutable typed facts, uses goal-relevant monotonic agenda chaining instead of enumerating fact subsets, slices the first supporting operator DAG, and replays every successful proof before returning it. The pipeline defaults to `shadow`: legacy output remains user-facing while typed proof, timing, allocation, and expansion measurements are written to the audit trace.
+A dependency-free raster adapter now adds a narrow real-pixel path: it detects small color components, verifies exact bounding-box or touching relations, keeps centroid-only guesses as `proposed`, and sends the resulting facts through the same operator proof replay.
 A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
 The current refactor direction is premise-first: candidate retrieval, premise proposal, and premise validation now precede later answer selection, CP code generation, and cross-modal alignment.
 An operator-algebra layer now also records how higher operators decompose into simpler basis operators and stores category-style functor hypotheses for cross-modal alignment.
@@ -20,6 +24,58 @@ An operator self-evolution loop is now also present: repeated higher-operator de
 A new operator-proposal engine now sits in front of that loop: repeated decomposition and geometry/topology patterns are summarized into model-proposed higher operators, then normalized, merged, and passed to the verifier and transfer bench instead of being accepted directly.
 
 ## What You Can Run Today
+
+### Typed Operator Core v1
+
+```powershell
+python -m pip install -r requirements-core.txt
+python -m unittest discover -s tests -p "test_typed_operator_*.py" -v
+python tools/eval/evaluate_low_resource_transfer.py
+python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
+python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
+python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
+python examples/typed_multidomain_demo.py
+python examples/typed_compositional_v2_demo.py
+python examples/typed_cross_domain_scene_demo.py
+python examples/typed_frontier_judge_demo.py
+python examples/typed_raster_vision_demo.py
+```
+
+`typed_multidomain_demo.py` sends a Korean premise sentence, an exact arithmetic
+expression, and a verified vision scene through the same runtime and policy.
+`typed_compositional_v2_demo.py` exercises Horn-style language inheritance, exact
+linear equations, and raster shape/count/area operators without external runtime
+dependencies.
+`typed_cross_domain_scene_demo.py` runs one replayable vision -> exact comparison ->
+language classification program instead of solving the three domains independently.
+`typed_frontier_judge_demo.py` shows the frontier-LLM boundary: judge output remains
+proposed until typed execution and proof replay admit the program to the trace corpus.
+
+Optional controller training:
+
+```powershell
+python -m pip install -r requirements-train.txt
+python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --examples-per-domain 1 --epochs 1 --debug-small
+```
+
+- `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and MDL macro retention
+- `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
+- `docs/typed_operator_core.md`: execution contract and extension workflow
+- `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
+- `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
+- `docs/typed_compositional_extensions.md`: v2 language logic, exact equations, raster quantification, and controller scoring contract
+- `docs/composed_operator_runtime.md`: v4 registry composition, conjunctive scene conditions, operator frontier, and verified vision-math-language programs
+- `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
+- `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
+- `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
+- `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
+- `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
+
+No trained controller artifact is committed yet. An earlier full 5.84M synthetic
+leave-one-domain-out snapshot passed the expansion gate, and the v3 frontier-aware
+contract passes a fresh 29K training/export diagnostic. The frontier-aware 5.84M rerun
+and verified human-reviewed 20/100-shot gates remain unevaluated, so `shadow` remains
+the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

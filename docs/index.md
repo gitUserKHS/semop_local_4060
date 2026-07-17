@@ -28,6 +28,30 @@ This folder contains the active documentation for SemOp Local 4060.
 
 - `operator_intelligence_system.md`
   - high-level definition of the logic-operator intelligence architecture
+- `low_resource_operator_intelligence.md`
+  - mandatory sample-efficiency and ordinary-PC resource doctrine and evaluation gates
+- `compositional_operator_intelligence.md`
+  - 작은 공유 뇌가 언어·수학·비전의 typed operator program을 조합하는 장기 구조와 코드 정리 원칙
+- `typed_operator_core.md`
+  - immutable typed IR, verifier-first search, three domain adapters, and migration modes
+- `language_math_vision_typed_runtime.md`
+  - direct language/math/vision adapters, trust boundaries, unified runtime, and benchmark workflow
+- `language_text_adapter.md`
+  - 명시적 한국어·영어 문장을 typed 전제로 바꾸고 애매한 후보를 격리하는 계약
+- `typed_compositional_extensions.md`
+  - 언어 Horn 추론, exact 일차방정식, raster 도형·개수·면적, controller v5 점수 계약
+- `composed_operator_runtime.md`
+  - 공통 registry 조합, goal-independent 관측, operator frontier, 비전→수학→언어 proof program
+- `frontier_llm_judge.md`
+  - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
+- `raster_vision.md`
+  - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
+- `tiny_controller.md`
+  - 5.84M relation-aware policy, NumPy inference, PyTorch training, trace data, and MDL macros
+- `low_resource_transfer_evaluation.md`
+  - three-domain structural splits, A/B metrics, resource limits, and promotion gates
+- `lodo_controller_experiment.md`
+  - leakage-controlled leave-one-domain-out controller training and current evidence
 - `operator_intelligence_roadmap.md`
   - roadmap grouped by operator learning, world model, memory, and verifier quality
 - `operator_intelligence_execution_steps.md`

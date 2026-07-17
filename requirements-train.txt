@@ -1,0 +1,2 @@
+-r requirements-controller.txt
+torch>=2.2

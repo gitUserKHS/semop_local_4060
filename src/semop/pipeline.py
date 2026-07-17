@@ -45,6 +45,7 @@ class StructuredMeaningPipeline:
         repair_program_path: str | None = None,
         repair_utility_path: str | None = None,
         multimodal_alignment_path: str | None = None,
+        operator_backend: str = "shadow",
     ):
         self.mode = mode
         self.heuristic = HeuristicExtractor()
@@ -74,6 +75,9 @@ class StructuredMeaningPipeline:
         self.retained_algebra_path = retained_algebra_path
         self.logical_weight_path = logical_weight_path
         self._logical_weight_cache: Dict[str, float] | None = None
+        if operator_backend not in {"legacy", "shadow", "typed"}:
+            raise ValueError("operator_backend must be legacy, shadow, or typed")
+        self.operator_backend = operator_backend
 
     def run(self, query: str, source_context: str = "", visual_input: Any | None = None) -> StructuredMeaningGraph:
         similar_graphs = self._retrieve_similar_graphs(query, source_context=source_context, visual_input=visual_input)
@@ -138,6 +142,12 @@ class StructuredMeaningPipeline:
         if self.retained_algebra is not None:
             graph = self.retained_algebra.enrich(graph)
         graph = self.repair_engine.run(graph)
+        if self.operator_backend != "legacy":
+            from .kernel.adapters import TypedKernelBridge
+
+            graph = TypedKernelBridge().run(
+                graph, mode=self.operator_backend
+            ).graph
         graph.context_frame = self.context_analyzer.analyze(graph)
         graph = self._annotate_with_registry(graph)
         graph = self._ensure_plan(graph)
