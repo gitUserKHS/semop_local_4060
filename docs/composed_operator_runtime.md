@@ -39,6 +39,19 @@ threshold를 가진다. 비전 count는 selector별로 한 번만 측정하며, 
 `COUNT_CONDITION_MET` 전제가 있을 때만 열린다. 한 조건이라도 거짓이면 결론을 만들지
 않고, replay도 각 guard를 다시 계산한다.
 
+이 비교와 결론 생성은 이제 `SceneThresholdAdapter` 내부의 전용 구현이 아니다.
+`semop.kernel.dataflow.TypedDataflowCompiler`가 다음 선언을 받아 공통 typed program으로
+컴파일한다.
+
+- verified measurement predicate와 숫자 슬롯
+- ground selector 또는 measurement identity
+- exact comparator와 `Fraction` threshold
+- 최종 typed conclusion과 선택적 blocker
+
+따라서 scene parser는 문장을 조건 IR로 바꾸고, raster adapter는 측정 사실을 만들며,
+dataflow compiler는 두 결과를 연결하는 operator만 만든다. 세 책임의 경계와 확장 API는
+`typed_dataflow.md`에 정리되어 있다.
+
 ## 공통 계약 리팩터링
 
 도메인 어댑터의 공통 계약은 `semop.kernel.contracts`가 소유한다.

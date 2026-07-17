@@ -34,6 +34,7 @@ python tools/eval/evaluate_low_resource_transfer.py
 python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
 python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
 python tools/eval/evaluate_typed_self_learning.py
+python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -60,6 +61,9 @@ negative controls gate promotion before an atomic hash-checked checkpoint is wri
 `typed_self_discovery_demo.py` expands the pool without an LLM: verifier-backed
 2/3-domain composition, bounded verified suffix scaffolds, and support-ablation
 counterfactuals create new tasks before the same held-out promotion gate runs.
+`evaluate_semantic_flow_self_learning.py` trains only on short verified
+vision-to-math-to-language flows, then gates promotion on new phrasing, larger images,
+reused measurements, deeper operator programs, and sound negative controls.
 
 Optional controller training:
 
@@ -75,6 +79,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
 - `docs/typed_compositional_extensions.md`: v2 language logic, exact equations, raster quantification, and controller scoring contract
 - `docs/composed_operator_runtime.md`: v4 registry composition, conjunctive scene conditions, operator frontier, and verified vision-math-language programs
+- `docs/typed_dataflow.md`: reusable numeric measurement-to-condition-to-conclusion compiler and semantic-flow holdout
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
 - `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
@@ -83,6 +88,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
 - `tools/eval/evaluate_typed_self_learning.py`: machine-readable structural-transfer, active-selection, promotion, and resource gates
 - `tools/eval/evaluate_typed_task_discovery.py`: machine-readable task novelty, replay, depth extrapolation, and self-discovery transfer gates
+- `tools/eval/evaluate_semantic_flow_self_learning.py`: machine-readable cross-domain semantic-flow transfer and resource gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic

@@ -162,6 +162,30 @@ python tools/eval/evaluate_typed_self_learning.py `
 이 수치는 현재 controlled adapter 분포의 구조 전이 증거이며, 자유로운 언어·수학·비전
 전체 능력의 완성을 뜻하지 않는다.
 
+## 실제 Semantic Flow Holdout
+
+기존 language/math/vision split은 세 도메인의 독립 task에서 공유 action ranking을
+평가한다. 새 `generate_semantic_flow_transfer_split`은 한 단계 더 나아가 모든 양성
+task가 하나의 proof 안에서 다음 흐름을 실행하도록 제한한다.
+
+```text
+vision measurement -> math comparison -> language conclusion
+```
+
+train에는 단일 조건과 서로 다른 selector의 2조건 conjunction만 둔다. held-out에는
+같은 측정을 상·하한에 재사용하는 프로그램과 더 깊은 3조건 프로그램을 둔다. 이름만
+바꾼 동일 proof가 섞이지 않도록 normalized operator program overlap도 0이어야 한다.
+held-out 이미지는 더 크고, 숫자와 `number of`/한국어 문구도 새로 생성한다.
+
+```powershell
+python tools/eval/evaluate_semantic_flow_self_learning.py
+```
+
+2026-07-18 기본 CPU 측정에서는 training 4, held-out positive 4, negative 4를 사용했다.
+positive expansion은 `44 -> 30`으로 31.8% 감소했고, proof soundness 100%, false
+positive 0을 유지했다. 승격된 sparse policy는 21 parameters, 1,085 bytes였다.
+상세 typed bridge 계약은 `typed_dataflow.md`에 있다.
+
 ## Python API
 
 ```python

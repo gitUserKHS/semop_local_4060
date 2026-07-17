@@ -31,6 +31,19 @@ from .domains import (
 from .model import Fact, FactStatus, Goal, Rule, WorldState
 
 
+_SEMANTIC_FLOW_TRAIN_VARIANTS = (
+    "single_threshold",
+    "dual_selector_conjunction",
+)
+_SEMANTIC_FLOW_HELDOUT_VARIANTS = (
+    "reused_measurement_bounds",
+    "triple_mixed_comparison",
+)
+_SEMANTIC_FLOW_VARIANTS = (
+    _SEMANTIC_FLOW_TRAIN_VARIANTS + _SEMANTIC_FLOW_HELDOUT_VARIANTS
+)
+
+
 @dataclass(frozen=True)
 class SyntheticProblem:
     problem_id: str
@@ -177,6 +190,43 @@ def generate_lmv_structural_transfer_split(
         ),
         heldout_structures=tuple(
             sorted({problem.structure_key for problem in heldout})
+        ),
+    )
+
+
+def generate_semantic_flow_transfer_split(
+    examples_per_structure: int,
+    *,
+    seed: int = 0,
+) -> SyntheticCurriculumSplit:
+    """Hold out new vision -> math -> language operator programs."""
+
+    if not 1 <= examples_per_structure <= 1_000:
+        raise ValueError("examples_per_structure must be between 1 and 1,000")
+    training: list[SyntheticProblem] = []
+    heldout: list[SyntheticProblem] = []
+    for target, variants in (
+        (training, _SEMANTIC_FLOW_TRAIN_VARIANTS),
+        (heldout, _SEMANTIC_FLOW_HELDOUT_VARIANTS),
+    ):
+        for variant in variants:
+            rng = random.Random(f"{seed}:semantic-flow:{variant}")
+            target.extend(
+                _semantic_flow_problem(index, rng, variant)
+                for index in range(examples_per_structure)
+            )
+    controls = generate_symbolic_negative_controls(heldout)
+    return SyntheticCurriculumSplit(
+        training=tuple(training),
+        heldout=tuple(heldout),
+        negative_controls=controls,
+        training_structures=tuple(
+            f"composed:semantic_flow:{variant}"
+            for variant in _SEMANTIC_FLOW_TRAIN_VARIANTS
+        ),
+        heldout_structures=tuple(
+            f"composed:semantic_flow:{variant}"
+            for variant in _SEMANTIC_FLOW_HELDOUT_VARIANTS
         ),
     )
 
@@ -657,6 +707,124 @@ def _vision_problem(index: int, rng: random.Random) -> SyntheticProblem:
         "vision",
         _with_hard_negative_distractors(instance, index),
     )
+
+
+def _semantic_flow_problem(
+    index: int,
+    rng: random.Random,
+    variant: str,
+) -> SyntheticProblem:
+    suffix = f"{index}_{rng.randrange(1_000_000)}"
+    if variant == "single_threshold":
+        counts = {"red": 1 + index % 2, "blue": 1}
+        property_name = f"occupied_{suffix}"
+        text = (
+            f"If the count of red objects is at least {counts['red']}, "
+            f"the scene is {property_name}. "
+            f"Prove: the scene is {property_name}."
+        )
+        proof_depth = 3
+    elif variant == "dual_selector_conjunction":
+        counts = {"red": 1 + index % 2, "blue": 1 + (index + 1) % 2}
+        property_name = f"balanced_{suffix}"
+        text = (
+            f"If the count of red objects is equal to {counts['red']} and "
+            f"the count of blue objects is at least {counts['blue']}, "
+            f"the scene is {property_name}. "
+            f"Prove: the scene is {property_name}."
+        )
+        proof_depth = 5
+    elif variant == "reused_measurement_bounds":
+        counts = {"red": 3 + index % 2, "blue": 2}
+        property_name = f"bounded_{suffix}"
+        if index % 2:
+            text = (
+                f"빨간 물체의 개수가 {counts['red']}보다 크거나 같고 "
+                f"빨간 물체의 개수가 {counts['red']}보다 작거나 같으면 "
+                f"장면은 {property_name}이다. "
+                f"증명: 장면은 {property_name}이다."
+            )
+        else:
+            text = (
+                f"If the number of red objects is at least {counts['red']} and "
+                f"the number of red objects is at most {counts['red']}, "
+                f"the scene is {property_name}. "
+                f"Prove: the scene is {property_name}."
+            )
+        proof_depth = 4
+    elif variant == "triple_mixed_comparison":
+        counts = {
+            "red": 2 + index % 2,
+            "blue": 2 + (index + 1) % 2,
+            "green": 2 + (index // 2) % 2,
+        }
+        total = sum(counts.values())
+        property_name = f"structured_{suffix}"
+        if index % 2:
+            text = (
+                f"If the number of all objects is greater than {total - 1} and "
+                f"the number of green objects is not equal to "
+                f"{counts['green'] + 1} and the number of blue objects is at "
+                f"most {counts['blue']}, the scene is {property_name}. "
+                f"Prove: the scene is {property_name}."
+            )
+        else:
+            text = (
+                f"모든 물체의 개수가 {total - 1}보다 크고 초록 물체의 개수가 "
+                f"{counts['green'] + 1}보다 다르고 파란 물체의 개수가 "
+                f"{counts['blue']}보다 작거나 같으면 장면은 {property_name}이다. "
+                f"증명: 장면은 {property_name}이다."
+            )
+        proof_depth = 7
+    else:  # pragma: no cover - private caller validates variants
+        raise ValueError(f"unknown semantic flow variant: {variant}")
+
+    instance = SceneThresholdAdapter().adapt(
+        SceneThresholdProblem(_semantic_flow_image(counts), text)
+    )
+    structure_key = f"composed:semantic_flow:{variant}"
+    tagged = replace(
+        instance,
+        metadata={
+            **instance.metadata,
+            "capability": "semantic_flow",
+            "structure_key": structure_key,
+            "semantic_flow": ("vision", "math", "language"),
+            "semantic_flow_variant": variant,
+            "object_counts": tuple(sorted(counts.items())),
+            "synthetic_transfer": True,
+        },
+    )
+    distractor_index = (
+        100_000 + _SEMANTIC_FLOW_VARIANTS.index(variant) * 10_000 + index
+    )
+    return SyntheticProblem(
+        problem_id=f"semantic-flow-{variant}-{index}",
+        domain="composed",
+        instance=_with_hard_negative_distractors(tagged, distractor_index),
+        capability="semantic_flow",
+        structure_key=structure_key,
+        difficulty=proof_depth,
+    )
+
+
+def _semantic_flow_image(counts: dict[str, int]) -> RasterImage:
+    palette = {
+        "red": (255, 0, 0),
+        "blue": (0, 0, 255),
+        "green": (0, 255, 0),
+    }
+    white = (255, 255, 255)
+    colors = tuple(
+        palette[name]
+        for name in ("red", "blue", "green")
+        for _slot in range(counts.get(name, 0))
+    )
+    middle = [white]
+    for color in colors:
+        middle.extend((color, color, white))
+    blank = [white] * len(middle)
+    return RasterImage.from_rows((blank, middle, middle, blank))
 
 
 def _composed_problem(index: int, rng: random.Random) -> SyntheticProblem:

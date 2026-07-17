@@ -5,7 +5,13 @@ from fractions import Fraction
 import re
 
 from ..composition import CompositionComponent, compose_domain_instances
-from ..model import Fact, FactStatus, Goal, OperatorFamily, Rule, SolveResult, WorldState
+from ..dataflow import (
+    NumericConditionSpec,
+    NumericDataflowRuleSpec,
+    NumericMeasurementRef,
+    TypedDataflowCompiler,
+)
+from ..model import Goal, SolveResult, WorldState
 from .base import DomainInstance
 from .language_common import (
     normalize_identifier,
@@ -371,119 +377,84 @@ class SceneThresholdAdapter:
             domain="composed",
         )
         registry = composition.instance.registry
-        registry.types.ensure("Condition", "Entity")
-        registry.types.ensure("Comparator", "Entity")
-        registry.register_predicate(
-            "SCENE_COUNT_RULE",
-            ("Condition", "Color", "Comparator", "Number", "Concept"),
-        )
-        registry.register_predicate(
-            "COUNT_CONDITION_MET",
-            ("Condition", "Concept"),
-        )
-
         rule_property = registry.symbol(parsed.rule_property, "Concept")
-        rule_atoms = []
-        condition_atoms = []
         multiple = len(parsed.conditions) > 1
+        numeric_conditions = []
         for index, condition in enumerate(parsed.conditions, start=1):
             suffix = f"_{index:03d}" if multiple else ""
-            condition_id = registry.symbol(f"condition_{index:03d}", "Condition")
             scope = registry.symbol(condition.selector, "Color")
-            comparator = registry.symbol(condition.comparator, "Comparator")
-            threshold = registry.symbol(str(condition.threshold), "Number")
-            rule_atom = registry.atom(
-                "SCENE_COUNT_RULE",
-                condition_id,
-                scope,
-                comparator,
-                threshold,
-                rule_property,
-            )
-            condition_atom = registry.atom(
-                "COUNT_CONDITION_MET",
-                condition_id,
-                rule_property,
-            )
             count_name = f"count_{index:03d}" if multiple else "count"
-            count = registry.variable(count_name, "Number")
-            guard_name = f"verify_scene_count_threshold{suffix}"
-            registry.register_guard(
-                guard_name,
-                _scene_count_guard(
-                    condition.comparator,
-                    condition.threshold,
-                    count_name,
-                ),
-            )
-            registry.register_operator(
-                Rule(
-                    name=f"compare_scene_object_count{suffix}",
-                    parameters=(count,),
-                    preconditions=(
-                        registry.atom("OBJECT_COUNT", scope, count),
-                        rule_atom,
+            numeric_conditions.append(
+                NumericConditionSpec(
+                    name=f"condition_{index:03d}",
+                    measurement=NumericMeasurementRef(
+                        registry.predicates["OBJECT_COUNT"],
+                        (scope,),
+                        value_position=1,
                     ),
-                    effects=(condition_atom,),
-                    guards=(guard_name,),
+                    comparator=condition.comparator,
+                    threshold=condition.threshold,
+                    rule_context=scope,
+                    value_variable_name=count_name,
+                    operator_name=f"compare_scene_object_count{suffix}",
+                    guard_name=f"verify_scene_count_threshold{suffix}",
                     description_ko=(
-                        f"장면의 {condition.selector} 물체 개수 "
-                        f"{{{count_name}}}를 기준 {condition.threshold}와 "
-                        f"비교해 {parsed.rule_property}의 {index}번 조건을 검산한다."
+                        f"장면의 {condition.selector} 물체 개수 {{{count_name}}}를 "
+                        f"기준 {condition.threshold}와 비교해 "
+                        f"{parsed.rule_property}의 {index}번 조건을 검증했다."
                     ),
+                )
+            )
+
+        language_goal = composition.instance.goals[0]
+        scene = language_goal.atom.arguments[0]
+        conclusion = registry.atom("INSTANCE_OF", scene, rule_property)
+        negative_conclusion = registry.atom(
+            "NOT_INSTANCE_OF",
+            scene,
+            rule_property,
+        )
+        compiled = TypedDataflowCompiler(registry).compile(
+            NumericDataflowRuleSpec(
+                name="scene_count_classification",
+                conditions=tuple(numeric_conditions),
+                conclusion=conclusion,
+                target=rule_property,
+                blocked_by=(negative_conclusion,),
+                rule_predicate_name="SCENE_COUNT_RULE",
+                met_predicate_name="COUNT_CONDITION_MET",
+                conclusion_operator_name=(
+                    "classify_scene_from_verified_counts"
+                    if multiple
+                    else "classify_scene_from_verified_count"
                 ),
-                family=OperatorFamily.COMPARE.value,
-                tags=(
+                conclusion_guard_name="scene_property_not_explicitly_negated",
+                fact_source="scene_rule_parser",
+                compare_tags=(
                     "math",
                     "vision",
                     "cross_domain",
                     "count_threshold",
                 ),
+                conclusion_tags=(
+                    "language",
+                    "vision",
+                    "cross_domain",
+                    "classification",
+                    "conjunction",
+                ),
+                conclusion_description_ko=(
+                    f"검증된 개수 조건 {len(numeric_conditions)}개에 따라 장면을 "
+                    f"{parsed.rule_property} 상태로 분류했다."
+                ),
             )
-            rule_atoms.append(rule_atom)
-            condition_atoms.append(condition_atom)
-
-        language_goal = composition.instance.goals[0]
-        scene = language_goal.atom.arguments[0]
-        conclusion = registry.atom("INSTANCE_OF", scene, rule_property)
-        registry.register_guard(
-            "scene_property_not_explicitly_negated",
-            _scene_property_not_negated_guard(registry, conclusion),
-        )
-        registry.register_operator(
-            Rule(
-                name=(
-                    "classify_scene_from_verified_counts"
-                    if multiple
-                    else "classify_scene_from_verified_count"
-                ),
-                parameters=(),
-                preconditions=tuple(condition_atoms),
-                effects=(conclusion,),
-                guards=("scene_property_not_explicitly_negated",),
-                description_ko=(
-                    f"검증된 개수 조건 {len(condition_atoms)}개에 따라 장면의 분류를 "
-                    f"{parsed.rule_property} 상태로 정한다."
-                ),
-            ),
-            family=OperatorFamily.COMPOSE.value,
-            tags=(
-                "language",
-                "vision",
-                "cross_domain",
-                "classification",
-                "conjunction",
-            ),
         )
         goal = Goal(language_goal.atom, label=value.text.strip())
         return DomainInstance(
             registry=registry,
             state=WorldState(
                 composition.instance.state.facts
-                + tuple(
-                    Fact(atom, FactStatus.OBSERVED, "scene_rule_parser")
-                    for atom in rule_atoms
-                )
+                + compiled.rule_facts
             ),
             goals=(goal,),
             domain="composed",
@@ -497,6 +468,16 @@ class SceneThresholdAdapter:
                 "vision": vision.metadata,
                 "language": language.metadata,
                 "operator_domains": ("vision", "math", "language"),
+                "dataflow_rule": {
+                    "name": "scene_count_classification",
+                    "conditions": tuple(
+                        str(atom) for atom in compiled.condition_atoms
+                    ),
+                    "comparison_operators": tuple(
+                        operator.name for operator in compiled.comparison_operators
+                    ),
+                    "conclusion_operator": compiled.conclusion_operator.name,
+                },
                 "reviewed_examples": 0,
             },
         )
@@ -556,45 +537,6 @@ def _serialize_scene_parse(parsed: SceneThresholdParse) -> dict[str, object]:
         "goal_property": parsed.goal_property,
         "context_statements": parsed.context_statements,
     }
-
-
-def _scene_count_guard(
-    comparator: str,
-    threshold: Fraction,
-    binding_name: str = "count",
-):
-    def verify(binding, _state: WorldState) -> bool:
-        try:
-            count = Fraction(str(binding[binding_name]))
-        except (KeyError, ValueError, ZeroDivisionError):
-            return False
-        if comparator == ">":
-            return count > threshold
-        if comparator == ">=":
-            return count >= threshold
-        if comparator == "<":
-            return count < threshold
-        if comparator == "<=":
-            return count <= threshold
-        if comparator == "==":
-            return count == threshold
-        if comparator == "!=":
-            return count != threshold
-        return False
-
-    return verify
-
-
-def _scene_property_not_negated_guard(registry, conclusion):
-    def verify(_binding, state: WorldState) -> bool:
-        negative = registry.atom(
-            "NOT_INSTANCE_OF",
-            conclusion.arguments[0],
-            conclusion.arguments[1],
-        )
-        return not state.contains(negative, proof_eligible=False)
-
-    return verify
 
 
 def _line_column(text: str, offset: int) -> tuple[int, int]:

@@ -42,6 +42,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 언어 Horn 추론, exact 일차방정식, raster 도형·개수·면적, controller v5 점수 계약
 - `composed_operator_runtime.md`
   - 공통 registry 조합, goal-independent 관측, operator frontier, 비전→수학→언어 proof program
+- `typed_dataflow.md`
+  - verified 숫자 측정을 조건과 결론 operator로 컴파일하고 실제 의미 흐름을 held-out 평가하는 계약
 - `frontier_llm_judge.md`
   - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
 - `verifier_gated_self_learning.md`

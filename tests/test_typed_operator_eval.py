@@ -15,12 +15,40 @@ for path in (SRC, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
+from evaluate_semantic_flow_self_learning import (
+    evaluate_semantic_flow_self_learning,
+)
 from evaluate_typed_task_discovery import evaluate_self_discovery
 from evaluate_typed_self_learning import evaluate_self_learning
 from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_semantic_flow_self_learning_report_passes_all_gates(self) -> None:
+        report = evaluate_semantic_flow_self_learning(
+            examples_per_structure=1,
+            seed=17,
+            min_expansion_reduction=0.10,
+            max_expansions=5_000,
+        )
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["data"]["training_tasks"], 2)
+        self.assertEqual(report["data"]["heldout_positive_tasks"], 2)
+        self.assertEqual(report["split"]["overlapping_structures"], ())
+        self.assertEqual(report["split"]["overlapping_programs"], ())
+        self.assertEqual(report["split"]["training_proof_depths"], (3, 5))
+        self.assertEqual(
+            report["split"]["heldout_positive_proof_depths"],
+            (4, 7),
+        )
+        self.assertTrue(report["policy"]["promoted"])
+        self.assertLess(report["policy"]["parameters"], 100)
+        self.assertEqual(report["after"]["proof_soundness"], 1.0)
+        self.assertEqual(report["after"]["false_positives"], 0)
+        self.assertGreaterEqual(report["ab"]["expansion_reduction"], 0.30)
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_verifier_backed_task_discovery_report_passes_all_gates(self) -> None:
         report = evaluate_self_discovery(
             examples_per_structure=1,
