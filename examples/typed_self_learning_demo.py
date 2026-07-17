@@ -12,13 +12,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from semop.kernel import (
+    ActiveCurriculumConfig,
+    ActiveCurriculumScheduler,
+    ActiveSelfLearningLoop,
     LearningSplit,
     SelfLearningBudget,
-    SelfLearningLoop,
     SelfLearningStore,
     SolveBudget,
-    generate_symbolic_curriculum,
-    generate_symbolic_negative_controls,
+    generate_lmv_structural_transfer_split,
     learning_tasks_from_synthetic,
 )
 
@@ -32,41 +33,42 @@ def main() -> int:
         type=Path,
         default=Path("artifacts/typed_self_learning_demo"),
     )
-    parser.add_argument("--examples-per-domain", type=int, default=3)
+    parser.add_argument(
+        "--examples-per-structure",
+        "--examples-per-domain",
+        dest="examples_per_structure",
+        type=int,
+        default=3,
+    )
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--min-expansion-reduction", type=float, default=0.10)
-    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
-    training_problems = generate_symbolic_curriculum(
-        args.examples_per_domain,
+    split = generate_lmv_structural_transfer_split(
+        args.examples_per_structure,
         seed=args.seed,
-        curriculum="language-math-vision",
     )
-    heldout_problems = generate_symbolic_curriculum(
-        args.examples_per_domain,
-        seed=args.seed + 10_000,
-        curriculum="language-math-vision",
-    )
-    negative_controls = generate_symbolic_negative_controls(heldout_problems)
     training = learning_tasks_from_synthetic(
-        training_problems,
+        split.training,
         split=LearningSplit.TRAIN,
         namespace=f"train-seed-{args.seed}",
     )
     heldout = learning_tasks_from_synthetic(
-        heldout_problems,
+        split.heldout,
         split=LearningSplit.HELDOUT,
         namespace=f"heldout-seed-{args.seed}",
     ) + learning_tasks_from_synthetic(
-        negative_controls,
+        split.negative_controls,
         split=LearningSplit.HELDOUT,
         namespace=f"control-seed-{args.seed}",
         expected_solved=False,
     )
 
-    result = SelfLearningLoop(
-        budget=SelfLearningBudget(
+    result = ActiveSelfLearningLoop(
+        scheduler=ActiveCurriculumScheduler(
+            ActiveCurriculumConfig(max_tasks=6)
+        ),
+        self_learning_budget=SelfLearningBudget(
             solve_budget=SolveBudget(
                 max_expansions=2_000,
                 timeout_seconds=5.0,
@@ -74,8 +76,9 @@ def main() -> int:
             min_expansion_reduction=args.min_expansion_reduction,
         ),
         store=SelfLearningStore(args.output),
-    ).run(training, heldout, resume=args.resume)
-    iteration = result.iterations[-1]
+    ).run(training, heldout)
+    learning_round = result.rounds[-1]
+    iteration = learning_round.learning_iteration
     candidate = iteration.candidate_metrics
     summary = {
         "promoted": iteration.accepted,
@@ -83,6 +86,12 @@ def main() -> int:
         "rejection_reasons": iteration.rejection_reasons,
         "verified_training_traces": iteration.verified_training_traces,
         "decision_cases": iteration.decision_cases,
+        "training_structures": result.split_audit.training_structures,
+        "heldout_structures": result.split_audit.heldout_structures,
+        "overlapping_structures": result.split_audit.overlapping_structures,
+        "selected_capabilities": [
+            item.capability for item in learning_round.selection.decisions
+        ],
         "policy_parameters": iteration.parameter_count,
         "policy_artifact_bytes": iteration.artifact_bytes,
         "baseline_positive_expansions": (
@@ -110,11 +119,7 @@ def main() -> int:
         "macros_active": False,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    unchanged_resume = (
-        args.resume
-        and iteration.rejection_reasons == ("candidate_is_identical_to_incumbent",)
-    )
-    return 0 if iteration.accepted or unchanged_resume else 2
+    return 0 if iteration.accepted else 2
 
 
 if __name__ == "__main__":

@@ -45,6 +45,8 @@ class DecisionTrainingCase:
     actions: tuple[GroundAction, ...]
     target_action: int
     step: int
+    terminal_state: WorldState | None = None
+    terminal_goals: tuple[Goal, ...] = ()
 
 
 class TraceCorpus:
@@ -282,6 +284,14 @@ def build_decision_training_cases(
                 actions=candidates,
                 target_action=target,
                 step=step.index,
+                terminal_state=(
+                    result.final_state
+                    if proof_offset == len(result.proof) - 1
+                    else None
+                ),
+                terminal_goals=(
+                    goals if proof_offset == len(result.proof) - 1 else ()
+                ),
             )
         )
         state = kernel.execute_action(state, step.action)

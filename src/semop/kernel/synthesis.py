@@ -7,16 +7,26 @@ from typing import Any, Callable
 
 from .domains import (
     DomainInstance,
+    LanguageLogicAdapter,
+    LanguageTextAdapter,
+    LanguageTextProblem,
     RasterImage,
+    RasterVisionAdapter,
+    RasterVisionProblem,
     SceneThresholdAdapter,
     SceneThresholdProblem,
+    VisionAreaGoal,
+    VisionCountGoal,
     VisionProblem,
+    VisionPropertyGoal,
     VisionRelationGoal,
     VisionWorldAdapter,
     make_hidden_premise_instance,
     parse_arithmetic_expression,
     parse_geometry_dsl,
     parse_grid_problem,
+    parse_linear_equation,
+    parse_numeric_comparison,
 )
 from .model import Fact, FactStatus, Goal, Rule, WorldState
 
@@ -26,6 +36,33 @@ class SyntheticProblem:
     problem_id: str
     domain: str
     instance: DomainInstance
+    capability: str = ""
+    structure_key: str = ""
+    difficulty: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.problem_id.strip() or not self.domain.strip():
+            raise ValueError("synthetic problem id and domain must not be empty")
+        if self.difficulty <= 0:
+            raise ValueError("synthetic problem difficulty must be positive")
+
+
+@dataclass(frozen=True)
+class SyntheticCurriculumSplit:
+    """A capability-level split, not a rename-only random split."""
+
+    training: tuple[SyntheticProblem, ...]
+    heldout: tuple[SyntheticProblem, ...]
+    negative_controls: tuple[SyntheticProblem, ...]
+    training_structures: tuple[str, ...]
+    heldout_structures: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        overlap = set(self.training_structures) & set(self.heldout_structures)
+        if overlap:
+            raise ValueError(
+                "synthetic structural split overlaps: " + ", ".join(sorted(overlap))
+            )
 
 
 @dataclass
@@ -108,6 +145,42 @@ def symbolic_curriculum_domains(curriculum: str) -> tuple[str, ...]:
         raise ValueError(f"unknown symbolic curriculum: {curriculum}") from exc
 
 
+def generate_lmv_structural_transfer_split(
+    examples_per_structure: int,
+    *,
+    seed: int = 0,
+) -> SyntheticCurriculumSplit:
+    """Hold out one full adapter/operator composition in each primary domain."""
+
+    if not 1 <= examples_per_structure <= 1_000:
+        raise ValueError("examples_per_structure must be between 1 and 1,000")
+    builders = _lmv_transfer_builders()
+    training: list[SyntheticProblem] = []
+    heldout: list[SyntheticProblem] = []
+    for domain, variants in builders:
+        for variant_index, (capability, builder) in enumerate(variants):
+            target = heldout if variant_index == len(variants) - 1 else training
+            rng = random.Random(
+                f"{seed}:lmv-structural-transfer:{domain}:{capability}"
+            )
+            target.extend(
+                builder(index, rng)
+                for index in range(examples_per_structure)
+            )
+    controls = generate_symbolic_negative_controls(heldout)
+    return SyntheticCurriculumSplit(
+        training=tuple(training),
+        heldout=tuple(heldout),
+        negative_controls=controls,
+        training_structures=tuple(
+            sorted({problem.structure_key for problem in training})
+        ),
+        heldout_structures=tuple(
+            sorted({problem.structure_key for problem in heldout})
+        ),
+    )
+
+
 def generate_symbolic_negative_controls(
     problems: Sequence[SyntheticProblem],
 ) -> tuple[SyntheticProblem, ...]:
@@ -116,64 +189,334 @@ def generate_symbolic_negative_controls(
     controls: list[SyntheticProblem] = []
     for problem in problems:
         instance = problem.instance
-        if problem.domain == "language":
-            state = WorldState(
-                facts=tuple(
-                    fact
-                    for fact in instance.state.facts
-                    if fact.atom.predicate.name != "SATISFIED"
-                ),
-                depth=instance.state.depth,
-                path_cost=instance.state.path_cost,
-            )
-            control = replace(instance, state=state)
-        elif problem.domain == "math":
-            goal = instance.goals[0]
-            wrong_answer = instance.registry.symbol(
-                f"wrong_answer_{problem.problem_id.replace('-', '_')}",
-                "Number",
-            )
-            control = replace(
-                instance,
-                goals=(
-                    Goal(
-                        instance.registry.atom(
-                            goal.atom.predicate,
-                            goal.atom.arguments[0],
-                            wrong_answer,
-                        ),
-                        label="intentionally false arithmetic target",
-                    ),
-                ),
-            )
-        elif problem.domain == "vision":
-            goal = instance.goals[0]
-            control = replace(
-                instance,
-                goals=(
-                    Goal(
-                        instance.registry.atom(
-                            goal.atom.predicate,
-                            goal.atom.arguments[1],
-                            goal.atom.arguments[0],
-                        ),
-                        label="intentionally reversed spatial target",
-                    ),
-                ),
-            )
-        else:
+        if not instance.goals:
             raise ValueError(
-                "negative controls currently support language, math, and vision; "
-                f"got {problem.domain!r}"
+                f"negative control requires explicit goals: {problem.problem_id}"
             )
+        false_goals = []
+        safe_id = problem.problem_id.replace("-", "_")
+        for goal_index, goal in enumerate(instance.goals):
+            wrong_arguments = tuple(
+                instance.registry.symbol(
+                    f"negative_{safe_id}_{goal_index}_{argument_index}",
+                    argument.type,
+                )
+                for argument_index, argument in enumerate(goal.atom.arguments)
+            )
+            false_goals.append(
+                Goal(
+                    instance.registry.atom(goal.atom.predicate, *wrong_arguments),
+                    label="intentionally unreachable typed target",
+                )
+            )
+        control = replace(instance, goals=tuple(false_goals))
         controls.append(
             SyntheticProblem(
                 problem_id=f"negative-{problem.problem_id}",
                 domain=problem.domain,
                 instance=control,
+                capability=problem.capability,
+                structure_key=problem.structure_key,
+                difficulty=problem.difficulty,
             )
         )
     return tuple(controls)
+
+
+def _lmv_transfer_builders() -> tuple[
+    tuple[
+        str,
+        tuple[
+            tuple[str, Callable[[int, random.Random], SyntheticProblem]],
+            ...,
+        ],
+    ],
+    ...,
+]:
+    return (
+        (
+            "language",
+            (
+                ("premise_readiness", _transfer_language_readiness),
+                ("inheritance_chain", _transfer_language_inheritance),
+                ("conjunctive_rule_chain", _transfer_language_conjunction),
+            ),
+        ),
+        (
+            "math",
+            (
+                ("nested_arithmetic", _transfer_math_arithmetic),
+                ("linear_equation", _transfer_math_equation),
+                ("exact_comparison", _transfer_math_comparison),
+            ),
+        ),
+        (
+            "vision",
+            (
+                ("spatial_transitivity", _transfer_vision_relation),
+                ("pixel_shape", _transfer_vision_shape),
+                ("pixel_quantification", _transfer_vision_quantification),
+            ),
+        ),
+    )
+
+
+def _transfer_language_readiness(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    suffix = f"{index}{rng.randrange(1_000_000)}"
+    goal = f"deploy{suffix}"
+    first = f"tests{suffix}"
+    second = f"approval{suffix}"
+    instance = LanguageTextAdapter().adapt(
+        LanguageTextProblem(
+            f"Goal: {goal}; Requires: {first}, {second}; "
+            f"Satisfied: {first}; Satisfied: {second}",
+            use_legacy_heuristics=False,
+        )
+    )
+    return _transfer_problem(
+        f"transfer-language-readiness-{index}",
+        "language",
+        "premise_readiness",
+        instance,
+        difficulty=3,
+        distractor_index=10_000 + index,
+    )
+
+
+def _transfer_language_inheritance(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    suffix = f"{index}{rng.randrange(1_000_000)}"
+    child = f"coder{suffix}"
+    middle = f"person{suffix}"
+    parent = f"mortal{suffix}"
+    subject = f"ada{suffix}"
+    instance = LanguageLogicAdapter().adapt(
+        f"Every {child} is a {middle}. Every {middle} is a {parent}. "
+        f"{subject} is a {child}. Prove: {subject} is a {parent}."
+    )
+    return _transfer_problem(
+        f"transfer-language-inheritance-{index}",
+        "language",
+        "inheritance_chain",
+        instance,
+        difficulty=2,
+        distractor_index=20_000 + index,
+    )
+
+
+def _transfer_language_conjunction(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    suffix = f"{index}{rng.randrange(1_000_000)}"
+    red = f"red{suffix}"
+    square = f"square{suffix}"
+    marker = f"marker{suffix}"
+    visible = f"visible{suffix}"
+    target = f"target{suffix}"
+    subject = f"tile{suffix}"
+    instance = LanguageLogicAdapter().adapt(
+        f"Rule: {red} & {square} -> {marker}. "
+        f"Rule: {marker} & {visible} -> {target}. "
+        f"{subject} is {red}. {subject} is {square}. "
+        f"{subject} is {visible}. Prove: {subject} is a {target}."
+    )
+    return _transfer_problem(
+        f"transfer-language-conjunction-{index}",
+        "language",
+        "conjunctive_rule_chain",
+        instance,
+        difficulty=3,
+        distractor_index=30_000 + index,
+    )
+
+
+def _transfer_math_arithmetic(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    left = 1 + rng.randrange(9)
+    right = 1 + rng.randrange(9)
+    factor = 2 + rng.randrange(4)
+    instance = parse_arithmetic_expression(f"({left} + {right}) * {factor}")
+    return _transfer_problem(
+        f"transfer-math-arithmetic-{index}",
+        "math",
+        "nested_arithmetic",
+        instance,
+        difficulty=5,
+        distractor_index=40_000 + index,
+    )
+
+
+def _transfer_math_equation(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    solution = 1 + rng.randrange(9)
+    coefficient = 2 + rng.randrange(5)
+    offset = 1 + rng.randrange(7)
+    total = coefficient * solution + offset
+    instance = parse_linear_equation(
+        f"{coefficient}*x + {offset} = {total}"
+    )
+    return _transfer_problem(
+        f"transfer-math-equation-{index}",
+        "math",
+        "linear_equation",
+        instance,
+        difficulty=2,
+        distractor_index=50_000 + index,
+    )
+
+
+def _transfer_math_comparison(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    left = 1 + rng.randrange(9)
+    right = 1 + rng.randrange(9)
+    instance = parse_numeric_comparison(f"{left} + {right} == {left + right}")
+    return _transfer_problem(
+        f"transfer-math-comparison-{index}",
+        "math",
+        "exact_comparison",
+        instance,
+        difficulty=5,
+        distractor_index=60_000 + index,
+    )
+
+
+def _transfer_vision_relation(
+    index: int,
+    rng: random.Random,
+) -> SyntheticProblem:
+    suffix = f"{index}_{rng.randrange(1_000_000)}"
+    names = tuple(f"visual_{slot}_{suffix}" for slot in range(3))
+    attributes = {"geometry_verified": True}
+    world = _SyntheticWorld(
+        query="Does LEFT_OF compose?",
+        entities=[
+            _SyntheticEntity(name, {"verified": True}) for name in names
+        ],
+        relations=[
+            _SyntheticRelation(names[0], "LEFT_OF", names[1], 0.99, attributes),
+            _SyntheticRelation(names[1], "LEFT_OF", names[2], 0.99, attributes),
+        ],
+    )
+    instance = VisionWorldAdapter().adapt(
+        VisionProblem(
+            world,
+            (VisionRelationGoal("LEFT_OF", names[0], names[2]),),
+        )
+    )
+    return _transfer_problem(
+        f"transfer-vision-relation-{index}",
+        "vision",
+        "spatial_transitivity",
+        instance,
+        difficulty=2,
+        distractor_index=70_000 + index,
+    )
+
+
+def _transfer_vision_shape(
+    index: int,
+    _rng: random.Random,
+) -> SyntheticProblem:
+    white = (255, 255, 255)
+    red = (255, 0, 0)
+    blue = (0, 0, 255)
+    image = RasterImage.from_rows(
+        (
+            [white] * 7,
+            [white, red, red, white, blue, white, white],
+            [white, red, red, white, white, white, white],
+            [white] * 7,
+        )
+    )
+    instance = RasterVisionAdapter().adapt(
+        RasterVisionProblem(
+            image,
+            (VisionPropertyGoal("SQUARE", "red"),),
+        )
+    )
+    return _transfer_problem(
+        f"transfer-vision-shape-{index}",
+        "vision",
+        "pixel_shape",
+        instance,
+        difficulty=2,
+        distractor_index=80_000 + index,
+    )
+
+
+def _transfer_vision_quantification(
+    index: int,
+    _rng: random.Random,
+) -> SyntheticProblem:
+    white = (255, 255, 255)
+    red = (255, 0, 0)
+    blue = (0, 0, 255)
+    image = RasterImage.from_rows(
+        (
+            [white] * 8,
+            [white, red, red, white, white, blue, white, white],
+            [white, red, red, white, white, blue, white, white],
+            [white] * 8,
+        )
+    )
+    instance = RasterVisionAdapter().adapt(
+        RasterVisionProblem(
+            image,
+            (
+                VisionCountGoal("all", 2),
+                VisionAreaGoal("red", "blue"),
+            ),
+        )
+    )
+    return _transfer_problem(
+        f"transfer-vision-quantification-{index}",
+        "vision",
+        "pixel_quantification",
+        instance,
+        difficulty=2,
+        distractor_index=90_000 + index,
+    )
+
+
+def _transfer_problem(
+    problem_id: str,
+    domain: str,
+    capability: str,
+    instance: DomainInstance,
+    *,
+    difficulty: int,
+    distractor_index: int,
+) -> SyntheticProblem:
+    structure_key = f"{domain}:{capability}"
+    tagged = replace(
+        instance,
+        metadata={
+            **instance.metadata,
+            "capability": capability,
+            "structure_key": structure_key,
+            "synthetic_transfer": True,
+        },
+    )
+    return SyntheticProblem(
+        problem_id=problem_id,
+        domain=domain,
+        instance=_with_hard_negative_distractors(tagged, distractor_index),
+        capability=capability,
+        structure_key=structure_key,
+        difficulty=difficulty,
+    )
 
 
 def _curriculum_builders() -> dict[
@@ -385,7 +728,7 @@ def _with_hard_negative_distractors(
                 parameters=(),
                 preconditions=(trigger,),
                 effects=(registry.atom(target.predicate, *wrong_arguments),),
-                description_ko="목표와 무관한 합성 distractor를 실행한다.",
+                description_ko="목표와 무관한 합성 탐색 후보를 실행한다.",
             ),
             family="search",
             tags=("hard_negative", "synthetic"),

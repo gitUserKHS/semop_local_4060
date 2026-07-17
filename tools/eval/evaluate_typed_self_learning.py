@@ -16,12 +16,13 @@ if str(SRC) not in sys.path:
 
 from evaluate_low_resource_transfer import _peak_rss_bytes
 from semop.kernel import (
+    ActiveCurriculumConfig,
+    ActiveCurriculumScheduler,
+    ActiveSelfLearningLoop,
     LearningSplit,
     SelfLearningBudget,
-    SelfLearningLoop,
     SolveBudget,
-    generate_symbolic_curriculum,
-    generate_symbolic_negative_controls,
+    generate_lmv_structural_transfer_split,
     learning_tasks_from_synthetic,
 )
 
@@ -33,28 +34,21 @@ def evaluate_self_learning(
     min_expansion_reduction: float = 0.10,
     max_expansions: int = 2_000,
 ) -> dict[str, Any]:
-    training_problems = generate_symbolic_curriculum(
+    split = generate_lmv_structural_transfer_split(
         examples_per_domain,
         seed=seed,
-        curriculum="language-math-vision",
     )
-    heldout_problems = generate_symbolic_curriculum(
-        examples_per_domain,
-        seed=seed + 10_000,
-        curriculum="language-math-vision",
-    )
-    controls = generate_symbolic_negative_controls(heldout_problems)
     training = learning_tasks_from_synthetic(
-        training_problems,
+        split.training,
         split=LearningSplit.TRAIN,
         namespace=f"train-seed-{seed}",
     )
     heldout = learning_tasks_from_synthetic(
-        heldout_problems,
+        split.heldout,
         split=LearningSplit.HELDOUT,
         namespace=f"heldout-seed-{seed}",
     ) + learning_tasks_from_synthetic(
-        controls,
+        split.negative_controls,
         split=LearningSplit.HELDOUT,
         namespace=f"control-seed-{seed}",
         expected_solved=False,
@@ -69,11 +63,19 @@ def evaluate_self_learning(
     )
     peak_before = _peak_rss_bytes()
     started = perf_counter()
-    result = SelfLearningLoop(budget=budget).run(training, heldout)
+    result = ActiveSelfLearningLoop(
+        scheduler=ActiveCurriculumScheduler(
+            ActiveCurriculumConfig(max_tasks=6)
+        ),
+        self_learning_budget=budget,
+        generations=1,
+    ).run(training, heldout)
     elapsed = perf_counter() - started
     peak_after = _peak_rss_bytes()
-    iteration = result.iterations[0]
+    learning_round = result.rounds[0]
+    iteration = learning_round.learning_iteration
     candidate = iteration.candidate_metrics
+    audit = result.split_audit
 
     gates = {
         "candidate_promoted": iteration.accepted,
@@ -103,17 +105,50 @@ def evaluate_self_learning(
         "additional_peak_rss_under_512mb": (
             max(0, peak_after - peak_before) <= 512 * 1024 * 1024
         ),
+        "structural_split_non_overlapping": (
+            audit.valid
+            and not audit.overlapping_structures
+            and not audit.overlapping_programs
+        ),
+        "language_math_vision_covered": (
+            audit.training_domains == ("language", "math", "vision")
+            and audit.training_domains == audit.heldout_domains
+        ),
     }
     return {
-        "schema_version": 1,
-        "suite": "verifier-gated-language-math-vision-self-learning",
+        "schema_version": 2,
+        "suite": "structural-transfer-language-math-vision-self-learning",
         "seed": seed,
+        "split": {
+            "kind": "held-out-capability-composition",
+            "training_structures": audit.training_structures,
+            "heldout_structures": audit.heldout_structures,
+            "overlapping_structures": audit.overlapping_structures,
+            "training_programs": audit.training_programs,
+            "heldout_programs": audit.heldout_programs,
+            "overlapping_programs": audit.overlapping_programs,
+            "training_domains": audit.training_domains,
+            "heldout_domains": audit.heldout_domains,
+            "training_outcomes_valid": audit.training_outcomes_valid,
+            "heldout_outcomes_valid": audit.heldout_outcomes_valid,
+        },
         "data": {
-            "training_tasks": len(training),
-            "heldout_positive_tasks": len(heldout_problems),
-            "heldout_negative_controls": len(controls),
+            "training_pool_tasks": len(training),
+            "selected_training_tasks": len(learning_round.selection.selected_tasks),
+            "heldout_positive_tasks": len(split.heldout),
+            "heldout_negative_controls": len(split.negative_controls),
             "verified_training_traces": iteration.verified_training_traces,
             "decision_cases": iteration.decision_cases,
+        },
+        "curriculum": {
+            "decisions": [
+                asdict(item) for item in learning_round.selection.decisions
+            ],
+            "domain_counts": dict(learning_round.selection.domain_counts),
+            "rejected_unverified": learning_round.selection.rejected_unverified,
+            "rejected_no_supervision": (
+                learning_round.selection.rejected_no_supervision
+            ),
         },
         "policy": {
             "kind": iteration.candidate_kind,
@@ -155,7 +190,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Evaluate verifier-gated typed self-learning on an ordinary CPU"
     )
-    parser.add_argument("--examples-per-domain", type=int, default=3)
+    parser.add_argument(
+        "--examples-per-structure",
+        "--examples-per-domain",
+        dest="examples_per_domain",
+        type=int,
+        default=3,
+    )
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--min-expansion-reduction", type=float, default=0.10)
     parser.add_argument("--max-expansions", type=int, default=2_000)

@@ -28,9 +28,24 @@ class LowResourceEvalTests(unittest.TestCase):
             max_expansions=2_000,
         )
 
-        self.assertEqual(report["schema_version"], 1)
-        self.assertEqual(report["data"]["training_tasks"], 3)
+        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["data"]["training_pool_tasks"], 6)
+        self.assertEqual(report["data"]["selected_training_tasks"], 6)
         self.assertEqual(report["data"]["heldout_negative_controls"], 3)
+        self.assertEqual(report["split"]["overlapping_structures"], ())
+        self.assertEqual(report["split"]["overlapping_programs"], ())
+        self.assertEqual(
+            set(report["split"]["heldout_structures"]),
+            {
+                "language:conjunctive_rule_chain",
+                "math:exact_comparison",
+                "vision:pixel_quantification",
+            },
+        )
+        self.assertEqual(
+            report["curriculum"]["domain_counts"],
+            {"language": 2, "math": 2, "vision": 2},
+        )
         self.assertTrue(report["policy"]["promoted"])
         self.assertLess(report["policy"]["parameters"], 100)
         self.assertEqual(report["after"]["proof_soundness"], 1.0)

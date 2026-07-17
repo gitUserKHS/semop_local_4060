@@ -44,6 +44,9 @@ class LearningTask:
     split: LearningSplit = LearningSplit.TRAIN
     source: str = "verifier"
     domain: str = ""
+    capability: str = ""
+    structure_key: str = ""
+    difficulty: int = 1
 
     def __post_init__(self) -> None:
         task_id = self.task_id.strip()
@@ -55,6 +58,8 @@ class LearningTask:
         if not domain:
             raise ValueError("learning task domain must not be empty")
         object.__setattr__(self, "domain", domain)
+        if self.difficulty <= 0:
+            raise ValueError("learning task difficulty must be positive")
         if self.source not in TraceCorpus.VALID_SOURCES:
             raise ValueError(f"unknown learning task source: {self.source}")
         if not self.instance.goals:
@@ -77,6 +82,9 @@ class LearningTask:
             split=split,
             source="synthetic",
             domain=problem.domain,
+            capability=problem.capability,
+            structure_key=problem.structure_key,
+            difficulty=problem.difficulty,
         )
 
 
@@ -289,6 +297,11 @@ class SelfLearningResult:
     iterations: tuple[SelfLearningIteration, ...]
     accepted_generations: int
     checkpoint: SelfLearningCheckpoint | None = None
+    active_candidate: PolicyCandidate | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
     @property
     def promoted(self) -> bool:
@@ -615,6 +628,7 @@ class SelfLearningLoop:
             iterations=tuple(iterations),
             accepted_generations=accepted_generations,
             checkpoint=checkpoint,
+            active_candidate=active_candidate,
         )
 
     def _validate_tasks(

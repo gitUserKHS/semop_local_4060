@@ -45,7 +45,7 @@ This folder contains the active documentation for SemOp Local 4060.
 - `frontier_llm_judge.md`
   - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
 - `verifier_gated_self_learning.md`
-  - 검증 trace에서 작은 정책을 학습하고 언어·수학·비전 held-out gate로 승격·rollback하는 닫힌 루프
+  - 실제 adapter capability를 구조적으로 분리하고 능동 선택한 뒤 작은 정책을 승격·rollback하는 닫힌 루프
 - `raster_vision.md`
   - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
 - `tiny_controller.md`

@@ -18,6 +18,7 @@ from semop.kernel import (
     Goal,
     MdlMacroLibrary,
     OperatorKernel,
+    SolveBudget,
     TraceCorpus,
     build_decision_training_cases,
     generate_symbolic_curriculum,
@@ -28,6 +29,7 @@ from semop.kernel.domains import make_hidden_premise_instance, parse_geometry_ds
 from semop.tiny_controller import (
     NumpyTinyController,
     TinyControllerConfig,
+    TinyControllerPolicyLearner,
     canonicalize_problem,
 )
 
@@ -336,6 +338,69 @@ class TinyControllerTests(unittest.TestCase):
                 model.score_actions(problem.state, problem.goals, actions).action_scores,
                 loaded.score_actions(problem.state, problem.goals, actions).action_scores,
             )
+
+        in_memory = NumpyTinyController.from_artifact(model.to_artifact())
+        self.assertEqual(model.parameter_count, in_memory.parameter_count)
+        with self.assertRaisesRegex(ValueError, "invalid tiny-controller artifact"):
+            NumpyTinyController.from_artifact(b"not-an-npz-model")
+
+    def test_verified_trace_trains_portable_tiny_policy_candidate(self) -> None:
+        try:
+            import numpy as np
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("PyTorch training profile is not installed")
+
+        synthetic = generate_symbolic_curriculum(
+            1,
+            seed=17,
+            curriculum="language-math-vision",
+            domains=("language",),
+        )[0]
+        kernel = OperatorKernel(synthetic.instance.registry)
+        verified = kernel.solve(synthetic.instance.state, synthetic.instance.goals)
+        cases = build_decision_training_cases(kernel, verified)
+        config = TinyControllerConfig(
+            d_model=16,
+            token_buckets=64,
+            relation_buckets=16,
+            operator_buckets=16,
+            action_limit_score_margin=100.0,
+        )
+        learner = TinyControllerPolicyLearner(
+            config=config,
+            epochs=1,
+            learning_rate=1e-3,
+            seed=13,
+        )
+
+        candidate = learner.train(cases)
+        restored = learner.restore(candidate.artifact)
+
+        self.assertEqual(candidate.kind, "tiny-controller-v5")
+        self.assertEqual(candidate.artifact_suffix, ".npz")
+        self.assertEqual(candidate.parameter_count, restored.parameter_count)
+        self.assertEqual(candidate.training_updates, (len(cases) + 1))
+        self.assertIn("verified_terminal_cases=1", candidate.diagnostics)
+        first = cases[0]
+        np.testing.assert_allclose(
+            candidate.policy.score_actions(
+                first.state, first.goals, first.actions
+            ).action_scores,
+            restored.score_actions(
+                first.state, first.goals, first.actions
+            ).action_scores,
+            rtol=0.0,
+            atol=0.0,
+        )
+        solved = kernel.solve(
+            synthetic.instance.state,
+            synthetic.instance.goals,
+            policy=restored,
+            budget=SolveBudget(beam_width=5),
+        )
+        self.assertTrue(solved.success)
+        self.assertTrue(solved.verified)
 
     def test_torch_training_and_numpy_inference_action_scores_match(self) -> None:
         import numpy as np

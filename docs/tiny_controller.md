@@ -91,6 +91,9 @@ verified proof is treated as an alternative valid ordering, never as a negative.
 `build_decision_training_cases` calls `OperatorKernel.policy_goals`, so training and
 NumPy inference see the same bounded grounded frontier relations. A frontier is only
 an action-ranking hint; it is never a proof fact or halt condition.
+The final decision case also carries the replay-verified terminal state and original
+verifier goals. `TinyControllerPolicyLearner` uses that state as the positive halt
+example, so a search-policy guess cannot manufacture a terminal training label.
 For each positive action, `build_decision_training_cases` retains at most four
 explicitly certified `hard_negative` actions. The built-in synthetic curriculum adds
 four wrong ground bindings with the same goal predicate and argument types per trace.
@@ -109,6 +112,27 @@ A frontier LLM may propose a typed program, but its output cannot enter this cor
 directly. `verify_judged_program` must execute and replay it first, and
 `teacher_review_to_solve_result` independently repeats that verification before
 conversion. See `frontier_llm_judge.md`.
+
+## Verifier-Gated Active Retraining
+
+The recurrent controller implements the same learner contract as the dependency-free
+sparse baseline:
+
+```python
+from semop.kernel import ActiveSelfLearningLoop
+from semop.tiny_controller import TinyControllerPolicyLearner
+
+result = ActiveSelfLearningLoop(
+    learner=TinyControllerPolicyLearner(epochs=1),
+).run(training_pool, heldout_tasks)
+```
+
+PyTorch is imported lazily when `train` is called. The candidate is immediately
+exported to in-memory NumPy `.npz` bytes, evaluated by the typed kernel on structurally
+held-out positive and negative tasks, and promoted only if every proof, solve-rate,
+expansion, latency, parameter, and artifact-size gate passes. A rejected candidate is
+discarded and the incumbent remains active. See `verifier_gated_self_learning.md` for
+the structural split and checkpoint workflow.
 
 Run an end-to-end verifier-generated training smoke test with a deliberately small
 debug architecture:

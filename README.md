@@ -39,7 +39,7 @@ python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
 python examples/typed_cross_domain_scene_demo.py
 python examples/typed_frontier_judge_demo.py
-python examples/typed_self_learning_demo.py --output artifacts/self_learning_run_01
+python examples/typed_self_learning_demo.py --output artifacts/self_learning_run_01 --examples-per-structure 3
 python examples/typed_raster_vision_demo.py
 ```
 
@@ -52,9 +52,10 @@ dependencies.
 language classification program instead of solving the three domains independently.
 `typed_frontier_judge_demo.py` shows the frontier-LLM boundary: judge output remains
 proposed until typed execution and proof replay admit the program to the trace corpus.
-`typed_self_learning_demo.py` closes that loop: replay-verified traces train a tiny
-sparse action policy, held-out positive and negative controls gate promotion, and an
-atomic hash-checked checkpoint preserves only accepted generations.
+`typed_self_learning_demo.py` closes that loop: an active curriculum balances six
+real language/math/vision adapter structures, replay-verified traces train a tiny
+sparse action policy, and three entirely held-out capability compositions plus
+negative controls gate promotion before an atomic hash-checked checkpoint is written.
 
 Optional controller training:
 
@@ -71,11 +72,11 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/typed_compositional_extensions.md`: v2 language logic, exact equations, raster quantification, and controller scoring contract
 - `docs/composed_operator_runtime.md`: v4 registry composition, conjunctive scene conditions, operator frontier, and verified vision-math-language programs
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
-- `docs/verifier_gated_self_learning.md`: bounded three-domain self-learning, held-out promotion, rollback, and checkpoints
+- `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
 - `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
-- `tools/eval/evaluate_typed_self_learning.py`: machine-readable pre/post self-learning promotion and resource gates
+- `tools/eval/evaluate_typed_self_learning.py`: machine-readable structural-transfer, active-selection, promotion, and resource gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic

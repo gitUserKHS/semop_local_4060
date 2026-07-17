@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from io import BytesIO
 import json
 from math import sqrt
 from pathlib import Path
@@ -102,18 +103,29 @@ class NumpyTinyController:
 
     @classmethod
     def load(cls, path: str | Path) -> "NumpyTinyController":
+        return cls.from_artifact(Path(path).read_bytes())
+
+    @classmethod
+    def from_artifact(cls, artifact: bytes) -> "NumpyTinyController":
         import numpy as np
 
-        with np.load(Path(path), allow_pickle=False) as payload:
-            version = int(payload["format_version"].item())
-            if version not in {2, 3, 4, cls.FORMAT_VERSION}:
-                raise ValueError(f"unsupported tiny-controller format: {version}")
-            config = TinyControllerConfig(**json.loads(str(payload["config_json"].item())))
-            weights = {
-                name: payload[name]
-                for name in payload.files
-                if name not in {"format_version", "config_json"}
-            }
+        try:
+            with np.load(BytesIO(artifact), allow_pickle=False) as payload:
+                version = int(payload["format_version"].item())
+                if version not in {2, 3, 4, cls.FORMAT_VERSION}:
+                    raise ValueError(
+                        f"unsupported tiny-controller format: {version}"
+                    )
+                config = TinyControllerConfig(
+                    **json.loads(str(payload["config_json"].item()))
+                )
+                weights = {
+                    name: payload[name]
+                    for name in payload.files
+                    if name not in {"format_version", "config_json"}
+                }
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise ValueError("invalid tiny-controller artifact") from exc
         if version == 2 and "action_structure_weight" not in weights:
             weights["action_structure_weight"] = np.zeros(
                 (ACTION_STRUCTURAL_FEATURE_COUNT,), dtype=np.float32
@@ -126,18 +138,23 @@ class NumpyTinyController:
         return cls(config, weights)
 
     def save(self, path: str | Path, *, compressed: bool = True) -> Path:
-        import numpy as np
-
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.to_artifact(compressed=compressed))
+        return destination
+
+    def to_artifact(self, *, compressed: bool = True) -> bytes:
+        import numpy as np
+
         payload = {
             "format_version": np.asarray(self.FORMAT_VERSION, dtype=np.int32),
             "config_json": np.asarray(json.dumps(asdict(self.config), sort_keys=True)),
             **self.weights,
         }
         writer = np.savez_compressed if compressed else np.savez
-        writer(destination, **payload)
-        return destination
+        buffer = BytesIO()
+        writer(buffer, **payload)
+        return buffer.getvalue()
 
     @property
     def parameter_count(self) -> int:

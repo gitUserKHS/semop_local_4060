@@ -1,173 +1,253 @@
-# Verifier-Gated Self-Learning v1
+# Verifier-Gated Self-Learning v2
 
 ## 목표
 
-SemOp의 자가 학습은 모델이 새 사실을 직접 써 넣는 방식이 아니다. 작은 정책이
-typed operator의 실행 순서를 학습하고, 기존 executor가 모든 실행과 proof replay를
-다시 검증한다. 학습 후보는 미사용 문제에서 기존 정책보다 안전하고 효율적일 때만
-승격된다.
+SemOp의 자가 학습은 모델이 정답 fact를 직접 만들어 상태에 넣는 방식이 아니다.
+작은 정책은 현재 typed state와 goal을 보고 **실행 가능한 operator의 순서**만 학습한다.
+fact 추가, guard 검사, 목표 판정, proof replay는 항상 `OperatorKernel`이 담당한다.
+
+이 경계 덕분에 학습 정책이 틀려도 잘못된 명제를 성공으로 보고할 수 없다. 정책이
+예외를 내면 deterministic search로 복귀하고, 정책이 조기 중단을 제안해도 verifier
+goal이 충족되지 않았으면 중단을 거부한다.
 
 ```mermaid
 flowchart LR
-    A["언어·수학·비전 문제"] --> B["Typed adapter"]
-    B --> C["Deterministic solve + proof replay"]
-    C -->|"verified success만"| D["TraceCorpus"]
-    D --> E["작은 action-ranking policy 학습"]
-    E --> F["Held-out positive + negative controls"]
-    F --> G{"모든 gate 통과?"}
-    G -->|"예"| H["새 generation 원자적 승격"]
-    G -->|"아니오"| I["후보 거절, incumbent 유지"]
-    H --> J["다음 operator 조합 탐색"]
+    A["언어·수학·비전 task pool"] --> B["Typed adapter + verifier solve"]
+    B --> C["불확실성·새 구조·난이도·도메인 균형 점수"]
+    C --> D["Active curriculum selection"]
+    D --> E["Replay-verified TraceCorpus"]
+    E --> F["작은 action-ranking policy 학습"]
+    F --> G["구조가 겹치지 않는 held-out + negative controls"]
+    G --> H{"모든 promotion gate 통과?"}
+    H -->|예| I["새 generation 승격"]
+    H -->|아니요| J["후보 폐기, incumbent 유지"]
 ```
 
-## 지금 실제로 학습하는 것
+## 현재 학습 단위
 
-`StructuralLinearPolicy`는 replay-verified proof의 각 단계에서 정답 action과 hard
-negative action을 비교한다. 이름 대신 다음 구조 신호를 사용한다.
+학습 입력은 자유 텍스트나 픽셀 자체가 아니라 adapter가 만든 공통 typed IR이다.
 
-- 목표와 effect의 정확한 일치, predicate/type 일치, argument overlap
-- 새 effect 비율과 binding/precondition/effect 크기
-- 범용 operator family
-- typed precondition/effect shape와 안전한 구조 tag
+- 상태: 타입이 지정된 `Fact` 집합
+- 목표: verifier가 검사할 `Goal` 집합
+- 행동: registry가 실제로 grounding한 `GroundAction` 후보
+- 정답: replay-verified proof에서 해당 단계에 실행된 action
+- 오답: 같은 상태에서 실행 가능하지만 정답 trace에 속하지 않는 hard negative
+- 종료: 최종 action 뒤 verifier goal이 모두 충족된 terminal state
 
-학습은 dependency-free pairwise-margin update다. 현재 합성 3도메인 smoke run에서는
-약 30개의 sparse weight만 생겼다. 이는 5.84M tiny controller를 대체한다는 뜻이
-아니라, 자가 학습 루프와 승격 계약을 일반 PC에서 검증하는 가장 작은 기준선이다.
-같은 `score_actions` 계약을 사용하므로 이후 NumPy tiny controller 학습기를 연결할
-수 있다.
+`DecisionTrainingCase`는 마지막 proof 단계에 verifier가 확인한 terminal state와 goal을
+함께 보존한다. 따라서 recurrent controller의 halt 양성 label도 성공 trace에서만
+생성된다.
 
-## 안전 계약
+## 구조적 Transfer Split
 
-후보 정책은 action에 점수만 줄 수 있다. 다음 작업은 불가능하다.
+이름이나 숫자만 바꾸는 seed split은 조합 전이를 증명하지 못한다. v2는 각 도메인의
+두 capability 구조를 학습하고, 다른 한 구조 전체를 held-out으로 둔다.
 
-- `WorldState`에 fact 직접 추가
-- `proposed`나 `contradicted` fact를 proof 전제로 사용
-- verifier가 확인하지 않은 halt 수용
-- 실패 trace를 학습 corpus에 추가
-- held-out gate 없이 policy artifact 승격
+| 도메인 | 학습 구조 1 | 학습 구조 2 | 완전 held-out 구조 |
+|---|---|---|---|
+| 언어 | 전제 복원과 readiness | 2-hop 개념 상속 | 2전제 conjunction rule chain |
+| 수학 | 중첩 exact 연산 | 일차방정식 | 연산 결과의 exact 비교 |
+| 비전 | 공간관계 추이 | pixel 기반 shape | closed count와 pixel area 비교 |
 
-승격 기본 조건은 다음과 같다.
+각 경로는 metadata fixture가 아니라 다음 실제 adapter를 실행한다.
+
+- `LanguageTextAdapter`, `LanguageLogicAdapter`
+- arithmetic, linear-equation, numeric-comparison adapter
+- `VisionWorldAdapter`, `RasterVisionAdapter`
+
+`audit_structural_split`은 다음 조건을 검사한다.
+
+- train/held-out `structure_key` 교집합이 비어 있음
+- 정규화된 replay proof `program_signature` 교집합도 비어 있음
+- 양쪽 모두 language, math, vision을 포함함
+- positive는 replay-verified solve, negative는 미증명이라는 label과 일치함
+- operator sequence, family, depth, goal type shape가 기록됨
+
+구조 이름만 다르고 실제 operator program이 같은 누수도 두 번째 검사에서 거부된다.
+
+## Active Curriculum
+
+`ActiveCurriculumScheduler`는 모든 합성 문제를 무조건 학습하지 않는다. 다음 신호로
+작은 batch를 고른다.
+
+- 현재 policy의 gold 대 hard-negative score margin 불확실성
+- 아직 학습하지 않은 `structure_key`의 novelty
+- verifier proof depth 기반 난이도
+- language, math, vision 선택 수의 균형
+
+기본 평가에서는 18개 training pool 중 서로 다른 6개 capability task를 선택한다.
+도메인별 최소 선택 수를 지키면서 같은 구조의 반복 표본보다 새 구조를 우선한다.
+verifier가 풀지 못한 positive와 decision supervision이 없는 trace는 학습에서 제외하고
+각각 `rejected_unverified`, `rejected_no_supervision`으로 기록한다.
+
+여러 generation을 실행할 때 이미 선택한 task는 다시 선택하지 않는다. 후속 후보가
+승격되지 않아도 그 generation의 검증된 trace는 corpus에 남지만, 활성 정책은 마지막
+승격 정책으로 롤백된다.
+
+## 두 가지 작은 정책
+
+### Sparse 기본 정책
+
+`StructuralLinearPolicy`는 goal-effect 일치, predicate/type 일치, argument overlap,
+operator family와 typed precondition/effect shape를 사용한다. dependency-free이고 수십
+개의 parameter만 필요하므로 자가 학습 루프와 회귀 테스트의 기본 정책이다.
+
+### Recurrent 선택 정책
+
+`TinyControllerPolicyLearner`는 같은 `PolicyLearner` 계약을 구현한다.
+
+- relation-aware recurrent NumPy runtime
+- 기본 설정 약 5.84M parameter, 절대 상한 15M
+- PyTorch는 학습 시에만 lazy import
+- action/argument/halt/value/recursive-consistency loss
+- verifier decision과 terminal case만 학습
+- 메모리의 `.npz` bytes로 후보를 만들고 SHA-256 checkpoint로 저장 가능
+- 추론과 복원에는 PyTorch가 필요하지 않음
+
+순환망 후보도 sparse 정책과 동일한 held-out, proof replay, false-positive, 시간, 크기,
+expansion gate를 통과해야 한다. 작은 debug 구성으로 end-to-end 학습과 안전한 롤백은
+검증했지만, 기본 5.84M 구성의 완전한 structural-transfer 재학습 결과는 아직 없다.
+따라서 현재 기본값은 sparse 정책이다.
+
+## 승격과 롤백 조건
+
+후보는 다음 조건을 모두 만족해야 활성 정책이 된다.
 
 - 성공으로 보고한 proof soundness 100%
-- negative control false positive 0
-- incumbent 대비 verified solve rate 하락 1%p 이하
-- 설정된 최소 expansion 감소율 충족
-- policy 15M parameter 이하, artifact 64MB 이하
+- negative-control false positive 0
+- 전체 및 도메인별 verified solve-rate 하락 1%p 이하
+- 설정한 최소 expansion 감소율 충족
+- policy 15M parameter 이하
+- artifact 64MB 이하
 - held-out p95 CPU 시간 10초 이하
+- train/held-out 구조와 program overlap 0
 
-학습 label과 typed verifier가 충돌하면 해당 run 전체의 승격을 중단한다. 후보가
-거절되면 incumbent object와 generation은 바뀌지 않는다.
+학습 label과 verifier 결과가 충돌하거나 어느 조건이라도 실패하면 candidate artifact는
+활성 checkpoint에 들어가지 않으며 incumbent policy를 유지한다.
+
+정책은 다음 작업을 할 수 없다.
+
+- `WorldState`에 fact 직접 추가
+- `proposed` 또는 `contradicted` fact를 proof 전제로 사용
+- verifier가 확인하지 않은 halt 수용
+- 실패 trace를 정답 corpus에 추가
+- held-out gate 없이 자동 승격
 
 ## 실행
 
-외부 runtime dependency 없이 실행할 수 있다.
+기본 sparse active learning 데모:
 
 ```powershell
 python examples/typed_self_learning_demo.py `
-  --output artifacts/self_learning_run_01 `
-  --examples-per-domain 3
+  --output artifacts/self_learning_structural_01 `
+  --examples-per-structure 3
 ```
 
-CI나 A/B 기록에는 machine-readable 평가기를 사용한다.
+Machine-readable A/B 평가:
 
 ```powershell
 python tools/eval/evaluate_typed_self_learning.py `
-  --examples-per-domain 3 `
+  --examples-per-structure 3 `
   --output artifacts/self_learning_eval.json
 ```
 
-예제는 서로 다른 seed로 학습/held-out 문제를 만든다. held-out에는 다음 음성
-대조군도 자동으로 포함한다.
+현재 deterministic CPU 기준 결과는 다음과 같다.
 
-- 언어: 필수 전제의 `SATISFIED` fact 제거
-- 수학: 계산 graph가 만들 수 없는 틀린 exact value 목표
-- 비전: 검증된 비대칭 공간관계의 반대 방향 목표
+- training pool 18개 중 6개 선택
+- train structure 6개, held-out structure 3개, overlap 0
+- positive expansion `51 -> 30`, 41.2% 감소
+- verified solve rate 100%, proof soundness 100%, false positive 0
+- sparse policy 27 parameters
 
-출력의 핵심 필드는 `promoted`, `proof_soundness`, `false_positives`,
-`expansion_reduction`, `generation`이다. 같은 저장소에서 계속하려면 새 seed와
-`--resume`을 함께 사용한다.
-
-```powershell
-python examples/typed_self_learning_demo.py `
-  --output artifacts/self_learning_run_01 `
-  --seed 12 `
-  --resume
-```
+이 수치는 현재 controlled adapter 분포의 구조 전이 증거이며, 자유로운 언어·수학·비전
+전체 능력의 완성을 뜻하지 않는다.
 
 ## Python API
 
 ```python
 from semop.kernel import (
+    ActiveCurriculumConfig,
+    ActiveCurriculumScheduler,
+    ActiveSelfLearningLoop,
     LearningSplit,
-    SelfLearningBudget,
-    SelfLearningLoop,
-    generate_symbolic_curriculum,
+    generate_lmv_structural_transfer_split,
     learning_tasks_from_synthetic,
 )
 
+split = generate_lmv_structural_transfer_split(3, seed=11)
 train = learning_tasks_from_synthetic(
-    generate_symbolic_curriculum(
-        20, seed=1, curriculum="language-math-vision"
-    ),
+    split.training,
     split=LearningSplit.TRAIN,
-    namespace="train-v1",
+    namespace="train-v2",
 )
 heldout = learning_tasks_from_synthetic(
-    generate_symbolic_curriculum(
-        20, seed=2, curriculum="language-math-vision"
-    ),
+    split.heldout,
     split=LearningSplit.HELDOUT,
-    namespace="heldout-v1",
+    namespace="heldout-v2",
+) + learning_tasks_from_synthetic(
+    split.negative_controls,
+    split=LearningSplit.HELDOUT,
+    namespace="negative-v2",
+    expected_solved=False,
 )
 
-result = SelfLearningLoop(
-    budget=SelfLearningBudget(min_expansion_reduction=0.10),
-    store="artifacts/self-learning-v1",
+result = ActiveSelfLearningLoop(
+    scheduler=ActiveCurriculumScheduler(
+        ActiveCurriculumConfig(max_tasks=6)
+    ),
+    store="artifacts/self-learning-v2",
 ).run(train, heldout)
 ```
 
-실제 데이터에서는 문장이나 object 이름을 무작위로 나누지 말고 operator 조합,
-그래프 구조, 문제 크기로 split해야 한다. `task_id`는 train과 held-out 전체에서
-유일해야 한다.
+선택적 recurrent learner를 쓸 때는 루프에 명시적으로 주입한다.
 
-## Checkpoint 구조
+```python
+from semop.tiny_controller import TinyControllerPolicyLearner
+
+result = ActiveSelfLearningLoop(
+    learner=TinyControllerPolicyLearner(epochs=1),
+    scheduler=ActiveCurriculumScheduler(
+        ActiveCurriculumConfig(max_tasks=6)
+    ),
+).run(train, heldout)
+```
+
+## Checkpoint
 
 ```text
-self-learning-v1/
+self-learning-v2/
   manifest.json
   iterations/iteration-0001.json
-  generations/generation-0001/policy.json
+  generations/generation-0001/policy.json 또는 policy.npz
   traces/verified-traces.jsonl
   macros/retained-candidates.json
 ```
 
-`manifest.json`은 policy, trace, macro artifact의 SHA-256을 기록한다. 저장은 임시
-파일을 같은 디렉터리에 쓴 뒤 replace하는 방식이다. load/resume 시 hash가 다르면
-실행을 거절한다.
+manifest는 policy, trace, macro artifact의 SHA-256을 기록하고 임시 파일 뒤 atomic replace로
+갱신한다. `SelfLearningLoop`는 checkpoint resume을 지원한다. active-pool wrapper는 같은
+pool을 묵시적으로 재사용하지 않도록 현재 새 output root만 허용한다.
 
-Macro는 길이 2~6의 반복 sub-program을 MDL로 압축하고, held-out proof에서 같은
-operator sequence가 재현되며 전체 proof replay가 성공할 때만 저장한다. v1의 macro
-library는 의도적으로 `active: false`다. 아직 macro를 하나의 실행 operator로 등록해
-성능을 바꾸지는 않으므로, 후보 보존을 실제 능력 향상으로 보고하지 않는다.
+Macro는 길이 2~6의 verified sub-program을 MDL로 압축하고 held-out proof에 같은
+sequence가 재현될 때만 보존한다. 아직 실행 operator로 자동 등록하지 않으며 checkpoint에
+`active: false`로 기록한다.
 
-## Frontier LLM judge 연결
+## Frontier LLM Judge
 
-초기에는 frontier LLM을 teacher/judge로 사용할 수 있다. 다만 LLM 출력은
-`proposed` 후보 또는 typed program review여야 한다. `teacher_review_to_solve_result`
-가 현재 registry/state/goals에서 프로그램을 재실행하고 proof replay에 성공한 뒤에만
-`TraceCorpus`로 들어갈 수 있다. judge의 자연어 평점만으로 policy를 승격하지 않는다.
+초기에는 frontier LLM을 teacher 또는 judge로 사용할 수 있다. LLM 출력은 `proposed`
+fact 또는 typed program review로만 취급한다. `teacher_review_to_solve_result`가 현재
+registry, state, goals에서 프로그램을 재실행하고 replay에 성공한 경우에만
+`TraceCorpus`에 들어간다. 자연어 점수만으로 policy를 승격하지 않는다.
 
-## 현재 한계와 다음 단계
+## 아직 남은 범위
 
-이번 v1이 달성한 것은 검증 가능한 **탐색 정책의 자가 개선**이다. 아직 다음을
-자가 학습한다고 주장할 수는 없다.
+현재 구현은 실제 adapter 구조 사이의 **검증 가능한 탐색 정책 전이와 능동 curriculum**
+단계다. 다음 능력은 아직 완성되지 않았다.
 
-- 새 언어 parser grammar와 새 predicate schema의 자동 발명
-- raw image에서 새로운 visual concept를 발견하고 독립 검증하는 학습
-- 실행 가능한 macro operator의 자동 등록과 rollback
-- 장기 memory에서 curriculum을 능동 선택하는 continual learning
-- 5.84M recurrent controller의 checkpoint-aware 자동 재학습
+- 자유로운 자연어에서 grammar와 predicate schema를 스스로 획득하는 학습
+- 자연 사진과 영상에서 새 visual concept와 시간 변화를 발견하고 검증하는 학습
+- 기하·대수·증명 문제 전반의 정리 발명과 장기 proof search
+- 실행 가능한 macro operator의 자동 등록과 sandbox rollback
+- 기본 5.84M recurrent controller의 충분한 structural-transfer 반복 실험
+- 실제 분포의 human-reviewed 20/100-shot promotion gate
 
-다음 구현 순서는 verified uncertainty 기반 curriculum 선택, NumPy tiny controller용
-`PolicyLearner` adapter, executable macro sandbox, parser/perception proposal의
-teacher-review queue다. 모든 단계는 같은 held-out 승격 gate를 유지한다.
+따라서 현재 상태를 언어·수학·비전의 최종 달성이나 AGI라고 표현하지 않는다.

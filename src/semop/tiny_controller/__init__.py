@@ -13,6 +13,7 @@ from .features import (
 )
 from .numpy_runtime import NumpyTinyController, TinyControllerConfig
 from .linear_policy import StructuralLinearPolicy, StructuralPolicyLearner
+from .learning import TinyControllerPolicyLearner
 
 __all__ = [
     "CanonicalAction",
@@ -22,6 +23,7 @@ __all__ = [
     "StructuralLinearPolicy",
     "StructuralPolicyLearner",
     "TinyControllerConfig",
+    "TinyControllerPolicyLearner",
     "canonicalize_problem",
     "stable_bucket",
 ]
