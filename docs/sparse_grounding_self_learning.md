@@ -193,7 +193,15 @@ guarantees. In particular, the fixed sparse threshold is not conformal calibrati
 
 ## Current Limits And Next Evidence
 
-The next scientific gate requires data that this repository does not yet contain:
+The production-adapter semantic bridge is now implemented in
+`semantic_grounding_self_learning.md`. Controlled raw text, exact expressions, and
+RGB rasters replace the artificial consistency signal in that evaluator. The fixed
+run promotes the 20- and 100-label policies, reaches a 91.7% 20-to-100 completion
+ratio, and reports zero false accepts. Five labels per domain remain insufficient
+and correctly roll back.
+
+The next scientific gate still requires evidence that this repository does not yet
+contain:
 
 1. digest-bound human semantic labels at `0/5/20/100` for all three domains
 2. natural-language paraphrase and relation-direction near misses

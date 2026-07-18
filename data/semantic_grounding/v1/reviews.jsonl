@@ -1,0 +1,3 @@
+# Exact candidate-level human reviews are written by:
+# python tools/eval/review_semantic_grounding.py --case-id CASE --reviewer human:NAME --label accept|reject
+# Case-level reviews from data/semantic_benchmark/v1/reviews.jsonl are intentionally not reusable here.

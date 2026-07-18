@@ -40,6 +40,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 언어·수학·비전 공통 candidate/decision/trace, 모델 제안 권한, 검증·사람 리뷰 hard negative 학습 계약
 - `sparse_grounding_self_learning.md`
   - 세 도메인 공통 accept/reject/abstain head, 검증 replay, online rollback, risk-coverage 평가와 현재 한계
+- `semantic_grounding_self_learning.md`
+  - 실제 raw LMV adapter 후보, candidate digest 사람 review, 공통 operator margin, 0/5/20/100 저자원 곡선
 - `lmv_semantic_benchmark.md`
   - digest-bound 사람 리뷰, 언어·수학·비전 near-miss seed, 권한별 의미 정확도 평가 절차
 - `language_math_vision_typed_runtime.md`

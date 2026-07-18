@@ -26,6 +26,11 @@ seed case는 구현자가 현재 어댑터 범위에 맞춰 작성한 회귀 자
 - `tools/eval/evaluate_semantic_benchmark.py`: 실행 CLI
 - `tools/eval/review_semantic_benchmark.py`: 사람 리뷰 기록 CLI
 
+이 review는 문제 전체 성공 여부만 승인한다. 원자별 grounding 학습 라벨로 복사할
+수 없다. 후보 학습에는 `semantic_grounding_self_learning.md`의 별도
+`SemanticGroundingReview`가 필요하며, 그 review는 case digest뿐 아니라 exact
+candidate digest와 reviewed label까지 결속한다.
+
 case에는 언어 문자열, 수학 표현식 또는 작은 RGB raster와 명시적 goal이
 들어간다. review는 case 전체의 canonical SHA-256 digest에 결속된다. payload,
 기대 결과, rationale 등이 하나라도 바뀌면 기존 review는 `stale`이 되고 더는
