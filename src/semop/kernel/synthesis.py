@@ -28,7 +28,7 @@ from .domains import (
     parse_linear_equation,
     parse_numeric_comparison,
 )
-from .model import Fact, FactStatus, Goal, Rule, WorldState
+from .model import Fact, FactStatus, Goal, Rule, TypeValidationError, WorldState
 
 
 _SEMANTIC_FLOW_TRAIN_VARIANTS = (
@@ -821,7 +821,7 @@ def _transfer_problem(
     return SyntheticProblem(
         problem_id=problem_id,
         domain=domain,
-        instance=_with_hard_negative_distractors(tagged, distractor_index),
+        instance=with_hard_negative_distractors(tagged, distractor_index),
         capability=capability,
         structure_key=structure_key,
         difficulty=difficulty,
@@ -1008,7 +1008,7 @@ def _language_problem(index: int, rng: random.Random) -> SyntheticProblem:
     return SyntheticProblem(
         f"language-{index}",
         "language",
-        _with_hard_negative_distractors(instance, index),
+        with_hard_negative_distractors(instance, index),
     )
 
 
@@ -1027,7 +1027,7 @@ def _arithmetic_problem(index: int, rng: random.Random) -> SyntheticProblem:
     return SyntheticProblem(
         f"math-{index}",
         "math",
-        _with_hard_negative_distractors(instance, index),
+        with_hard_negative_distractors(instance, index),
     )
 
 
@@ -1059,7 +1059,7 @@ def _vision_problem(index: int, rng: random.Random) -> SyntheticProblem:
     return SyntheticProblem(
         f"vision-{index}",
         "vision",
-        _with_hard_negative_distractors(instance, index),
+        with_hard_negative_distractors(instance, index),
     )
 
 
@@ -1155,7 +1155,7 @@ def _semantic_flow_problem(
     return SyntheticProblem(
         problem_id=f"semantic-flow-{variant}-{index}",
         domain="composed",
-        instance=_with_hard_negative_distractors(tagged, distractor_index),
+        instance=with_hard_negative_distractors(tagged, distractor_index),
         capability="semantic_flow",
         structure_key=structure_key,
         difficulty=proof_depth,
@@ -1218,23 +1218,36 @@ def _composed_problem(index: int, rng: random.Random) -> SyntheticProblem:
     return SyntheticProblem(
         f"composed-{index}",
         "composed",
-        _with_hard_negative_distractors(instance, index),
+        with_hard_negative_distractors(instance, index),
     )
 
 
-def _with_hard_negative_distractors(
+def with_hard_negative_distractors(
     instance: DomainInstance,
     index: int,
     *,
     count: int = 4,
 ) -> DomainInstance:
+    """Add bounded wrong-goal actions for verifier-gated policy training."""
+
+    if not 0 <= count <= 4:
+        raise ValueError("hard-negative distractor count must be between zero and four")
+    if not instance.goals:
+        raise ValueError("hard-negative distractors require an explicit goal")
+    if count == 0:
+        return instance
     registry = instance.registry
-    entity = registry.types.resolve("Entity")
-    registry.register_predicate("DISTRACTOR_TRIGGER", (entity,))
     target = instance.goals[0].atom
+    if not target.arguments:
+        raise ValueError("hard-negative distractors require a goal argument")
+    try:
+        trigger_type = registry.types.resolve("Entity")
+    except TypeValidationError:
+        trigger_type = target.arguments[0].type
+    registry.register_predicate("DISTRACTOR_TRIGGER", (trigger_type,))
     facts: list[Fact] = []
     for slot in range(count):
-        symbol = registry.symbol(f"distractor_{index}_{slot}", entity)
+        symbol = registry.symbol(f"distractor_{index}_{slot}", trigger_type)
         trigger = registry.atom("DISTRACTOR_TRIGGER", symbol)
         facts.append(Fact(trigger, FactStatus.OBSERVED, "synthetic_distractor"))
         wrong_arguments = tuple(

@@ -81,6 +81,17 @@ class UnifiedTypedReasoner:
                 defaults[DomainKind(key)] = adapter
         self.adapters = defaults
 
+    def ground(self, request: TypedDomainRequest) -> DomainInstance:
+        """Adapt one raw request through the same boundary used by execution."""
+
+        domain = DomainKind(request.domain)
+        if isinstance(request.payload, DomainInstance):
+            return request.payload
+        instance = self.adapters[domain].adapt(request.payload)
+        if not isinstance(instance, DomainInstance):
+            raise TypeError("typed domain adapter did not return a DomainInstance")
+        return instance
+
     def run(
         self,
         request: TypedDomainRequest,
@@ -99,9 +110,8 @@ class UnifiedTypedReasoner:
                 diagnostics=("legacy mode: typed kernel was not executed",),
             )
 
-        adapter = self.adapters[domain]
         prebuilt_instance = isinstance(request.payload, DomainInstance)
-        instance = request.payload if prebuilt_instance else adapter.adapt(request.payload)
+        instance = self.ground(request)
         if not instance.goals:
             return UnifiedTypedResult(
                 domain=domain,
@@ -119,6 +129,7 @@ class UnifiedTypedReasoner:
         projection_applied = False
         diagnostics: list[str] = []
         if mode is MigrationMode.TYPED:
+            adapter = self.adapters[domain]
             project = getattr(adapter, "project", None)
             if callable(project) and not prebuilt_instance:
                 projection_result = project(request.payload, solved)

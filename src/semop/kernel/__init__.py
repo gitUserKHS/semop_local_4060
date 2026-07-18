@@ -174,6 +174,7 @@ from .synthesis import (
     generate_symbolic_negative_controls,
     generate_symbolic_curriculum,
     symbolic_curriculum_domains,
+    with_hard_negative_distractors,
 )
 from .self_learning import (
     DomainLearningMetrics,
@@ -231,6 +232,16 @@ from .runtime import (
     UnifiedTypedReasoner,
     UnifiedTypedResult,
 )
+from .experience import (
+    GroundedLearningBatch,
+    GroundedLearningSplit,
+    GroundingFailure,
+    RawExperienceGrounder,
+    RawGroundingError,
+    RawLearningExample,
+    RawSelfLearningLoop,
+    RawSelfLearningResult,
+)
 
 __all__ = [
     "ActionPolicy",
@@ -259,6 +270,9 @@ __all__ = [
     "GoalOutcome",
     "GoalDirectedPolicy",
     "GroundAction",
+    "GroundedLearningBatch",
+    "GroundedLearningSplit",
+    "GroundingFailure",
     "GraphAdapterResult",
     "HierarchicalBrainCurriculumSplit",
     "HierarchicalLearningBudget",
@@ -326,6 +340,11 @@ __all__ = [
     "RasterVisionAdapter",
     "RasterVisionConfig",
     "RasterVisionProblem",
+    "RawExperienceGrounder",
+    "RawGroundingError",
+    "RawLearningExample",
+    "RawSelfLearningLoop",
+    "RawSelfLearningResult",
     "RegistryCompositionError",
     "RegistryImport",
     "RegistryPolicyProvider",
@@ -420,4 +439,5 @@ __all__ = [
     "unify_atom",
     "unify_term",
     "verify_judged_program",
+    "with_hard_negative_distractors",
 ]

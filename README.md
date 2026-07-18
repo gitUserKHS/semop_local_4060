@@ -37,6 +37,7 @@ python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/evaluate_active_macro_learning.py
 python tools/eval/evaluate_hierarchical_self_learning.py
+python tools/eval/evaluate_raw_grounded_self_learning.py
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -44,6 +45,7 @@ python examples/typed_cross_domain_scene_demo.py
 python examples/typed_frontier_judge_demo.py
 python examples/typed_self_learning_demo.py --output artifacts/self_learning_run_01 --examples-per-structure 3
 python examples/typed_self_discovery_demo.py --output artifacts/self_discovery_run_01 --examples-per-structure 1
+python examples/typed_raw_self_learning_demo.py
 python examples/typed_raster_vision_demo.py
 ```
 
@@ -78,6 +80,10 @@ and independently promotes procedural memory. The same evaluator supports sparse
 combination on a final joint holdout that neither component used for selection.
 Registry-specific macro activation and controller inference are packed into one
 portable, hash-checked brain artifact.
+`evaluate_raw_grounded_self_learning.py` removes the prebuilt-IR assumption from the
+learning boundary. It grounds raw requirement text, exact math strings, and RGB pixel
+problems through the production adapters, rejects failed or overlapping splits, and
+trains on language only before evaluating untouched math and vision transfer.
 
 Optional controller training:
 
@@ -87,6 +93,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 ```
 
 - `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and verifier-gated MDL macro activation
+- `src/semop/kernel/experience.py`: audited raw input grounding, split fingerprints, bounded hard negatives, and the end-to-end raw self-learning API
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
@@ -96,6 +103,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/typed_dataflow.md`: reusable numeric measurement-to-condition-to-conclusion compiler and semantic-flow holdout
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
 - `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
+- `docs/raw_grounded_self_learning.md`: raw language/math/pixel grounding, leakage audit, failure handling, and measured self-learning transfer
 - `docs/active_macro_learning.md`: primitive-expanded procedural memory, schema pinning, promotion gates, and rollback
 - `docs/hierarchical_operator_brain.md`: shared controller plus procedural memory, independent split gates, and portable brain artifacts
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
@@ -107,6 +115,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_semantic_flow_self_learning.py`: machine-readable cross-domain semantic-flow transfer and resource gates
 - `tools/eval/evaluate_active_macro_learning.py`: machine-readable three-domain macro induction, primitive replay, and resource gates
 - `tools/eval/evaluate_hierarchical_self_learning.py`: machine-readable controller/macro/joint ablation and family-transfer gates
+- `tools/eval/evaluate_raw_grounded_self_learning.py`: language-only raw training followed by untouched raw math/pixel transfer gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic
@@ -114,8 +123,12 @@ leave-one-domain-out snapshot passed the expansion gate, and the v3 frontier-awa
 contract passes a fresh 29K training/export diagnostic. The hierarchical split now
 also trains the current 5.84M controller from three language traces and verifies its
 math/vision transfer plus macro composition. The broader frontier-aware 5.84M LODO
-rerun and verified human-reviewed 20/100-shot gates remain unevaluated, so `shadow`
-remains the default.
+rerun and verified human-reviewed 20/100-shot gates remain unevaluated. The same full
+controller now also trains from three raw language examples through the public
+grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
+in each domain. This is a controlled structural-transfer result, not evidence of
+open-domain understanding. The raw experience tests, 199 typed-operator tests plus
+20 subtests, and all 566 repository tests pass; `shadow` remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

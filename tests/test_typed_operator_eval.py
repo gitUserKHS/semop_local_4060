@@ -19,6 +19,9 @@ from evaluate_active_macro_learning import evaluate_active_macro_learning
 from evaluate_hierarchical_self_learning import (
     evaluate_hierarchical_self_learning,
 )
+from evaluate_raw_grounded_self_learning import (
+    evaluate_raw_grounded_self_learning,
+)
 from evaluate_semantic_flow_self_learning import (
     evaluate_semantic_flow_self_learning,
 )
@@ -28,6 +31,58 @@ from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_raw_grounded_evaluator_rejects_unknown_controller_profile(self) -> None:
+        with self.assertRaisesRegex(ValueError, "controller_profile"):
+            evaluate_raw_grounded_self_learning(controller_profile="unknown")
+
+    def test_sparse_raw_language_learning_transfers_to_math_and_pixels(self) -> None:
+        report = evaluate_raw_grounded_self_learning(
+            controller_profile="sparse",
+            seed=31,
+        )
+
+        self.assertEqual(report["data"]["training_domains"], ("language",) * 3)
+        self.assertEqual(report["data"]["transfer_domains"], ("math", "vision"))
+        self.assertEqual(report["learning"]["verified_training_traces"], 3)
+        self.assertEqual(report["learning"]["decision_cases"], 9)
+        self.assertEqual(
+            report["transfer"]["baseline"]["positive_expansions"],
+            12,
+        )
+        self.assertEqual(
+            report["transfer"]["candidate"]["positive_expansions"],
+            4,
+        )
+        self.assertTrue(report["artifact"]["round_trip_verified"])
+        self.assertEqual(report["artifact"]["runtime"], "StructuralLinearPolicy")
+        self.assertTrue(report["gates"]["all_passed"])
+
+    def test_recurrent_raw_language_learning_transfers_to_math_and_pixels(self) -> None:
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("PyTorch training profile is not installed")
+
+        report = evaluate_raw_grounded_self_learning(
+            controller_profile="recurrent-diagnostic",
+            controller_epochs=5,
+            controller_learning_rate=1e-3,
+            seed=31,
+        )
+
+        self.assertEqual(report["controller"]["kind"], "tiny-controller-v5")
+        self.assertEqual(report["controller"]["parameters"], 29_834)
+        self.assertEqual(report["controller"]["training_updates"], 60)
+        self.assertEqual(
+            report["transfer"]["per_domain_expansion_reduction"],
+            {"math": 2 / 3, "vision": 2 / 3},
+        )
+        self.assertTrue(report["gates"]["final_inputs_untouched"])
+        self.assertTrue(report["gates"]["primitive_full_replay_verified"])
+        self.assertTrue(report["gates"]["portable_cpu_runtime"])
+        self.assertEqual(report["artifact"]["runtime"], "NumpyTinyController")
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_hierarchical_evaluator_rejects_unknown_controller_profile(self) -> None:
         with self.assertRaisesRegex(ValueError, "controller_profile"):
             evaluate_hierarchical_self_learning(controller_profile="unknown")

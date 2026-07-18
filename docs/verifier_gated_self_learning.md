@@ -25,7 +25,12 @@ flowchart LR
 
 ## 현재 학습 단위
 
-학습 입력은 자유 텍스트나 픽셀 자체가 아니라 adapter가 만든 공통 typed IR이다.
+정책이 실제로 학습하는 단위는 adapter가 만든 공통 typed IR이다. 공개 API에서는
+`RawSelfLearningLoop`가 자유 입력 경계를 담당하므로 호출자가 `DomainInstance`를 미리
+만들 필요는 없다. raw 언어 문자열, exact 수학 문자열, 작은 RGB raster는
+`UnifiedTypedReasoner.ground`를 거친 뒤 아래 단위가 된다. grounding 실패와
+train/held-out input·semantic fingerprint 중복은 학습 전에 차단한다. 자세한 계약과
+실측은 `raw_grounded_self_learning.md`에 있다.
 
 - 상태: 타입이 지정된 `Fact` 집합
 - 목표: verifier가 검사할 `Goal` 집합
@@ -150,6 +155,13 @@ Machine-readable A/B 평가:
 python tools/eval/evaluate_typed_self_learning.py `
   --examples-per-structure 3 `
   --output artifacts/self_learning_eval.json
+```
+
+Raw 입력에서 시작하는 language-only 학습과 math/vision 전이 평가:
+
+```powershell
+python tools/eval/evaluate_raw_grounded_self_learning.py `
+  --controller-profile recurrent-diagnostic
 ```
 
 현재 deterministic CPU 기준 결과는 다음과 같다.

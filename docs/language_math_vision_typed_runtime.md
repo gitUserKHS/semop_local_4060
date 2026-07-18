@@ -14,6 +14,9 @@
 모든 adapter는 `DomainInstance(registry, state, goals, domain, metadata)`를 반환한다.
 `UnifiedTypedReasoner`는 영역과 무관하게 같은 `OperatorKernel.solve`와 proof replay를
 호출한다.
+공개 `UnifiedTypedReasoner.ground`는 실행과 자가 학습이 공유하는 adapter 경계다.
+`RawSelfLearningLoop`는 이 경계를 사용해 raw 예제를 typed task로 바꾸고, 실패와
+train/held-out fingerprint 중복을 검사한 뒤 verifier-gated learner를 실행한다.
 
 ## 실행 흐름
 
@@ -54,6 +57,9 @@ result = UnifiedTypedReasoner().run(
 assert result.success and result.verified
 print(result.proof_ko)
 ```
+
+Raw 입력 자가 학습 API와 language-only 학습 뒤 math/pixel 전이 측정은
+`docs/raw_grounded_self_learning.md`에 있다.
 
 실행 모드는 세 영역에 공통이다.
 

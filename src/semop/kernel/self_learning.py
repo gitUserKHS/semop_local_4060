@@ -965,7 +965,7 @@ def _trace_metadata(task: LearningTask) -> dict[str, str]:
     if task.structure_key:
         metadata["structure_key"] = task.structure_key
     for name, value in sorted(task.instance.metadata.items()):
-        if not name.startswith("discovery_"):
+        if not name.startswith(("discovery_", "experience_")):
             continue
         metadata[name] = (
             value

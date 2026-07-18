@@ -48,6 +48,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
 - `verifier_gated_self_learning.md`
   - 실제 adapter capability를 구조적으로 분리하고 능동 선택한 뒤 작은 정책을 승격·rollback하는 닫힌 루프
+- `raw_grounded_self_learning.md`
+  - raw 언어·수학·pixel 입력을 typed 경험으로 감사하고 verifier trace만 학습하는 공개 자가 학습 경계
 - `hierarchical_operator_brain.md`
   - 언어-only controller 학습, 수학·비전 zero-shot 전이, 검증된 macro memory 결합, sparse·29K·5.84M 비교
 - `active_macro_learning.md`
