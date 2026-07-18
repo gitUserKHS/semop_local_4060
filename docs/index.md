@@ -48,6 +48,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - digest-bound 사람 리뷰, 언어·수학·비전 near-miss seed, 권한별 의미 정확도 평가 절차
 - `language_math_vision_typed_runtime.md`
   - direct language/math/vision adapters, trust boundaries, unified runtime, and benchmark workflow
+- `lmv_domain_catalog.md`
+  - 언어·수학·비전 adapter/codec/capability 공통 catalog, 빠른 게이트, 연구 근거와 확장 절차
 - `language_text_adapter.md`
   - 명시적 한국어·영어 문장을 typed 전제로 바꾸고 애매한 후보를 격리하는 계약
 - `typed_compositional_extensions.md`

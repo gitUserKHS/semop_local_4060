@@ -1,32 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Mapping, Sequence
 
 from .adapters import MigrationMode
 from .contracts import DomainInstance, TypedDomainAdapter, TypedInstanceAugmenter
-from .domains.language_text import LanguageInputAdapter
-from .domains.linear_equation import MathInputAdapter
-from .domains.composed_scene import SceneThresholdAdapter
-from .domains.raster_vision import VisionInputAdapter
+from .default_domains import create_default_domain_catalog
+from .domain_catalog import DomainCatalog, DomainKind, TypedDomainRequest
 from .engine import ActionPolicy, OperatorKernel, RegistryPolicyProvider
 from .model import SolveBudget, SolveResult
 from .proof import render_proof_ko
-
-
-class DomainKind(str, Enum):
-    LANGUAGE = "language"
-    MATH = "math"
-    VISION = "vision"
-    COMPOSED = "composed"
-
-
-@dataclass(frozen=True)
-class TypedDomainRequest:
-    domain: DomainKind | str
-    payload: Any
-    mode: MigrationMode | str = MigrationMode.SHADOW
 
 
 @dataclass(frozen=True)
@@ -38,6 +21,8 @@ class UnifiedTypedResult:
     proof_ko: str = ""
     projection_applied: bool = False
     diagnostics: tuple[str, ...] = ()
+    domain_capabilities: tuple[str, ...] = ()
+    input_contract: str = ""
 
     @property
     def success(self) -> bool:
@@ -54,6 +39,8 @@ class UnifiedTypedResult:
             "success": self.success,
             "verified": self.verified,
             "projection_applied": self.projection_applied,
+            "domain_capabilities": list(self.domain_capabilities),
+            "input_contract": self.input_contract,
             "metadata": dict(self.instance.metadata) if self.instance else {},
             "grounding": (
                 self.instance.grounding_trace.to_dict()
@@ -75,18 +62,15 @@ class UnifiedTypedReasoner:
         self,
         adapters: Mapping[DomainKind | str, TypedDomainAdapter[Any]] | None = None,
         *,
+        catalog: DomainCatalog | None = None,
         augmenters: Sequence[TypedInstanceAugmenter] = (),
     ) -> None:
-        defaults: dict[DomainKind, TypedDomainAdapter[Any]] = {
-            DomainKind.LANGUAGE: LanguageInputAdapter(),
-            DomainKind.MATH: MathInputAdapter(),
-            DomainKind.VISION: VisionInputAdapter(),
-            DomainKind.COMPOSED: SceneThresholdAdapter(),
-        }
+        active_catalog = catalog or create_default_domain_catalog()
         if adapters:
             for key, adapter in adapters.items():
-                defaults[DomainKind(key)] = adapter
-        self.adapters = defaults
+                active_catalog = active_catalog.with_adapter(key, adapter)
+        self.catalog = active_catalog
+        self.adapters = active_catalog.adapters
         resolved_augmenters = tuple(augmenters)
         if any(
             not isinstance(augmenter, TypedInstanceAugmenter)
@@ -101,11 +85,18 @@ class UnifiedTypedReasoner:
         """Adapt one raw request without adding learned executable structure."""
 
         domain = DomainKind(request.domain)
+        spec = self.catalog.require(domain)
         if isinstance(request.payload, DomainInstance):
-            return request.payload
-        instance = self.adapters[domain].adapt(request.payload)
+            instance = request.payload
+        else:
+            instance = spec.adapter.adapt(request.payload)
         if not isinstance(instance, DomainInstance):
             raise TypeError("typed domain adapter did not return a DomainInstance")
+        if instance.domain != domain.value:
+            raise ValueError(
+                f"domain adapter for {domain.value!r} produced "
+                f"instance domain {instance.domain!r}"
+            )
         return instance
 
     def prepare(self, request: TypedDomainRequest) -> DomainInstance:
@@ -149,6 +140,7 @@ class UnifiedTypedReasoner:
     ) -> UnifiedTypedResult:
         domain = DomainKind(request.domain)
         mode = MigrationMode(request.mode)
+        spec = self.catalog.require(domain)
         if mode is MigrationMode.LEGACY:
             return UnifiedTypedResult(
                 domain=domain,
@@ -156,6 +148,8 @@ class UnifiedTypedReasoner:
                 instance=None,
                 typed_result=None,
                 diagnostics=("legacy mode: typed kernel was not executed",),
+                domain_capabilities=tuple(sorted(spec.capabilities)),
+                input_contract=spec.input_contract,
             )
 
         prebuilt_instance = isinstance(request.payload, DomainInstance)
@@ -167,6 +161,8 @@ class UnifiedTypedReasoner:
                 instance=instance,
                 typed_result=None,
                 diagnostics=("adapter produced no explicit typed goals",),
+                domain_capabilities=tuple(sorted(spec.capabilities)),
+                input_contract=spec.input_contract,
             )
         solved = OperatorKernel(instance.registry).solve(
             instance.state,
@@ -177,7 +173,7 @@ class UnifiedTypedReasoner:
         projection_applied = False
         diagnostics: list[str] = []
         if mode is MigrationMode.TYPED:
-            adapter = self.adapters[domain]
+            adapter = spec.adapter
             project = getattr(adapter, "project", None)
             if callable(project) and not prebuilt_instance:
                 projection_result = project(request.payload, solved)
@@ -201,6 +197,8 @@ class UnifiedTypedReasoner:
             proof_ko=render_proof_ko(solved),
             projection_applied=projection_applied,
             diagnostics=tuple(diagnostics),
+            domain_capabilities=tuple(sorted(spec.capabilities)),
+            input_contract=spec.input_contract,
         )
 
     def run_many(

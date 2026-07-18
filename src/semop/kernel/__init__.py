@@ -84,6 +84,13 @@ from .judging import (
     verify_judged_program,
 )
 from .contracts import DomainInstance, TypedDomainAdapter, TypedInstanceAugmenter
+from .domain_catalog import (
+    DomainCatalog,
+    DomainSpec,
+    FunctionSemanticCodec,
+    SemanticPayloadCodec,
+)
+from .default_domains import create_default_domain_catalog
 from .grounding import (
     GroundingAudit,
     GroundingAuthority,
@@ -260,6 +267,15 @@ from .runtime import (
     UnifiedTypedReasoner,
     UnifiedTypedResult,
 )
+from .lmv_gate import (
+    LMV_COMMON_CAPABILITIES,
+    LMV_CORE_GATE_SCHEMA_VERSION,
+    LMV_DOMAINS,
+    LMVCoreGateReport,
+    LMVDomainGateResult,
+    LMVGateFixture,
+    evaluate_lmv_core_gate,
+)
 from .experience import (
     GroundedLearningBatch,
     GroundedLearningSplit,
@@ -391,10 +407,12 @@ __all__ = [
     "CurriculumDecision",
     "CurriculumSelection",
     "DiscoveryCandidateRecord",
+    "DomainCatalog",
     "DomainInstance",
     "DomainComposition",
     "DomainKind",
     "DomainLearningMetrics",
+    "DomainSpec",
     "EvidenceStatus",
     "EXPERIENCE_OBSERVATION_SCHEMA_VERSION",
     "EXPERIENCE_REVIEW_SCHEMA_VERSION",
@@ -417,6 +435,7 @@ __all__ = [
     "ExperienceTrigger",
     "Fact",
     "FactStatus",
+    "FunctionSemanticCodec",
     "FunctionSpec",
     "Goal",
     "GoalOutcome",
@@ -451,6 +470,12 @@ __all__ = [
     "JudgedFactRecord",
     "KernelError",
     "KernelRegistry",
+    "LMV_COMMON_CAPABILITIES",
+    "LMV_CORE_GATE_SCHEMA_VERSION",
+    "LMV_DOMAINS",
+    "LMVCoreGateReport",
+    "LMVDomainGateResult",
+    "LMVGateFixture",
     "LanguageClaim",
     "LanguageInputAdapter",
     "LanguageParse",
@@ -548,6 +573,7 @@ __all__ = [
     "SceneThresholdParser",
     "SceneThresholdProblem",
     "SemanticJudge",
+    "SemanticPayloadCodec",
     "SelfLearningBudget",
     "SelfLearningCheckpoint",
     "SelfLearningIteration",
@@ -612,10 +638,12 @@ __all__ = [
     "build_decision_training_cases",
     "canonical_json",
     "compose_domain_instances",
+    "create_default_domain_catalog",
     "create_semantic_review",
     "decide_grounding",
     "decode_semantic_request",
     "encode_semantic_request",
+    "evaluate_lmv_core_gate",
     "collect_proof_dependencies",
     "audit_structural_split",
     "generate_lmv_structural_transfer_split",

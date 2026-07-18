@@ -56,6 +56,7 @@ python -m unittest discover -s tests -p "test_typed_operator_*.py" -v
 python tools/eval/evaluate_low_resource_transfer.py
 python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
 python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
+python tools/eval/evaluate_lmv_core_gate.py --require-pass
 python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/evaluate_active_macro_learning.py
@@ -144,6 +145,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 ```
 
 - `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and verifier-gated MDL macro activation
+- `src/semop/kernel/domain_catalog.py`: self-describing LMV adapter/codec/capability contract used by runtime and semantic artifacts
 - `src/semop/kernel/experience.py`: audited raw input grounding, split fingerprints, bounded hard negatives, and the end-to-end raw self-learning API
 - `src/semop/kernel/experience_queue.py`: append-audited LMV execution queue, digest-bound reviews, and deterministic four-way partitioning
 - `src/semop/kernel/experience_collection.py`: production failure collection, reviewed-corpus grounding, leakage audit, and joint rule-learning bridge
@@ -152,6 +154,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/tiny_controller/grounding_*.py`: anonymized LMV features, sparse selective policy, verified replay, online promotion, and hash-checked artifacts
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
+- `docs/lmv_domain_catalog.md`: shared LMV boundary refactor, fast contract gate, research basis, and extension steps
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
 - `docs/typed_grounding_boundary.md`: shared language/math/vision grounding trace, authority rules, review promotion, and research basis
 - `docs/sparse_grounding_self_learning.md`: shared accept/reject/abstain policy, continual replay, risk-coverage gates, evaluation, and honest limits

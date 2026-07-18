@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import lru_cache
 from hashlib import sha256
 import json
 from typing import Any, Mapping, Sequence
 
 from .adapters import MigrationMode
+from .domain_catalog import (
+    DomainCatalog,
+    DomainKind,
+    FunctionSemanticCodec,
+    TypedDomainRequest,
+)
 from .domains.language_text import LanguageTextProblem
 from .domains.linear_equation import LinearEquationProblem
 from .domains.numeric_comparison import NumericComparisonProblem
@@ -18,12 +25,6 @@ from .domains.raster_vision import (
     VisionPropertyGoal,
 )
 from .domains.vision import VisionRelationGoal
-from .runtime import DomainKind, TypedDomainRequest
-
-
-_SUPPORTED_DOMAINS = frozenset(
-    {DomainKind.LANGUAGE, DomainKind.MATH, DomainKind.VISION}
-)
 _COLOR_NAMES = {
     "black": (0, 0, 0),
     "blue": (0, 0, 255),
@@ -49,22 +50,21 @@ def canonical_json(value: Any) -> str:
         raise ValueError(f"semantic value is not canonical JSON: {exc}") from exc
 
 
-def encode_semantic_request(request: TypedDomainRequest) -> dict[str, Any]:
+def encode_semantic_request(
+    request: TypedDomainRequest,
+    *,
+    catalog: DomainCatalog | None = None,
+) -> dict[str, Any]:
     """Encode one supported raw request without passing through typed IR."""
 
     if not isinstance(request, TypedDomainRequest):
         raise TypeError("semantic request codec requires TypedDomainRequest")
     domain = DomainKind(request.domain)
-    if domain not in _SUPPORTED_DOMAINS:
-        raise ValueError(f"semantic request codec does not support {domain.value}")
     if MigrationMode(request.mode) is MigrationMode.LEGACY:
         raise ValueError("legacy requests cannot enter semantic experience data")
-    if domain is DomainKind.LANGUAGE:
-        payload = _encode_language(request.payload)
-    elif domain is DomainKind.MATH:
-        payload = _encode_math(request.payload)
-    else:
-        payload = _encode_vision(request.payload)
+    spec = _semantic_spec(domain, catalog)
+    assert spec.semantic_codec is not None
+    payload = dict(spec.semantic_codec.encode(request.payload))
     return {"domain": domain.value, "payload": payload}
 
 
@@ -73,31 +73,45 @@ def decode_semantic_request(
     payload: Mapping[str, Any],
     *,
     mode: MigrationMode | str = MigrationMode.SHADOW,
+    catalog: DomainCatalog | None = None,
 ) -> TypedDomainRequest:
     """Decode the canonical LMV payload used by benchmarks and experience data."""
 
     resolved_domain = DomainKind(domain)
-    if resolved_domain not in _SUPPORTED_DOMAINS:
-        raise ValueError(
-            f"semantic request codec does not support {resolved_domain.value}"
-        )
     if not isinstance(payload, Mapping):
         raise TypeError("semantic request payload must be an object")
     resolved_mode = MigrationMode(mode)
     if resolved_mode is MigrationMode.LEGACY:
         raise ValueError("legacy requests cannot enter semantic experience data")
-    if resolved_domain is DomainKind.LANGUAGE:
-        decoded = _decode_language(payload)
-    elif resolved_domain is DomainKind.MATH:
-        decoded = _decode_math(payload)
-    else:
-        decoded = _decode_vision(payload)
+    spec = _semantic_spec(resolved_domain, catalog)
+    assert spec.semantic_codec is not None
+    decoded = spec.semantic_codec.decode(payload)
     return TypedDomainRequest(resolved_domain, decoded, resolved_mode)
 
 
-def semantic_request_digest(request: TypedDomainRequest) -> str:
-    encoded = encode_semantic_request(request)
+def semantic_request_digest(
+    request: TypedDomainRequest,
+    *,
+    catalog: DomainCatalog | None = None,
+) -> str:
+    encoded = encode_semantic_request(request, catalog=catalog)
     return sha256(canonical_json(encoded).encode("utf-8")).hexdigest()
+
+
+def _semantic_spec(domain: DomainKind, catalog: DomainCatalog | None):
+    active = catalog or _default_domain_catalog()
+    spec = active.require(domain)
+    if spec.semantic_codec is None:
+        raise ValueError(f"semantic request codec does not support {domain.value}")
+    return spec
+
+
+@lru_cache(maxsize=1)
+def _default_domain_catalog() -> DomainCatalog:
+    # Imported lazily so default_domains can bind the codec objects below.
+    from .default_domains import create_default_domain_catalog
+
+    return create_default_domain_catalog()
 
 
 def _encode_language(value: str | LanguageTextProblem) -> dict[str, Any]:
@@ -331,3 +345,20 @@ def _string_field(
     if not isinstance(resolved, str):
         raise TypeError(f"vision semantic {name} must be a string")
     return resolved
+
+
+LANGUAGE_SEMANTIC_CODEC = FunctionSemanticCodec(
+    "language-v1",
+    _encode_language,
+    _decode_language,
+)
+MATH_SEMANTIC_CODEC = FunctionSemanticCodec(
+    "math-v1",
+    _encode_math,
+    _decode_math,
+)
+VISION_SEMANTIC_CODEC = FunctionSemanticCodec(
+    "vision-raster-v1",
+    _encode_vision,
+    _decode_vision,
+)
