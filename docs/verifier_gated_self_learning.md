@@ -267,6 +267,18 @@ fact를 등록하지 않는다. `PrimitiveMacroPolicy`가 현재 실행 가능�
 python tools/eval/evaluate_active_macro_learning.py
 ```
 
+`HierarchicalSelfLearningLoop`는 independently promoted controller와 macro library를
+하나의 `HierarchicalOperatorBrain`으로 결합한다. controller held-out, macro
+validation/held-out, final joint held-out을 분리하며, final set은 두 component의 모델 선택에
+사용되지 않는다. joint가 controller-only와 macro-only보다 모두 적은 expansion을 기록하고
+모든 기존 safety gate를 통과할 때만 combined artifact를 atomic replace한다.
+
+```powershell
+python tools/eval/evaluate_hierarchical_self_learning.py
+```
+
+세부 데이터 흐름과 artifact 계약은 `docs/hierarchical_operator_brain.md`에 있다.
+
 ## Frontier LLM Judge
 
 초기에는 frontier LLM을 teacher 또는 judge로 사용할 수 있다. LLM 출력은 `proposed`

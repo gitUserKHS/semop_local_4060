@@ -107,6 +107,58 @@ class MacroReuseCurriculumSplit:
                 )
 
 
+@dataclass(frozen=True)
+class HierarchicalBrainCurriculumSplit:
+    """Disjoint component and joint splits for a controller-plus-macro brain."""
+
+    controller_training: tuple[SyntheticProblem, ...]
+    controller_heldout: tuple[SyntheticProblem, ...]
+    controller_negative_controls: tuple[SyntheticProblem, ...]
+    macro_training: tuple[SyntheticProblem, ...]
+    macro_validation: tuple[SyntheticProblem, ...]
+    macro_heldout: tuple[SyntheticProblem, ...]
+    macro_negative_controls: tuple[SyntheticProblem, ...]
+    joint_heldout: tuple[SyntheticProblem, ...]
+    joint_negative_controls: tuple[SyntheticProblem, ...]
+
+    def __post_init__(self) -> None:
+        positive_groups = (
+            self.controller_training,
+            self.controller_heldout,
+            self.macro_training,
+            self.macro_validation,
+            self.macro_heldout,
+            self.joint_heldout,
+        )
+        identifiers = [
+            problem.problem_id
+            for group in positive_groups
+            for problem in group
+        ]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("hierarchical brain split problem ids must be disjoint")
+        expected_domains = {"language", "math", "vision"}
+        if any(
+            {problem.domain for problem in group} != expected_domains
+            for group in positive_groups
+        ):
+            raise ValueError(
+                "hierarchical brain positive splits must cover all three domains"
+            )
+        controller_names = {
+            str(problem.instance.metadata["completion_operator"])
+            for problem in self.controller_training + self.controller_heldout
+        }
+        joint_names = {
+            str(problem.instance.metadata["completion_operator"])
+            for problem in self.joint_heldout
+        }
+        if controller_names.intersection(joint_names):
+            raise ValueError(
+                "hierarchical controller and heldout operator names must be disjoint"
+            )
+
+
 @dataclass
 class _SyntheticEntity:
     id: str
@@ -266,6 +318,7 @@ def generate_macro_reuse_transfer_split(
     validation_per_domain: int = 1,
     heldout_per_domain: int = 1,
     seed: int = 0,
+    grounding_offset: int = 0,
 ) -> MacroReuseCurriculumSplit:
     """Generate disjoint grounding splits for retained macro activation."""
 
@@ -275,15 +328,17 @@ def generate_macro_reuse_transfer_split(
         raise ValueError("validation_per_domain must be between 1 and 1,000")
     if not 1 <= heldout_per_domain <= 1_000:
         raise ValueError("heldout_per_domain must be between 1 and 1,000")
+    if not 0 <= grounding_offset < 100_000:
+        raise ValueError("grounding_offset must be between 0 and 99,999")
     builders = (
         ("language", _transfer_language_inheritance),
         ("math", _transfer_math_equation),
         ("vision", _macro_vision_shape),
     )
     partitions = (
-        ("training", examples_per_domain, 0),
-        ("validation", validation_per_domain, 100_000),
-        ("heldout", heldout_per_domain, 200_000),
+        ("training", examples_per_domain, grounding_offset),
+        ("validation", validation_per_domain, 100_000 + grounding_offset),
+        ("heldout", heldout_per_domain, 200_000 + grounding_offset),
     )
     generated: dict[str, list[SyntheticProblem]] = {
         name: [] for name, _count, _offset in partitions
@@ -302,6 +357,79 @@ def generate_macro_reuse_transfer_split(
         validation=tuple(generated["validation"]),
         heldout=heldout,
         negative_controls=generate_symbolic_negative_controls(heldout),
+    )
+
+
+def generate_hierarchical_brain_transfer_split(
+    examples_per_domain: int = 3,
+    *,
+    validation_per_domain: int = 1,
+    heldout_per_domain: int = 1,
+    seed: int = 0,
+) -> HierarchicalBrainCurriculumSplit:
+    """Build component-level and longer joint programs with no name overlap."""
+
+    macro = generate_macro_reuse_transfer_split(
+        examples_per_domain,
+        validation_per_domain=validation_per_domain,
+        heldout_per_domain=heldout_per_domain,
+        seed=seed,
+    )
+    controller_source = generate_macro_reuse_transfer_split(
+        examples_per_domain,
+        validation_per_domain=validation_per_domain,
+        heldout_per_domain=heldout_per_domain,
+        seed=seed + 1,
+        grounding_offset=10_000,
+    )
+    joint_source = generate_macro_reuse_transfer_split(
+        examples_per_domain,
+        validation_per_domain=validation_per_domain,
+        heldout_per_domain=heldout_per_domain,
+        seed=seed + 2,
+        grounding_offset=20_000,
+    )
+    controller_training = tuple(
+        _with_hierarchical_completion_goal(
+            problem,
+            partition="controller-training",
+            local_index=index,
+            source_goal_ready=True,
+        )
+        for index, problem in enumerate(controller_source.training)
+    )
+    controller_heldout = tuple(
+        _with_hierarchical_completion_goal(
+            problem,
+            partition="controller-heldout",
+            local_index=index,
+            source_goal_ready=True,
+        )
+        for index, problem in enumerate(controller_source.heldout)
+    )
+    joint_heldout = tuple(
+        _with_hierarchical_completion_goal(
+            problem,
+            partition="joint-heldout",
+            local_index=index,
+            source_goal_ready=False,
+        )
+        for index, problem in enumerate(joint_source.heldout)
+    )
+    return HierarchicalBrainCurriculumSplit(
+        controller_training=controller_training,
+        controller_heldout=controller_heldout,
+        controller_negative_controls=generate_symbolic_negative_controls(
+            controller_heldout
+        ),
+        macro_training=macro.training,
+        macro_validation=macro.validation,
+        macro_heldout=macro.heldout,
+        macro_negative_controls=macro.negative_controls,
+        joint_heldout=joint_heldout,
+        joint_negative_controls=generate_symbolic_negative_controls(
+            joint_heldout
+        ),
     )
 
 
@@ -594,7 +722,8 @@ def _macro_vision_shape(
     other_name, other = palette[(index + 1) % len(palette)]
     size = 2 + rng.randrange(2)
     partition_offset = (index // 100_000) % 3
-    target_x = 1 + partition_offset
+    grounding_layout = (index % 100_000) // 10_000
+    target_x = 1 + partition_offset + grounding_layout
     distractor_x = target_x + size + 2
     width = distractor_x + 2
     height = size + 2
@@ -721,6 +850,74 @@ def _retag_macro_problem(
         capability=problem.capability,
         structure_key=structure_key,
         difficulty=problem.difficulty,
+    )
+
+
+def _with_hierarchical_completion_goal(
+    problem: SyntheticProblem,
+    *,
+    partition: str,
+    local_index: int,
+    source_goal_ready: bool,
+) -> SyntheticProblem:
+    instance = problem.instance
+    registry = instance.registry
+    source_goal = instance.goals[0].atom
+    predicate = registry.register_predicate(
+        "CERTIFIED_RESULT",
+        tuple(argument.type for argument in source_goal.arguments),
+    )
+    certified = registry.atom(predicate, *source_goal.arguments)
+    operator_name = (
+        f"verify_certified_{partition.replace('-', '_')}_"
+        f"{problem.domain}_{local_index}"
+    )
+    registry.register_operator(
+        Rule(
+            name=operator_name,
+            parameters=(),
+            preconditions=(source_goal,),
+            effects=(certified,),
+            description_ko="검증된 중간 결론을 최종 결과로 승인한다.",
+        ),
+        family="verify",
+        tags=("completion", "shared_operator_family"),
+    )
+    facts = instance.state.facts
+    if source_goal_ready and not instance.state.contains(source_goal):
+        facts = facts + (
+            Fact(
+                source_goal,
+                FactStatus.OBSERVED,
+                "hierarchical_controller_curriculum",
+            ),
+        )
+    state = WorldState(
+        facts=facts,
+        depth=instance.state.depth,
+        path_cost=instance.state.path_cost,
+    )
+    structure_key = f"{problem.domain}:hierarchical_completion:{partition}"
+    extended = replace(
+        instance,
+        state=state,
+        goals=(Goal(certified, label="certified_result"),),
+        metadata={
+            **instance.metadata,
+            "hierarchical_partition": partition,
+            "completion_operator": operator_name,
+            "completion_family": "verify",
+            "source_goal_ready": source_goal_ready,
+            "structure_key": structure_key,
+        },
+    )
+    return SyntheticProblem(
+        problem_id=f"hierarchical-{partition}-{problem.domain}-{local_index}",
+        domain=problem.domain,
+        instance=extended,
+        capability="hierarchical_completion",
+        structure_key=structure_key,
+        difficulty=problem.difficulty + 1,
     )
 
 

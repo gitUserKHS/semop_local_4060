@@ -60,6 +60,13 @@ class ActionPolicy(Protocol):
     ) -> PolicyDecision | Sequence[float]: ...
 
 
+@runtime_checkable
+class RegistryPolicyProvider(Protocol):
+    """Resolve a registry-specific policy without gaining state mutation access."""
+
+    def policy_for(self, registry: KernelRegistry) -> ActionPolicy | None: ...
+
+
 @dataclass(frozen=True)
 class ReplayResult:
     verified: bool
@@ -90,7 +97,7 @@ class OperatorKernel:
         self,
         state: WorldState,
         goals: Sequence[Goal],
-        policy: ActionPolicy | None = None,
+        policy: ActionPolicy | RegistryPolicyProvider | None = None,
         budget: SolveBudget | None = None,
     ) -> SolveResult:
         solve_budget = budget or SolveBudget()
@@ -99,16 +106,44 @@ class OperatorKernel:
             raise KernelError("solve requires at least one goal")
         started = perf_counter()
 
-        if policy is None:
+        provider_failed = False
+        provider_diagnostics: tuple[str, ...] = ()
+        resolved_policy: ActionPolicy | None
+        if isinstance(policy, RegistryPolicyProvider):
+            try:
+                resolved_policy = policy.policy_for(self.registry)
+                if resolved_policy is not None and not isinstance(
+                    resolved_policy,
+                    ActionPolicy,
+                ):
+                    raise TypeError("policy provider returned an invalid policy")
+            except Exception as exc:
+                resolved_policy = None
+                provider_failed = True
+                provider_diagnostics = (
+                    "registry policy provider failed; deterministic search used: "
+                    f"{type(exc).__name__}: {exc}",
+                )
+        else:
+            resolved_policy = policy
+
+        if resolved_policy is None:
             search = self._forward_chain(
                 state, normalized_goals, None, solve_budget, started
             )
-            fallback_used = False
+            if provider_failed:
+                search = replace(
+                    search,
+                    policy_used=True,
+                    policy_failed=True,
+                    diagnostics=provider_diagnostics + search.diagnostics,
+                )
+            fallback_used = provider_failed
         else:
             guided_limit = max(1, int(solve_budget.max_expansions * 0.45))
             guided_budget = replace(solve_budget, max_expansions=guided_limit)
             search = self._forward_chain(
-                state, normalized_goals, policy, guided_budget, started
+                state, normalized_goals, resolved_policy, guided_budget, started
             )
             fallback_used = search.policy_failed
             retryable = search.halt_reason in {

@@ -169,5 +169,8 @@ ground symbol, 수치 또는 픽셀 배치는 달라지지만 primitive program 
 - 장기 task를 스스로 수집하고 계속 실행하는 autonomous agent
 - 실제 사용자 분포의 20/100-shot 학습 완료
 
-다음 단계는 active macro와 tiny controller를 결합하되, 동일한 schema pinning, negative
-control, replay, held-out promotion 계약을 유지하는 것이다.
+active macro와 작은 shared-family controller를 결합하는 실행 경로는
+`HierarchicalOperatorBrain`과 `HierarchicalSelfLearningLoop`에 구현되어 있다. 이 경로는
+controller와 macro를 각자의 독립 held-out에서 먼저 승격하고, 어느 구성요소도 선택에
+사용하지 않은 joint held-out에서 상보성을 다시 검사한다. 자세한 내용은
+`docs/hierarchical_operator_brain.md`를 참고한다.

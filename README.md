@@ -36,6 +36,7 @@ python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
 python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/evaluate_active_macro_learning.py
+python tools/eval/evaluate_hierarchical_self_learning.py
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -70,6 +71,12 @@ language, math, and raster-vision traces, validates them on a separate split, an
 only promoted programs as search priors on held-out groundings. The kernel still
 executes and replays every primitive step; a macro cannot inject a fact or bypass a
 guard.
+`evaluate_hierarchical_self_learning.py` trains and promotes a tiny shared-family
+controller on language only, verifies zero-shot family transfer to math and vision,
+and independently promotes procedural memory. It then evaluates their combination on
+a final joint holdout that neither component used for selection. Registry-specific
+macro activation and controller inference are packed into one portable, hash-checked
+brain artifact.
 
 Optional controller training:
 
@@ -89,6 +96,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/frontier_llm_judge.md`: safe frontier-LLM teacher/judge roles and mandatory verifier/replay boundary
 - `docs/verifier_gated_self_learning.md`: active three-domain curriculum, structural holdout promotion, rollback, and checkpoints
 - `docs/active_macro_learning.md`: primitive-expanded procedural memory, schema pinning, promotion gates, and rollback
+- `docs/hierarchical_operator_brain.md`: shared controller plus procedural memory, independent split gates, and portable brain artifacts
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
@@ -97,6 +105,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_typed_task_discovery.py`: machine-readable task novelty, replay, depth extrapolation, and self-discovery transfer gates
 - `tools/eval/evaluate_semantic_flow_self_learning.py`: machine-readable cross-domain semantic-flow transfer and resource gates
 - `tools/eval/evaluate_active_macro_learning.py`: machine-readable three-domain macro induction, primitive replay, and resource gates
+- `tools/eval/evaluate_hierarchical_self_learning.py`: machine-readable controller/macro/joint ablation and family-transfer gates
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic

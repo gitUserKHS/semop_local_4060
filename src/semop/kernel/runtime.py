@@ -10,7 +10,7 @@ from .domains.language_text import LanguageInputAdapter
 from .domains.linear_equation import MathInputAdapter
 from .domains.composed_scene import SceneThresholdAdapter
 from .domains.raster_vision import VisionInputAdapter
-from .engine import ActionPolicy, OperatorKernel
+from .engine import ActionPolicy, OperatorKernel, RegistryPolicyProvider
 from .model import SolveBudget, SolveResult
 from .proof import render_proof_ko
 
@@ -85,7 +85,7 @@ class UnifiedTypedReasoner:
         self,
         request: TypedDomainRequest,
         *,
-        policy: ActionPolicy | None = None,
+        policy: ActionPolicy | RegistryPolicyProvider | None = None,
         budget: SolveBudget | None = None,
     ) -> UnifiedTypedResult:
         domain = DomainKind(request.domain)
@@ -148,7 +148,7 @@ class UnifiedTypedReasoner:
         self,
         requests: Sequence[TypedDomainRequest],
         *,
-        policy: ActionPolicy | None = None,
+        policy: ActionPolicy | RegistryPolicyProvider | None = None,
         budget: SolveBudget | None = None,
     ) -> tuple[UnifiedTypedResult, ...]:
         return tuple(

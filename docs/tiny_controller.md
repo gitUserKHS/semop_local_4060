@@ -134,6 +134,17 @@ expansion, latency, parameter, and artifact-size gate passes. A rejected candida
 discarded and the incumbent remains active. See `verifier_gated_self_learning.md` for
 the structural split and checkpoint workflow.
 
+The promoted controller can now be combined with independently promoted procedural
+memory through `HierarchicalSelfLearningLoop`. The combined brain resolves a
+registry-specific `PrimitiveMacroPolicy`, while the controller parameters remain
+shared across language, math, and vision. The default leave-domain-out run trains and
+promotes that controller on language only, then tests unseen math and vision operator
+names. A final joint holdout is used only after the controller and macro components
+have passed their own holdouts. The current reproducible result uses the 16-parameter
+sparse controller; it validates the composition contract but is not evidence that the
+full recurrent model has completed this experiment. See
+`hierarchical_operator_brain.md`.
+
 Run an end-to-end verifier-generated training smoke test with a deliberately small
 debug architecture:
 

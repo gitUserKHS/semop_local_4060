@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from .model import (
@@ -239,10 +239,7 @@ class MdlMacroLibrary:
     def save(self, path: str | Path) -> Path:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "format_version": self.FORMAT_VERSION,
-            "records": [asdict(record) for record in self.records],
-        }
+        payload = self.to_payload()
         temporary = destination.with_name(
             f".{destination.name}.{uuid4().hex}.tmp"
         )
@@ -259,6 +256,16 @@ class MdlMacroLibrary:
     @classmethod
     def load(cls, path: str | Path) -> "MdlMacroLibrary":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls.from_payload(payload)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "format_version": self.FORMAT_VERSION,
+            "records": [asdict(record) for record in self.records],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "MdlMacroLibrary":
         format_version = payload.get("format_version")
         if format_version not in {1, cls.FORMAT_VERSION}:
             raise ValueError("unsupported macro library format")

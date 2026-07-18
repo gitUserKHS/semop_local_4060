@@ -22,9 +22,11 @@ class PrimitiveMacroPolicy:
     ) -> None:
         if not math.isfinite(macro_bonus) or macro_bonus <= 0:
             raise ValueError("macro bonus must be finite and positive")
+        self.registry = registry
         self.activation: MacroActivationResult = library.activate(registry)
         self.base_policy = base_policy
         self.macro_bonus = float(macro_bonus)
+        self._relevance_cache: dict[frozenset[str], frozenset[str]] = {}
 
     @property
     def active_program_count(self) -> int:
@@ -46,10 +48,11 @@ class PrimitiveMacroPolicy:
             _atom_type_signature(goal.atom.predicate.name, goal.atom.arguments)
             for goal in goals
         }
+        relevant_signatures = self._backward_relevant_signatures(goal_signatures)
         relevant = tuple(
             program
             for program in self.activation.programs
-            if goal_signatures.intersection(program.effect_signature)
+            if relevant_signatures.intersection(program.effect_signature)
         )
         macro_scores = [0.0] * len(action_tuple)
         for program in relevant:
@@ -93,6 +96,39 @@ class PrimitiveMacroPolicy:
             state_value=base.state_value,
             action_limit=1 if unique_macro_top else base.action_limit,
         )
+
+    def _backward_relevant_signatures(
+        self,
+        goal_signatures: set[str],
+    ) -> frozenset[str]:
+        cache_key = frozenset(goal_signatures)
+        cached = self._relevance_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        relevant = set(goal_signatures)
+        changed = True
+        while changed:
+            changed = False
+            for operator in sorted(
+                self.registry.operators.values(),
+                key=lambda item: item.name,
+            ):
+                effects = {
+                    _atom_type_signature(atom.predicate.name, atom.arguments)
+                    for atom in operator.effects
+                }
+                if not effects.intersection(relevant):
+                    continue
+                before = len(relevant)
+                relevant.update(
+                    _atom_type_signature(atom.predicate.name, atom.arguments)
+                    for atom in operator.preconditions
+                )
+                changed = changed or len(relevant) != before
+        resolved = frozenset(relevant)
+        self._relevance_cache[cache_key] = resolved
+        return resolved
 
     def _base_decision(
         self,

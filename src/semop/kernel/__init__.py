@@ -8,6 +8,7 @@ from .engine import (
     ActionPolicy,
     OperatorKernel,
     PolicyDecision,
+    RegistryPolicyProvider,
     ReplayResult,
 )
 from .composition import (
@@ -162,10 +163,12 @@ from .traces import (
     hard_negative_records,
 )
 from .synthesis import (
+    HierarchicalBrainCurriculumSplit,
     MacroReuseCurriculumSplit,
     SyntheticCurriculumSplit,
     SyntheticProblem,
     generate_lmv_structural_transfer_split,
+    generate_hierarchical_brain_transfer_split,
     generate_macro_reuse_transfer_split,
     generate_semantic_flow_transfer_split,
     generate_symbolic_negative_controls,
@@ -190,6 +193,13 @@ from .self_learning import (
     learning_tasks_from_synthetic,
     summarize_task_evaluations,
     task_evaluation_from_result,
+)
+from .brain import HierarchicalOperatorBrain
+from .hierarchical_learning import (
+    HierarchicalLearningBudget,
+    HierarchicalLearningResult,
+    HierarchicalPolicyAblation,
+    HierarchicalSelfLearningLoop,
 )
 from .curriculum import (
     ActiveCurriculumConfig,
@@ -248,6 +258,12 @@ __all__ = [
     "GoalDirectedPolicy",
     "GroundAction",
     "GraphAdapterResult",
+    "HierarchicalBrainCurriculumSplit",
+    "HierarchicalLearningBudget",
+    "HierarchicalLearningResult",
+    "HierarchicalOperatorBrain",
+    "HierarchicalPolicyAblation",
+    "HierarchicalSelfLearningLoop",
     "JudgeBoundaryError",
     "JudgeCandidate",
     "JudgeDecision",
@@ -309,6 +325,7 @@ __all__ = [
     "RasterVisionProblem",
     "RegistryCompositionError",
     "RegistryImport",
+    "RegistryPolicyProvider",
     "Rule",
     "SceneCountCondition",
     "SceneThresholdAdapter",
@@ -370,6 +387,7 @@ __all__ = [
     "compose_domain_instances",
     "audit_structural_split",
     "generate_lmv_structural_transfer_split",
+    "generate_hierarchical_brain_transfer_split",
     "generate_macro_reuse_transfer_split",
     "generate_semantic_flow_transfer_split",
     "hard_negative_records",

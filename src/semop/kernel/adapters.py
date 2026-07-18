@@ -12,7 +12,7 @@ from .catalog import (
     register_requirement_reasoning,
 )
 from .domains.base import DomainInstance
-from .engine import ActionPolicy, OperatorKernel
+from .engine import ActionPolicy, OperatorKernel, RegistryPolicyProvider
 from .model import Fact, FactStatus, Goal, SolveBudget, SolveResult, Symbol, WorldState
 from .registry import KernelRegistry
 
@@ -235,7 +235,7 @@ class TypedKernelBridge:
         graph: "StructuredMeaningGraph",
         *,
         mode: str | MigrationMode = MigrationMode.SHADOW,
-        policy: ActionPolicy | None = None,
+        policy: ActionPolicy | RegistryPolicyProvider | None = None,
         budget: SolveBudget | None = None,
     ) -> BridgeResult:
         execution_mode = MigrationMode(mode)

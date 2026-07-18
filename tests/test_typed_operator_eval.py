@@ -16,6 +16,9 @@ for path in (SRC, EVAL):
 
 from evaluate_low_resource_transfer import evaluate
 from evaluate_active_macro_learning import evaluate_active_macro_learning
+from evaluate_hierarchical_self_learning import (
+    evaluate_hierarchical_self_learning,
+)
 from evaluate_semantic_flow_self_learning import (
     evaluate_semantic_flow_self_learning,
 )
@@ -25,6 +28,45 @@ from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_hierarchical_self_learning_report_passes_all_gates(self) -> None:
+        report = evaluate_hierarchical_self_learning(
+            examples_per_domain=3,
+            validation_per_domain=1,
+            heldout_per_domain=1,
+            seed=23,
+            controller_domain="language",
+            min_joint_expansion_reduction=0.50,
+        )
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["split"]["controller_training_pool"], 9)
+        self.assertEqual(report["split"]["controller_training_selected"], 3)
+        self.assertEqual(
+            report["split"]["zero_shot_controller_domains"],
+            ("math", "vision"),
+        )
+        self.assertEqual(report["split"]["macro_training"], 9)
+        self.assertEqual(report["split"]["joint_heldout_positive"], 3)
+        self.assertTrue(report["learning"]["promoted"])
+        self.assertEqual(report["learning"]["controller_parameters"], 16)
+        self.assertEqual(report["learning"]["active_macros"], 3)
+        self.assertEqual(
+            report["ab"]["positive_expansions"],
+            {
+                "deterministic": 22,
+                "controller_only": 14,
+                "macro_only": 22,
+                "joint": 10,
+            },
+        )
+        self.assertGreaterEqual(
+            report["ab"]["joint_expansion_reduction"],
+            0.50,
+        )
+        self.assertEqual(report["ablations"]["joint"]["proof_soundness"], 1.0)
+        self.assertEqual(report["ablations"]["joint"]["false_positives"], 0)
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_active_macro_learning_report_passes_all_gates(self) -> None:
         report = evaluate_active_macro_learning(
             examples_per_domain=3,
