@@ -17,7 +17,7 @@ The resource doctrine is CPU-first and sample-efficient: the symbolic core shoul
 A verifier-first typed operator core now runs beside the legacy runtime. It turns domain inputs into immutable typed facts, uses goal-relevant monotonic agenda chaining instead of enumerating fact subsets, slices the first supporting operator DAG, and replays every successful proof before returning it. The pipeline defaults to `shadow`: legacy output remains user-facing while typed proof, timing, allocation, and expansion measurements are written to the audit trace.
 A shared typed grounding boundary now records language, math, and vision inputs as candidate, authority decision, fact, and immutable trace. Neural and heuristic producers can only propose; deterministic verifiers and explicit human reviews create the accept/reject examples used by later grounding-policy learning.
 A dependency-free sparse grounding head now learns `ACCEPT/REJECT/ABSTAIN` from those independently verified examples. It shares typed and sensor-contract features across language, math, and vision, forces abstention on unseen sensor contracts, replays old labels during online updates, and promotes a new generation only after an untouched validation gate. Even an accepted prediction remains `PROPOSED` until a separate verifier or human promotes it.
-A candidate-level semantic bridge now replaces the artificial sensor signal with controlled raw requirement text, exact expressions, and RGB rasters passed through the production adapters. Exact candidate reviews bind the case, typed atom, label, and human attestation to one digest. In the fixed programmatic-oracle run, 20 labels per domain reach 91.7% untouched completion with 344 parameters and zero false accepts; 5 labels fail coverage and roll back. Human semantic gold remains at zero and is reported as `not_evaluated`.
+A candidate-level semantic bridge now replaces the artificial sensor signal with controlled raw requirement text, exact expressions, and RGB rasters passed through the production adapters. Exact candidate reviews bind the case, typed atom, label, and human attestation to one digest. In the fixed repeated-template run, 20 labels per domain reach 91.7% completion with 344 parameters and zero false accepts; this is not a structural holdout result. A newer structural ablation reaches 60.0% completion at 20 labels and 72.5% at 100 with the full profile. Removing surface text changes neither result, while removing only the shared target-relative support margin already causes vision false accepts and fail-closed rollback. Human semantic gold remains at zero and is reported as `not_evaluated`.
 A dependency-free raster adapter now adds a narrow real-pixel path: it detects small color components, verifies exact bounding-box or touching relations, keeps centroid-only guesses as `proposed`, and sends the resulting facts through the same operator proof replay.
 A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
 The current refactor direction is premise-first: candidate retrieval, premise proposal, and premise validation now precede later answer selection, CP code generation, and cross-modal alignment.
@@ -45,6 +45,7 @@ python tools/eval/evaluate_semantic_benchmark.py
 python tools/eval/evaluate_semantic_benchmark.py --gate-semantic-correctness 1.0 --gate-min-gold 3 --gate-min-gold-per-domain 1 --gate-domains language,math,vision
 python tools/eval/evaluate_grounding_self_learning.py --checkpoint-root artifacts/grounding_self_learning --output artifacts/grounding_self_learning/report.json
 python tools/eval/evaluate_semantic_grounding_learning.py --checkpoint-root artifacts/semantic_grounding_learning --output artifacts/semantic_grounding_learning/report.json
+python tools/eval/evaluate_semantic_grounding_ablation.py --output artifacts/semantic_grounding_ablation_v1.json
 python tools/eval/review_semantic_grounding.py --case-id language-ready-two-requirements
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db stats
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db list --status pending
@@ -134,6 +135,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/typed_grounding_boundary.md`: shared language/math/vision grounding trace, authority rules, review promotion, and research basis
 - `docs/sparse_grounding_self_learning.md`: shared accept/reject/abstain policy, continual replay, risk-coverage gates, evaluation, and honest limits
 - `docs/semantic_grounding_self_learning.md`: exact candidate reviews and real-adapter 0/5/20/100 semantic grounding evaluation
+- `docs/semantic_data_acquisition.md`: pinned public sources, audited downloads, and generated/model-proposed data trust rules
 - `docs/lmv_semantic_benchmark.md`: digest-bound review workflow and authority-separated three-domain semantic evaluation
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
@@ -158,6 +160,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_hierarchical_self_learning.py`: machine-readable controller/macro/joint ablation and family-transfer gates
 - `tools/eval/evaluate_raw_grounded_self_learning.py`: language-only raw training followed by untouched raw math/pixel transfer gates
 - `tools/eval/evaluate_semantic_grounding_learning.py`: controlled raw LMV candidate learning, rollback, untouched test, and human-review audit
+- `tools/eval/evaluate_semantic_grounding_ablation.py`: surface/margin shortcut audit against unseen compositions and raster structures
 - `tools/eval/review_semantic_grounding.py`: inspect and attest one exact typed candidate label
 - `tools/eval/review_typed_experience.py`: inspect, attest, review, and export persistent typed runtime experience
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation

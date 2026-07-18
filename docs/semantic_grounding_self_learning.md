@@ -168,6 +168,57 @@ coverage와 selective accuracy가 각각 100%였다. 그러나 candidate-level h
 open-domain 성능으로 보고하지 않는다. report의 `human_semantic_gate`는 정확히
 `not_evaluated`다.
 
+### Structural shortcut ablation
+
+위 91.7%와 100% test는 raw input digest는 다르지만 학습과 같은 6개 언어/수학,
+8개 비전 template을 반복한다. 따라서 구조 전이 결과로 해석할 수 없다. 이 한계를
+검사하기 위해 다음 holdout을 별도로 추가했다.
+
+- 언어: 세 전제 결합, 문장형 `requires`, 전제 순서 변경, 세 전제 내부 모순
+- 수학: 양변 선형식, 더 깊은 exact expression, 음수 순서, zero-product near miss
+- 비전: 3x3 도형, 수직 관계, 세 component, 같은 색의 분리된 두 객체, 큰 canvas
+
+```powershell
+python tools/eval/evaluate_semantic_grounding_ablation.py `
+  --output artifacts/semantic_grounding_ablation_v1.json
+```
+
+고정 seed의 structural test는 40개/도메인을 사용했다. `completion`은 전체 사례 중
+정답을 결정한 비율이며, 탈락한 후보는 저장하지 않고 abstain 정책으로 되돌렸다.
+
+| profile | labels/domain | completion | coverage | selective accuracy | false accepts | retained |
+| --- | ---: | ---: | ---: | ---: | ---: | :---: |
+| full | 20 | 60.0% | 60.0% | 100% | 0 | yes |
+| full | 100 | 72.5% | 77.5% | 93.5% | 0 | yes |
+| domain-local margin | 20 | 60.0% | 60.0% | 100% | 0 | yes |
+| domain-local margin | 100 | 63.3% | 63.3% | 100% | 0 | yes |
+| no shared support margin | 20 | 56.7% | 63.3% | 89.5% | 8 | no |
+| no shared support margin | 100 | 56.7% | 60.0% | 94.4% | 4 | no |
+| no margin | 20 | 50.0% | 53.3% | 93.8% | 4 | no |
+| no margin | 100 | 53.3% | 66.7% | 80.0% | 16 | no |
+| no surface | 20 | 60.0% | 60.0% | 100% | 0 | yes |
+| no surface | 100 | 72.5% | 77.5% | 93.5% | 0 | yes |
+| primitives only | 20 | 56.7% | 63.3% | 89.5% | 8 | no |
+| primitives only | 100 | 61.7% | 65.0% | 94.9% | 4 | no |
+
+현재 결론은 두 가지다.
+
+1. surface text를 제거해도 결과가 같으므로 이 설정에서 문구 hash 암기 증거는 없다.
+2. 도메인별 fill/count/direction/area 특징은 보존하고 공통
+   `operator.support_margin`만 제거해도 오답 수용은 모두 vision에서 나왔다.
+3. 20-shot 오류는 중앙 픽셀이 하나 빠진 3x3 square 4개와 `red` 객체가 2개인데
+   1개라고 한 count 반례 4개였다. 100-shot에서는 count 반례 4개만 남았다.
+
+공통 support margin은 gold label이나 proof 결과를 읽은 값은 아니며 typed input에서
+결정론적으로 계산된다. 하지만 predicate의 성립 방향으로 이미 정규화된
+target-relative 값이므로, 현재 성능의 중요한 부분을 hand-authored operator가 맡고
+있다는 사실은 분명하다. sparse head가 원시 비전 의미를 새로 획득했다고 해석하면
+안 된다.
+
+따라서 report의 `shortcut_robustness`는 `false`다. full 정책이 structural gate를
+통과했다는 사실과, primitive-only 일반화가 해결됐다는 주장은 서로 다르다. 후자는
+아직 달성되지 않았다.
+
 ## 연구 연결
 
 - [Concept Bottleneck Models](https://proceedings.mlr.press/v119/koh20a.html)은 raw
@@ -200,7 +251,7 @@ open-domain 성능으로 보고하지 않는다. report의 `human_semantic_gate`
    추가한다.
 5. 비전은 작은 learned object encoder의 자연 이미지 proposal을 넣되 계속
    `PROPOSED`로 유지한다.
-6. shared margin 제거, domain-only margin, surface hash 제거 ablation을 수행한다.
+6. 비전 primitive를 객체-관계 operator token으로 분해하고 no-margin false accept를 0으로 줄인다.
 7. grounding 선택 정확도와 최종 operator-search solve rate를 별도로 측정한다.
 
 ## 검증
@@ -208,6 +259,7 @@ open-domain 성능으로 보고하지 않는다. report의 `human_semantic_gate`
 ```powershell
 python -m pytest tests/test_typed_operator_semantic_grounding.py -q
 python -m pytest tests/test_typed_operator_semantic_grounding_eval.py -q
+python -m pytest tests/test_typed_operator_semantic_grounding_ablation.py -q
 python -m pytest -k typed_operator
 python -m pytest
 ```

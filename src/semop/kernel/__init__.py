@@ -336,9 +336,15 @@ from .semantic_grounding import (
     build_semantic_grounding_targets,
     create_semantic_grounding_review,
     generate_controlled_semantic_benchmark,
+    generate_structural_semantic_benchmark,
     load_semantic_grounding_reviews,
     programmatic_semantic_learning_examples,
     write_semantic_grounding_review,
+)
+from .semantic_grounding_features import (
+    SemanticGroundingFeatureProfile,
+    profile_semantic_grounding_candidate,
+    profile_semantic_grounding_examples,
 )
 from .rule_discovery import (
     RuleActivationIssue,
@@ -664,11 +670,15 @@ __all__ = [
     "SemanticGroundingReview",
     "SemanticGroundingReviewDecision",
     "SemanticGroundingTarget",
+    "SemanticGroundingFeatureProfile",
     "build_semantic_grounding_target",
     "build_semantic_grounding_targets",
     "create_semantic_grounding_review",
     "generate_controlled_semantic_benchmark",
+    "generate_structural_semantic_benchmark",
     "load_semantic_grounding_reviews",
     "programmatic_semantic_learning_examples",
+    "profile_semantic_grounding_candidate",
+    "profile_semantic_grounding_examples",
     "write_semantic_grounding_review",
 ]

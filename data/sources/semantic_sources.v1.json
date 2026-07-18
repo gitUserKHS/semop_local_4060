@@ -1,0 +1,56 @@
+{
+  "schema_version": "semop.dataset-sources.v1",
+  "sources": [
+    {
+      "source_id": "allenai-ruletaker-generator",
+      "domain": "language",
+      "title": "RuleTaker theory generator and theorem-prover labeling tools",
+      "homepage_url": "https://github.com/allenai/ruletaker",
+      "artifact_url": "https://github.com/allenai/ruletaker/archive/abaacec9364992eff5ec4555b837e20fee2f2ff0.zip",
+      "artifact_filename": "ruletaker-abaacec9364992eff5ec4555b837e20fee2f2ff0.zip",
+      "revision": "abaacec9364992eff5ec4555b837e20fee2f2ff0",
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://github.com/allenai/ruletaker/blob/abaacec9364992eff5ec4555b837e20fee2f2ff0/LICENSE",
+      "max_bytes": 8388608,
+      "label_authority": "published_label",
+      "use_policy": "verifier_required",
+      "adapter_id": "ruletaker-v1",
+      "expected_sha256": "749fc4bf74d7409ca19e7cfff76c60c142fccb58076683abf9b347bd9de2ad26",
+      "notes": "Use the pinned generator and theorem-prover output; imported English-to-typed mappings remain proposals until SemOp replay or review."
+    },
+    {
+      "source_id": "deepmind-mathematics-generator",
+      "domain": "math",
+      "title": "DeepMind Mathematics Dataset generator",
+      "homepage_url": "https://github.com/google-deepmind/mathematics_dataset",
+      "artifact_url": "https://github.com/google-deepmind/mathematics_dataset/archive/427f45075f84b8b9774950196ad63867ca20ffb3.zip",
+      "artifact_filename": "mathematics-dataset-427f45075f84b8b9774950196ad63867ca20ffb3.zip",
+      "revision": "427f45075f84b8b9774950196ad63867ca20ffb3",
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://github.com/google-deepmind/mathematics_dataset/blob/427f45075f84b8b9774950196ad63867ca20ffb3/LICENSE",
+      "max_bytes": 8388608,
+      "label_authority": "published_label",
+      "use_policy": "verifier_required",
+      "adapter_id": "deepmind-math-v1",
+      "expected_sha256": "a0cadf3c1a324f3141e67f0310bdb31ac5add1f0a73056d3fe3b361d5e027a63",
+      "notes": "Generate bounded exact-arithmetic subsets locally and re-evaluate every answer with SemOp's exact parser before admission."
+    },
+    {
+      "source_id": "deepmind-dsprites",
+      "domain": "vision",
+      "title": "dSprites images and ground-truth latent factors",
+      "homepage_url": "https://github.com/google-deepmind/dsprites-dataset",
+      "artifact_url": "https://raw.githubusercontent.com/google-deepmind/dsprites-dataset/fa310c66517cfc1939d77fe17c725154efc97127/dsprites_ndarray_co1sh3sc6or40x32y32_64x64.npz",
+      "artifact_filename": "dsprites-fa310c66517cfc1939d77fe17c725154efc97127.npz",
+      "revision": "fa310c66517cfc1939d77fe17c725154efc97127",
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://github.com/google-deepmind/dsprites-dataset/blob/fa310c66517cfc1939d77fe17c725154efc97127/LICENSE",
+      "max_bytes": 41943040,
+      "label_authority": "published_label",
+      "use_policy": "verifier_required",
+      "adapter_id": "dsprites-v1",
+      "expected_sha256": "857dc001287e8efa226e0025fac6b29e5745c621b380b0d3363e4e33f4e28fa2",
+      "notes": "Subsample deterministic latent-factor combinations; typed visual predicates require an audited adapter and held-out factor combinations."
+    }
+  ]
+}

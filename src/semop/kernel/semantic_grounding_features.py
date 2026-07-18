@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 from collections import Counter
+from enum import Enum
 from fractions import Fraction
+import json
 
 from .contracts import DomainInstance
+from .grounding import (
+    GroundingCandidate,
+    GroundingLearningExample,
+    grounding_payload_digest,
+    make_grounding_candidate,
+)
 from .runtime import DomainKind
 from .semantic_benchmark import SemanticBenchmarkCase
+
+
+class SemanticGroundingFeatureProfile(str, Enum):
+    """Label-independent views used to audit grounding-policy shortcuts."""
+
+    FULL = "full"
+    DOMAIN_LOCAL_MARGIN = "domain_local_margin"
+    NO_SHARED_MARGIN = "no_shared_margin"
+    NO_MARGIN = "no_margin"
+    NO_SURFACE = "no_surface"
+    PRIMITIVES_ONLY = "primitives_only"
 
 
 def semantic_sensor_features(
@@ -48,6 +67,101 @@ def semantic_candidate_statement(
             f"{len(instance.metadata.get('detected_objects', ()))} components"
         )
     return f"{surface} -> proposed typed goal {goal}"
+
+
+def profile_semantic_grounding_candidate(
+    candidate: GroundingCandidate,
+    profile: SemanticGroundingFeatureProfile | str,
+) -> GroundingCandidate:
+    """Create one deterministic, label-free ablation view of a candidate."""
+
+    selected = SemanticGroundingFeatureProfile(profile)
+    if selected is SemanticGroundingFeatureProfile.FULL:
+        return candidate
+
+    features = candidate.sensor_features
+    if selected is SemanticGroundingFeatureProfile.DOMAIN_LOCAL_MARGIN:
+        features = tuple(
+            (
+                f"{candidate.domain}.support_margin"
+                if name == "operator.support_margin"
+                else name,
+                value,
+            )
+            for name, value in features
+        )
+    elif selected in {
+        SemanticGroundingFeatureProfile.NO_SHARED_MARGIN,
+        SemanticGroundingFeatureProfile.PRIMITIVES_ONLY,
+    }:
+        features = tuple(
+            (name, value)
+            for name, value in features
+            if name != "operator.support_margin"
+        )
+    elif selected is SemanticGroundingFeatureProfile.NO_MARGIN:
+        features = tuple(
+            (name, value)
+            for name, value in features
+            if not _is_margin_feature(name)
+        )
+
+    statement = candidate.statement
+    if selected in {
+        SemanticGroundingFeatureProfile.NO_SURFACE,
+        SemanticGroundingFeatureProfile.PRIMITIVES_ONLY,
+    }:
+        statement = "typed grounding candidate"
+
+    return make_grounding_candidate(
+        domain=candidate.domain,
+        statement=statement,
+        atom=candidate.atom,
+        producer_id=candidate.producer_id,
+        source=candidate.source,
+        input_digest=candidate.input_digest,
+        evidence=candidate.evidence,
+        assertion_status=candidate.assertion_status,
+        confidence=candidate.confidence,
+        sensor_features=features,
+    )
+
+
+def profile_semantic_grounding_examples(
+    examples: tuple[GroundingLearningExample, ...]
+    | list[GroundingLearningExample],
+    profile: SemanticGroundingFeatureProfile | str,
+) -> tuple[GroundingLearningExample, ...]:
+    """Apply a feature profile while retaining verifier/reviewer label lineage."""
+
+    selected = SemanticGroundingFeatureProfile(profile)
+    if selected is SemanticGroundingFeatureProfile.FULL:
+        return tuple(examples)
+    transformed: list[GroundingLearningExample] = []
+    for example in examples:
+        candidate = profile_semantic_grounding_candidate(example.candidate, selected)
+        record_digest = grounding_payload_digest(
+            json.dumps(
+                {
+                    "candidate_digest": candidate.candidate_digest,
+                    "original_record_digest": example.record_digest,
+                    "profile": selected.value,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        transformed.append(
+            GroundingLearningExample(
+                candidate=candidate,
+                label=example.label,
+                authority=example.authority,
+                record_digest=record_digest,
+                weight=example.weight,
+            )
+        )
+    return tuple(transformed)
 
 
 def _language_sensor_features(
@@ -238,4 +352,14 @@ def _relation_name(operator: str) -> str:
     }[operator]
 
 
-__all__ = ["semantic_candidate_statement", "semantic_sensor_features"]
+def _is_margin_feature(name: str) -> bool:
+    return "margin" in name.lower()
+
+
+__all__ = [
+    "SemanticGroundingFeatureProfile",
+    "profile_semantic_grounding_candidate",
+    "profile_semantic_grounding_examples",
+    "semantic_candidate_statement",
+    "semantic_sensor_features",
+]

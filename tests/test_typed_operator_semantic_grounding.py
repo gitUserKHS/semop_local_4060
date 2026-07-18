@@ -11,15 +11,19 @@ from semop.kernel import (
     GroundingLabel,
     LearningSplit,
     SemanticGroundingCorpus,
+    SemanticGroundingFeatureProfile,
     SemanticGroundingReviewDecision,
     SemanticReviewDecision,
     build_semantic_grounding_target,
     create_semantic_grounding_review,
     create_semantic_review,
     generate_controlled_semantic_benchmark,
+    generate_structural_semantic_benchmark,
     load_semantic_benchmark,
     load_semantic_grounding_reviews,
     programmatic_semantic_learning_examples,
+    profile_semantic_grounding_candidate,
+    profile_semantic_grounding_examples,
     write_semantic_grounding_review,
 )
 
@@ -175,3 +179,116 @@ def test_programmatic_raw_lmv_cases_produce_balanced_verified_examples() -> None
 def test_programmatic_oracle_contract_is_required() -> None:
     with pytest.raises(ValueError, match="lacks the programmatic oracle contract"):
         programmatic_semantic_learning_examples(_benchmark())
+
+
+def test_grounding_feature_profiles_are_label_independent_and_deterministic() -> None:
+    benchmark = generate_controlled_semantic_benchmark(
+        per_domain=8,
+        split=LearningSplit.TRAIN,
+        seed=17,
+        namespace="profile",
+    )
+    examples = programmatic_semantic_learning_examples(benchmark)
+    original = next(
+        example
+        for example in examples
+        if "operator.support_margin" in dict(example.candidate.sensor_features)
+    )
+
+    full = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.FULL
+    )[0]
+    local = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.DOMAIN_LOCAL_MARGIN
+    )[0]
+    no_shared = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.NO_SHARED_MARGIN
+    )[0]
+    no_margin = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.NO_MARGIN
+    )[0]
+    no_surface = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.NO_SURFACE
+    )[0]
+    primitives = profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.PRIMITIVES_ONLY
+    )[0]
+
+    assert full is original
+    assert "operator.support_margin" not in dict(local.candidate.sensor_features)
+    assert f"{original.candidate.domain}.support_margin" in dict(
+        local.candidate.sensor_features
+    )
+    assert "operator.support_margin" not in dict(
+        no_shared.candidate.sensor_features
+    )
+    assert all(
+        "margin" not in name for name, _value in no_margin.candidate.sensor_features
+    )
+    assert no_surface.candidate.statement == "typed grounding candidate"
+    assert no_surface.candidate.sensor_features == original.candidate.sensor_features
+    assert primitives.candidate.statement == "typed grounding candidate"
+    assert "operator.support_margin" not in dict(
+        primitives.candidate.sensor_features
+    )
+    assert local.label is original.label
+    assert local.authority is original.authority
+    assert local.record_digest != original.record_digest
+    assert profile_semantic_grounding_examples(
+        [original], SemanticGroundingFeatureProfile.DOMAIN_LOCAL_MARGIN
+    )[0] == local
+
+
+def test_candidate_profile_does_not_read_a_training_label() -> None:
+    benchmark = generate_controlled_semantic_benchmark(
+        per_domain=2,
+        split=LearningSplit.TRAIN,
+        seed=23,
+        namespace="candidate-profile",
+    )
+    candidate = programmatic_semantic_learning_examples(benchmark)[0].candidate
+
+    first = profile_semantic_grounding_candidate(
+        candidate, SemanticGroundingFeatureProfile.PRIMITIVES_ONLY
+    )
+    second = profile_semantic_grounding_candidate(
+        candidate, SemanticGroundingFeatureProfile.PRIMITIVES_ONLY
+    )
+
+    assert first == second
+    assert first.atom == candidate.atom
+    assert first.input_digest == candidate.input_digest
+
+
+def test_structural_holdout_is_disjoint_and_replay_verified() -> None:
+    controlled = generate_controlled_semantic_benchmark(
+        per_domain=10,
+        split=LearningSplit.TRAIN,
+        seed=29,
+        namespace="controlled-train",
+    )
+    structural = generate_structural_semantic_benchmark(
+        per_domain=10,
+        split=LearningSplit.HELDOUT,
+        seed=31,
+        namespace="structural-test",
+    )
+
+    examples = programmatic_semantic_learning_examples(structural)
+
+    assert len(examples) == 30
+    assert {case.phenomenon for case in controlled.cases}.isdisjoint(
+        {case.phenomenon for case in structural.cases}
+    )
+    assert {case.digest for case in controlled.cases}.isdisjoint(
+        {case.digest for case in structural.cases}
+    )
+    assert all("structural_holdout" in case.tags for case in structural.cases)
+    assert {example.label for example in examples} == {
+        GroundingLabel.ACCEPT,
+        GroundingLabel.REJECT,
+    }
+    assert all(
+        example.authority is GroundingAuthority.EXTERNAL_VERIFIER
+        for example in examples
+    )

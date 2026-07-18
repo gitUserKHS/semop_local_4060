@@ -24,6 +24,7 @@ from .semantic_codec import canonical_json, semantic_request_digest
 from .semantic_grounding_cases import (
     PROGRAMMATIC_ORACLE_ID,
     generate_controlled_semantic_benchmark,
+    generate_structural_semantic_benchmark,
 )
 from .semantic_grounding_features import (
     semantic_candidate_statement,
@@ -603,6 +604,7 @@ __all__ = [
     "build_semantic_grounding_targets",
     "create_semantic_grounding_review",
     "generate_controlled_semantic_benchmark",
+    "generate_structural_semantic_benchmark",
     "load_semantic_grounding_reviews",
     "programmatic_semantic_learning_examples",
     "write_semantic_grounding_review",
