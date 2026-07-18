@@ -1,5 +1,25 @@
 ﻿# SemOp Local 4060
 
+## 처음 실행하는 사람을 위한 30초 시작
+
+코드나 typed DSL을 몰라도 된다. Windows에서는 저장소 루트의
+`start_semop.bat`를 더블클릭하면 로컬 브라우저 화면이 열린다.
+
+명령어로 실행하려면 다음 두 줄이면 된다.
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m semop.beginner_web
+```
+
+화면에서 `언어 조건`, `수학식`, `색상 비전` 중 하나를 고르고 예제 버튼을 누른 뒤
+`검증하기`를 누르면 된다. 외부 런타임 라이브러리나 LLM API는 필요하지 않다.
+
+현재 쉬운 화면의 범위는 통제된 목표·필요조건 문장, 정확한 계산식·일차방정식,
+작은 색상 격자다. 일반 자유 대화나 자연 사진 이해로 오해하지 않도록 각 결과에
+검증 범위와 현실 증거 여부를 함께 표시한다. 자세한 그림 설명은
+[한국어 첫걸음 가이드](docs/beginner_guide_ko.md)에 있다.
+
 SemOp Local 4060 is a local prototype for structured reasoning and domain copilot experiments.
 
 The current product direction is not a general chatbot. It is a Korean warehouse and field-operations SOP copilot that:

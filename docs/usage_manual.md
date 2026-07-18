@@ -7,19 +7,26 @@ Code layout reference:
 
 ## 0. Fastest Start
 
-If you just want the true one-click beginner GUI on Windows, double-click:
+For the smallest typed beginner surface on Windows, double-click:
 
 ```text
-launch_semop_studio.bat
+start_semop.bat
 ```
 
-If you prefer the terminal one-click path, run:
+It opens a local browser page with three guided paths: controlled language
+conditions, exact math, and small color-grid vision. It does not require the
+legacy ML stack or any external LLM API. See `docs/beginner_guide_ko.md` for a
+Korean walkthrough and an honest description of the supported scope.
 
-```bash
-.\.venv312\Scripts\python.exe run_beginner_local_stack.py
+The equivalent terminal command is:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m semop.beginner_web
 ```
 
-If you only want to open the studio server directly without the launcher, run:
+For the larger legacy research studio, double-click `launch_semop_studio.bat`
+or run:
 
 ```bash
 .\.venv312\Scripts\python.exe semop_studio_gui.py
@@ -28,7 +35,7 @@ If you only want to open the studio server directly without the launcher, run:
 Then open:
 - `http://127.0.0.1:8780`
 
-`semop_studio_gui.py` is the friendlier default surface for:
+`semop_studio_gui.py` is the advanced surface for:
 - one-click beginner setup, training, and testing
 - context reasoning
 - vision-grounded reasoning
@@ -40,7 +47,7 @@ Then open:
 - ultimate AGI and commercialization readiness auditing
 - general-domain reasoning, not only warehouse/logistics prompts
 
-The new easiest path is `Unified chat` near the top of `SemOp Studio`. Type one request like a ChatGPT prompt and let the studio route it automatically. The studio now writes a graph-backed `prompt understanding` summary so beginners can see the inferred hidden intent, hidden constraints, likely domain, likely scenario, and helpful inputs before trusting the answer. The home screen is now intentionally simplified: one big chat box, tap-to-try prompt chips, big beginner action cards, and all advanced labs hidden inside collapsible drawers so even a child can start from the chat box first. Example prompts:
+Inside the advanced studio, the easiest path is `Unified chat` near the top. Type one request like a ChatGPT prompt and let the studio route it automatically. The studio now writes a graph-backed `prompt understanding` summary so beginners can see the inferred hidden intent, hidden constraints, likely domain, likely scenario, and helpful inputs before trusting the answer. The home screen is intentionally simplified: one big chat box, tap-to-try prompt chips, big beginner action cards, and advanced labs hidden inside collapsible drawers. Example prompts:
 - `?? ????`
 - `? ???? ??? ?? ??`
 - `??? ABC?? ? ??? ????`

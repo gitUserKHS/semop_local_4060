@@ -9,6 +9,9 @@ description = "Verifier-first typed operator reasoning experiments for ordinary 
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+semop-easy = "semop.beginner_web:main"
+
 [project.optional-dependencies]
 controller = ["numpy>=1.26,<3"]
 train = ["numpy>=1.26,<3", "torch>=2.2"]

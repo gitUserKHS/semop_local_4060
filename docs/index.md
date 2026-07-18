@@ -6,8 +6,10 @@ This folder contains the active documentation for SemOp Local 4060.
 
 - `../README.md`
   - top-level overview, quick start, and validation status
+- `beginner_guide_ko.md`
+  - 코드나 DSL 없이 언어·수학·색상 비전을 실행하는 한국어 첫걸음
 - `usage_manual.md`
-  - practical guide, including the easiest starter GUI
+  - practical guide for the larger legacy and research studio
 - `project_structure.md`
   - generated code layout; refresh with `tools/maintenance/update_code_structure_docs.py`
 - `architecture_and_features.md`
