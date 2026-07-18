@@ -3,11 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
     Fact,
-    FactStatus,
     Goal,
     OperatorFamily,
     Rule,
@@ -148,6 +154,8 @@ class ArithmeticExpressionAdapter:
         expression = _ArithmeticParser(value, max_nodes=self.max_nodes).parse()
         registry = _create_arithmetic_registry()
         facts: list[Fact] = []
+        grounding_records = []
+        input_digest = grounding_payload_digest(value)
         number_symbols = {}
         node_count = 0
         max_depth = 0
@@ -157,6 +165,25 @@ class ArithmeticExpressionAdapter:
             if name not in number_symbols:
                 number_symbols[name] = registry.symbol(name, "Number")
             return number_symbols[name]
+
+        def observe_structure(atom) -> None:
+            record = make_grounding_record(
+                domain="math",
+                statement=str(atom),
+                atom=atom,
+                producer_id="exact_arithmetic_parser",
+                source="math_parser",
+                disposition=GroundingDisposition.OBSERVED,
+                authority=GroundingAuthority.DETERMINISTIC_ADAPTER,
+                assertion_status=AssertionStatus.EXPLICIT,
+                evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                rationale="exact arithmetic parser verified the expression node",
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
+            )
+            grounding_records.append(record)
+            if record.fact is not None:
+                facts.append(record.fact)
 
         def compile_node(node: _Expression) -> tuple[object, Fraction, int]:
             nonlocal node_count, max_depth
@@ -169,15 +196,7 @@ class ArithmeticExpressionAdapter:
                 numeric_value = Fraction(node.literal)
                 numeric_symbol = number_symbol(numeric_value)
                 structure = registry.atom("LITERAL", expression_symbol, numeric_symbol)
-                facts.append(
-                    Fact(
-                        structure,
-                        FactStatus.OBSERVED,
-                        "math_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    )
-                )
+                observe_structure(structure)
                 guard_name = f"verify_literal_{node_id:03d}"
                 registry.register_guard(
                     guard_name,
@@ -206,15 +225,7 @@ class ArithmeticExpressionAdapter:
                 numeric_value = -child_value
                 numeric_symbol = number_symbol(numeric_value)
                 structure = registry.atom("NEG_NODE", expression_symbol, child_symbol)
-                facts.append(
-                    Fact(
-                        structure,
-                        FactStatus.OBSERVED,
-                        "math_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    )
-                )
+                observe_structure(structure)
                 _register_ground_evaluation(
                     registry,
                     node_id=node_id,
@@ -240,15 +251,7 @@ class ArithmeticExpressionAdapter:
                     left_symbol,
                     right_symbol,
                 )
-                facts.append(
-                    Fact(
-                        structure,
-                        FactStatus.OBSERVED,
-                        "math_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    )
-                )
+                observe_structure(structure)
                 _register_ground_evaluation(
                     registry,
                     node_id=node_id,
@@ -266,6 +269,7 @@ class ArithmeticExpressionAdapter:
 
         root_symbol, answer, _ = compile_node(expression)
         answer_symbol = number_symbol(answer)
+        grounding_trace = GroundingTrace(tuple(grounding_records))
         return DomainInstance(
             registry=registry,
             state=WorldState(tuple(facts)),
@@ -283,7 +287,9 @@ class ArithmeticExpressionAdapter:
                 "operator_depth": max_depth,
                 "node_count": node_count,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
 

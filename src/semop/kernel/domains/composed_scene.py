@@ -11,6 +11,12 @@ from ..dataflow import (
     NumericMeasurementRef,
     TypedDataflowCompiler,
 )
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import Goal, SolveResult, WorldState
 from .base import DomainInstance
 from .language_common import (
@@ -450,11 +456,33 @@ class SceneThresholdAdapter:
             )
         )
         goal = Goal(language_goal.atom, label=value.text.strip())
+        input_digest = grounding_payload_digest(value.text)
+        grounding_trace = composition.instance.grounding_trace
+        grounded_rule_facts = []
+        for index, fact in enumerate(compiled.rule_facts):
+            record = make_grounding_record(
+                domain="composed",
+                statement=f"scene_rule:{index}:{fact.atom}",
+                atom=fact.atom,
+                producer_id="scene_threshold_parser",
+                source=fact.source,
+                disposition=GroundingDisposition.OBSERVED,
+                authority=GroundingAuthority.EXPLICIT_INPUT,
+                assertion_status=fact.assertion_status,
+                evidence_status=fact.evidence_status,
+                rationale="scene threshold parser compiled an explicit rule fact",
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
+                confidence=fact.confidence,
+            )
+            grounding_trace = grounding_trace.with_record(record)
+            if record.fact is not None:
+                grounded_rule_facts.append(record.fact)
         return DomainInstance(
             registry=registry,
             state=WorldState(
                 composition.instance.state.facts
-                + compiled.rule_facts
+                + tuple(grounded_rule_facts)
             ),
             goals=(goal,),
             domain="composed",
@@ -479,7 +507,9 @@ class SceneThresholdAdapter:
                     "conclusion_operator": compiled.conclusion_operator.name,
                 },
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @staticmethod

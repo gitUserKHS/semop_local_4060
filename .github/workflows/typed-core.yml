@@ -52,6 +52,7 @@ jobs:
           tests/test_typed_operator_semantic_benchmark.py
           tests/test_typed_operator_rule_discovery.py
           tests/test_typed_operator_judging.py
+          tests/test_typed_operator_grounding.py
           tests/test_typed_operator_trust.py
           -q
 

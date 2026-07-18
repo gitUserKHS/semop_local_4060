@@ -13,6 +13,13 @@ from .catalog import (
 )
 from .domains.base import DomainInstance
 from .engine import ActionPolicy, OperatorKernel, RegistryPolicyProvider
+from .grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from .model import (
     AssertionStatus,
     EvidenceStatus,
@@ -202,16 +209,58 @@ class StructuredMeaningGraphAdapter:
                     operator_name=operator_name,
                 )
                 goals.append(Goal(registry.atom("READY", goal_symbol)))
+        input_digest = grounding_payload_digest(
+            "\n".join(
+                (
+                    graph.query,
+                    *(f"{fact.status.value}:{fact.atom}" for fact in facts),
+                )
+            )
+        )
+        grounding_trace = GroundingTrace(
+            tuple(
+                make_grounding_record(
+                    domain="language",
+                    statement=f"legacy_graph_fact:{index}:{fact.atom}",
+                    atom=fact.atom,
+                    producer_id="structured_meaning_graph_adapter",
+                    source=fact.source,
+                    disposition=(
+                        GroundingDisposition.OBSERVED
+                        if fact.status is FactStatus.OBSERVED
+                        else GroundingDisposition.PROPOSED
+                    ),
+                    authority=(
+                        GroundingAuthority.EXPLICIT_INPUT
+                        if fact.status is FactStatus.OBSERVED
+                        else GroundingAuthority.IMPORTED_PROPOSAL
+                    ),
+                    assertion_status=fact.assertion_status,
+                    evidence_status=fact.evidence_status,
+                    rationale=(
+                        "legacy graph explicitly supplied a typed relation"
+                        if fact.status is FactStatus.OBSERVED
+                        else "legacy graph relation remained unverified"
+                    ),
+                    input_digest=input_digest,
+                    evidence=(f"input:{input_digest}",),
+                    confidence=fact.confidence,
+                )
+                for index, fact in enumerate(facts)
+            )
+        )
         return GraphAdapterResult(
             registry=registry,
-            state=WorldState(tuple(facts)),
+            state=WorldState(grounding_trace.facts),
             goals=tuple(goals),
             domain="language",
             metadata={
                 "source": "structured_meaning_graph",
                 "query": graph.query,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
             symbols=symbols,
             unverified_relations=tuple(sorted(unknown_relations)),
         )

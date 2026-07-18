@@ -11,7 +11,11 @@
 | 수학 | `MathInputAdapter` | 정확한 유리수 산술·비교와 한 변수 일차방정식의 정규화·풀이 | 다변수·비선형 방정식, 미적분, 자연어 수학 전반 |
 | 비전 | `VisionInputAdapter` | symbolic/RGB 공간 관계, filled shape, goal-independent closed count, pixel area 비교 | 자연사진 의미 인식, 미검증 detector 출력의 확정 |
 
-모든 adapter는 `DomainInstance(registry, state, goals, domain, metadata)`를 반환한다.
+모든 adapter는
+`DomainInstance(registry, state, goals, domain, metadata, grounding_trace)`를 반환한다.
+`grounding_trace`는 세 영역에 공통인 candidate, authority, verifier decision과 입력
+digest를 보존한다. 자세한 권한 표와 자가학습 라벨 경계는
+`docs/typed_grounding_boundary.md`에 있다.
 `UnifiedTypedReasoner`는 영역과 무관하게 같은 `OperatorKernel.solve`와 proof replay를
 호출한다.
 공개 `UnifiedTypedReasoner.ground`는 실행과 자가 학습이 공유하는 adapter 경계다.
@@ -25,7 +29,8 @@ flowchart LR
     A["언어 graph 또는 명시적 text"] --> D["TypedDomainAdapter"]
     B["정확 산술식 또는 일차방정식"] --> D
     C["비전 world model 또는 RGB raster/계량 goal"] --> D
-    D --> S["DomainInstance"]
+    D --> G["GroundingCandidate / Decision"]
+    G --> S["DomainInstance + GroundingTrace"]
     S --> P["공유 policy 또는 agenda"]
     P --> K["Typed executor"]
     K --> R["Proof replay"]
@@ -142,8 +147,8 @@ positive는 0건이었다.
 distractor 자체는 `15 -> 13`으로 약하므로 세 영역을 일반적으로 해결했다는 증거는
 아니다. reviewed 20/100-shot gate가 비어 있으므로 `shadow`가 계속 기본값이다.
 
-같은 날 v4 최종 검증에서 typed fast suite는 134건을 테스트 내부 13.532초에
-통과했고, 전체 회귀는 501건과 subtest 20건을 283.27초에 통과했다.
+2026-07-18의 shared grounding 최종 검증에서 typed suite는 263건과 subtest 20건을
+51.38초에 통과했고, 전체 회귀는 630건과 subtest 20건을 330.99초에 통과했다.
 goal-directed baseline의 작은 문제
 p95는 약 0.006초, 큰 문제 p95는 약 0.016초였다. 이 수치는 현재 개발 PC의 회귀
 스냅샷이며 하드웨어 독립 성능 보장은 아니다.

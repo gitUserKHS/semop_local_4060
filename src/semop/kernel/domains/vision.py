@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from ..catalog import normalize_predicate_name, register_transitive_relation
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
@@ -176,6 +184,8 @@ class VisionWorldAdapter:
             )
 
         facts: list[Fact] = []
+        grounding_records = []
+        input_digest = _vision_input_digest(world)
         entity_by_id = {
             str(item.id).strip(): item
             for item in world.entities
@@ -189,19 +199,38 @@ class VisionWorldAdapter:
                 if self._independently_verified(attributes)
                 else FactStatus.PROPOSED
             )
-            facts.append(
-                Fact(
-                    registry.atom("VISUAL_ENTITY", symbol),
-                    status,
-                    source="vision_entity",
-                    assertion_status=AssertionStatus.IMPORTED,
-                    evidence_status=self._evidence_status(attributes),
-                )
+            atom = registry.atom("VISUAL_ENTITY", symbol)
+            record = make_grounding_record(
+                domain="vision",
+                statement=f"entity:{entity_id}:{atom}",
+                atom=atom,
+                producer_id="vision_world_adapter",
+                source="vision_entity",
+                disposition=(
+                    GroundingDisposition.OBSERVED
+                    if status is FactStatus.OBSERVED
+                    else GroundingDisposition.PROPOSED
+                ),
+                authority=self._grounding_authority(attributes, status),
+                assertion_status=AssertionStatus.IMPORTED,
+                evidence_status=self._evidence_status(attributes),
+                rationale=(
+                    "vision input carried an independent verification marker"
+                    if status is FactStatus.OBSERVED
+                    else "unverified visual entity was retained as a proposal"
+                ),
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
             )
+            grounding_records.append(record)
+            if record.fact is not None:
+                facts.append(record.fact)
 
         verified_count = 0
         proposed_count = 0
-        for predicate_name, source, target, relation in relation_records:
+        for relation_index, (predicate_name, source, target, relation) in enumerate(
+            relation_records
+        ):
             predicate = registry.predicates[predicate_name]
             attributes = dict(getattr(relation, "attributes", {}) or {})
             confidence = _clamp_confidence(getattr(relation, "confidence", 0.0))
@@ -217,16 +246,37 @@ class VisionWorldAdapter:
             else:
                 status = FactStatus.PROPOSED
                 proposed_count += 1
-            facts.append(
-                Fact(
-                    registry.atom(predicate, symbols[source], symbols[target]),
-                    status,
-                    source="vision_relation",
-                    confidence=confidence,
-                    assertion_status=AssertionStatus.IMPORTED,
-                    evidence_status=self._evidence_status(attributes),
-                )
+            atom = registry.atom(predicate, symbols[source], symbols[target])
+            record = make_grounding_record(
+                domain="vision",
+                statement=f"relation:{relation_index}:{atom}",
+                atom=atom,
+                producer_id="vision_world_adapter",
+                source="vision_relation",
+                disposition={
+                    FactStatus.OBSERVED: GroundingDisposition.OBSERVED,
+                    FactStatus.PROPOSED: GroundingDisposition.PROPOSED,
+                    FactStatus.CONTRADICTED: GroundingDisposition.CONTRADICTED,
+                }[status],
+                authority=self._grounding_authority(attributes, status),
+                assertion_status=AssertionStatus.IMPORTED,
+                evidence_status=self._evidence_status(attributes),
+                rationale=(
+                    "visual relation passed its declared independent verifier"
+                    if status is FactStatus.OBSERVED
+                    else (
+                        "visual relation was explicitly marked contradicted"
+                        if status is FactStatus.CONTRADICTED
+                        else "visual relation lacked independent verification"
+                    )
+                ),
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
+                confidence=confidence,
             )
+            grounding_records.append(record)
+            if record.fact is not None:
+                facts.append(record.fact)
 
         goals = tuple(
             Goal(
@@ -235,6 +285,7 @@ class VisionWorldAdapter:
             )
             for predicate, source, target, label in goal_records
         )
+        grounding_trace = GroundingTrace(tuple(grounding_records))
         return DomainInstance(
             registry=registry,
             state=WorldState(tuple(facts)),
@@ -247,7 +298,9 @@ class VisionWorldAdapter:
                 "implicit_entities": tuple(sorted(relation_ids - explicit_ids)),
                 "unverified_relations": tuple(sorted(unverified_relations)),
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @classmethod
@@ -272,6 +325,23 @@ class VisionWorldAdapter:
         if attributes.get("adapter_verified") is True:
             return EvidenceStatus.ADAPTER_VERIFIED
         return EvidenceStatus.UNVERIFIED
+
+    @classmethod
+    def _grounding_authority(
+        cls,
+        attributes: dict[str, Any],
+        status: FactStatus,
+    ) -> GroundingAuthority:
+        if status is FactStatus.PROPOSED:
+            if attributes.get("perception_proposal") is True:
+                return GroundingAuthority.HEURISTIC_PROPOSAL
+            return GroundingAuthority.IMPORTED_PROPOSAL
+        evidence_status = cls._evidence_status(attributes)
+        if evidence_status is EvidenceStatus.EXTERNAL_VERIFIED:
+            return GroundingAuthority.EXTERNAL_VERIFIER
+        if evidence_status is EvidenceStatus.ADAPTER_VERIFIED:
+            return GroundingAuthority.DETERMINISTIC_ADAPTER
+        return GroundingAuthority.EXPLICIT_INPUT
 
     @staticmethod
     def project(value: VisionProblem, result: SolveResult) -> None:
@@ -311,3 +381,42 @@ def _clamp_confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, numeric))
+
+
+def _vision_input_digest(world: Any) -> str:
+    supplied = str(getattr(world, "input_digest", "")).strip().lower()
+    if len(supplied) == 64 and all(
+        character in "0123456789abcdef" for character in supplied
+    ):
+        return supplied
+    payload = {
+        "query": str(getattr(world, "query", "")),
+        "entities": [
+            {
+                "id": str(getattr(item, "id", "")),
+                "attributes": dict(getattr(item, "attributes", {}) or {}),
+            }
+            for item in getattr(world, "entities", ())
+        ],
+        "relations": [
+            {
+                "source": str(getattr(item, "source", "")),
+                "relation": str(getattr(item, "relation", "")),
+                "target": str(getattr(item, "target", "")),
+                "confidence": _clamp_confidence(
+                    getattr(item, "confidence", 0.0)
+                ),
+                "attributes": dict(getattr(item, "attributes", {}) or {}),
+            }
+            for item in getattr(world, "relations", ())
+        ],
+    }
+    return grounding_payload_digest(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    )

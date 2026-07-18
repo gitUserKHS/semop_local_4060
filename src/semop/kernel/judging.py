@@ -6,12 +6,20 @@ from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from .engine import OperatorKernel
+from .grounding import (
+    GroundingAuthority,
+    GroundingCandidate,
+    GroundingDecision as TypedGroundingDecision,
+    GroundingDisposition,
+    GroundingRecord,
+    decide_grounding,
+    promote_grounding_proposal,
+    stage_grounding_proposal,
+)
 from .model import (
-    AssertionStatus,
     Atom,
     EvidenceStatus,
     Fact,
-    FactStatus,
     Goal,
     GoalOutcome,
     GroundAction,
@@ -34,21 +42,8 @@ class JudgeVerdict(str, Enum):
 
 
 @dataclass(frozen=True)
-class JudgeCandidate:
-    candidate_id: str
-    domain: str
-    statement: str
-    atom: Atom
-    evidence: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.candidate_id.strip():
-            raise ValueError("judge candidate id cannot be empty")
-        if not self.domain.strip():
-            raise ValueError("judge candidate domain cannot be empty")
-        if not self.statement.strip():
-            raise ValueError("judge candidate statement cannot be empty")
-        object.__setattr__(self, "evidence", tuple(self.evidence))
+class JudgeCandidate(GroundingCandidate):
+    """Compatibility name for a semantic judge's typed grounding candidate."""
 
 
 @dataclass(frozen=True)
@@ -85,6 +80,7 @@ class JudgedFactRecord:
     decision: JudgeDecision
     staged_fact: Fact | None
     diagnostics: tuple[str, ...] = ()
+    grounding_record: GroundingRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -107,11 +103,26 @@ def stage_judged_fact(
 
     _validate_confidence_threshold(min_confidence)
     if decision.verdict is not JudgeVerdict.SUPPORTS:
+        grounding_record = None
+        if decision.verdict is JudgeVerdict.REJECTS:
+            grounding_record = decide_grounding(
+                candidate,
+                TypedGroundingDecision(
+                    GroundingDisposition.REJECTED,
+                    GroundingAuthority.MODEL_PROPOSAL,
+                    decision.model_id,
+                    decision.rationale,
+                    EvidenceStatus.UNVERIFIED,
+                    decision.confidence,
+                    decision.evidence_refs,
+                ),
+            )
         return JudgedFactRecord(
             candidate,
             decision,
             None,
             (f"judge verdict was {decision.verdict.value}",),
+            grounding_record,
         )
     if decision.confidence < min_confidence:
         return JudgedFactRecord(
@@ -127,17 +138,20 @@ def stage_judged_fact(
         f"semantic_judge:{decision.model_id}:"
         f"{decision.prompt_fingerprint}"
     )
+    grounding_record = stage_grounding_proposal(
+        candidate,
+        authority=GroundingAuthority.MODEL_PROPOSAL,
+        verifier_id=decision.model_id,
+        rationale=decision.rationale,
+        confidence=decision.confidence,
+        evidence_refs=decision.evidence_refs,
+        source=source,
+    )
     return JudgedFactRecord(
         candidate,
         decision,
-        Fact(
-            candidate.atom,
-            FactStatus.PROPOSED,
-            source,
-            decision.confidence,
-            assertion_status=AssertionStatus.INFERRED,
-            evidence_status=EvidenceStatus.UNVERIFIED,
-        ),
+        grounding_record.fact,
+        grounding_record=grounding_record,
     )
 
 
@@ -153,22 +167,34 @@ def promote_judged_fact(
         raise JudgeBoundaryError("judge decision did not stage a positive fact")
     if not record.candidate.atom.predicate.verified:
         raise JudgeBoundaryError("an unverified predicate cannot be promoted")
+    grounding_record = record.grounding_record
+    if grounding_record is None:
+        grounding_record = decide_grounding(
+            record.candidate,
+            TypedGroundingDecision(
+                GroundingDisposition.PROPOSED,
+                GroundingAuthority.MODEL_PROPOSAL,
+                record.decision.model_id,
+                record.decision.rationale,
+                EvidenceStatus.UNVERIFIED,
+                record.decision.confidence,
+                record.decision.evidence_refs,
+                record.staged_fact.source,
+            ),
+        )
     try:
-        verified = bool(verifier(record.candidate.atom))
-    except Exception as exc:
-        raise JudgeBoundaryError(
-            f"deterministic fact verifier failed: {type(exc).__name__}: {exc}"
-        ) from exc
-    if not verified:
+        promoted = promote_grounding_proposal(
+            grounding_record,
+            verifier,
+            authority=GroundingAuthority.DETERMINISTIC_ADAPTER,
+            verifier_id=source,
+            source=source,
+        )
+    except KernelError as exc:
+        raise JudgeBoundaryError(str(exc)) from exc
+    if promoted.fact is None:
         raise JudgeBoundaryError("deterministic fact verifier rejected the atom")
-    return Fact(
-        record.candidate.atom,
-        FactStatus.OBSERVED,
-        source,
-        1.0,
-        assertion_status=AssertionStatus.INFERRED,
-        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-    )
+    return promoted.fact
 
 
 def verify_judged_program(

@@ -5,6 +5,13 @@ import re
 from typing import TYPE_CHECKING
 
 from ..catalog import register_all_requirements_ready
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     Atom,
@@ -460,7 +467,9 @@ class LanguageTextAdapter:
         contradictions = tuple(sorted(verified_satisfied & verified_blocked))
         contradiction_set = set(contradictions)
         facts: list[Fact] = []
+        grounding_records = []
         seen_facts: set[tuple[Atom, FactStatus]] = set()
+        input_digest = grounding_payload_digest(problem.text)
 
         for claim in parsed.claims:
             if claim.relation == "GOAL":
@@ -490,20 +499,42 @@ class LanguageTextAdapter:
             if key in seen_facts:
                 continue
             seen_facts.add(key)
-            facts.append(
-                Fact(
-                    atom,
-                    status,
-                    source=source,
-                    confidence=claim.confidence,
-                    assertion_status=(
-                        AssertionStatus.EXPLICIT
-                        if claim.source.startswith("explicit_")
-                        else AssertionStatus.INFERRED
-                    ),
-                    evidence_status=EvidenceStatus.UNVERIFIED,
-                )
+            disposition = {
+                FactStatus.OBSERVED: GroundingDisposition.OBSERVED,
+                FactStatus.PROPOSED: GroundingDisposition.PROPOSED,
+                FactStatus.CONTRADICTED: GroundingDisposition.CONTRADICTED,
+            }[status]
+            authority = (
+                GroundingAuthority.EXPLICIT_INPUT
+                if claim.verified
+                else GroundingAuthority.HEURISTIC_PROPOSAL
             )
+            record = make_grounding_record(
+                domain="language",
+                statement=claim.statement,
+                atom=atom,
+                producer_id=f"language_text:{claim.source}",
+                source=source,
+                disposition=disposition,
+                authority=authority,
+                assertion_status=(
+                    AssertionStatus.EXPLICIT
+                    if claim.source.startswith("explicit_")
+                    else AssertionStatus.INFERRED
+                ),
+                evidence_status=EvidenceStatus.UNVERIFIED,
+                rationale=(
+                    "controlled language parser matched an explicit assertion"
+                    if claim.verified
+                    else "legacy language heuristic proposed a typed assertion"
+                ),
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
+                confidence=claim.confidence,
+            )
+            grounding_records.append(record)
+            if record.fact is not None:
+                facts.append(record.fact)
 
         observed_goals = tuple(
             dict.fromkeys(
@@ -541,6 +572,7 @@ class LanguageTextAdapter:
                 )
                 goals.append(Goal(registry.atom("READY", goal_symbol(goal_name))))
 
+        grounding_trace = GroundingTrace(tuple(grounding_records))
         return DomainInstance(
             registry=registry,
             state=WorldState(tuple(facts)),
@@ -571,7 +603,9 @@ class LanguageTextAdapter:
                 "heuristic_used": parsed.heuristic_used,
                 "parser_warnings": parsed.warnings,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @staticmethod

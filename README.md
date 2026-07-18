@@ -15,6 +15,7 @@ The architectural target is a logical-operator-based intelligence system organiz
 The central hypothesis is combinatorial: a small shared controller should learn to assemble many typed operator programs, while language, mathematics, and vision enter through domain adapters and every claimed result remains executor-verifiable.
 The resource doctrine is CPU-first and sample-efficient: the symbolic core should run offline on an ordinary PC, while small local models and RTX 4060-class GPUs remain optional parsing, perception, and training accelerators.
 A verifier-first typed operator core now runs beside the legacy runtime. It turns domain inputs into immutable typed facts, uses goal-relevant monotonic agenda chaining instead of enumerating fact subsets, slices the first supporting operator DAG, and replays every successful proof before returning it. The pipeline defaults to `shadow`: legacy output remains user-facing while typed proof, timing, allocation, and expansion measurements are written to the audit trace.
+A shared typed grounding boundary now records language, math, and vision inputs as candidate, authority decision, fact, and immutable trace. Neural and heuristic producers can only propose; deterministic verifiers and explicit human reviews create the accept/reject examples used by later grounding-policy learning.
 A dependency-free raster adapter now adds a narrow real-pixel path: it detects small color components, verifies exact bounding-box or touching relations, keeps centroid-only guesses as `proposed`, and sends the resulting facts through the same operator proof replay.
 A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
 The current refactor direction is premise-first: candidate retrieval, premise proposal, and premise validation now precede later answer selection, CP code generation, and cross-modal alignment.
@@ -119,9 +120,11 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/kernel/experience.py`: audited raw input grounding, split fingerprints, bounded hard negatives, and the end-to-end raw self-learning API
 - `src/semop/kernel/experience_queue.py`: append-audited LMV execution queue, digest-bound reviews, and deterministic four-way partitioning
 - `src/semop/kernel/experience_collection.py`: production failure collection, reviewed-corpus grounding, leakage audit, and joint rule-learning bridge
+- `src/semop/kernel/grounding.py`: shared LMV candidate authority, proposal promotion, hard-negative lineage, and verified learning examples
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
+- `docs/typed_grounding_boundary.md`: shared language/math/vision grounding trace, authority rules, review promotion, and research basis
 - `docs/lmv_semantic_benchmark.md`: digest-bound review workflow and authority-separated three-domain semantic evaluation
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
@@ -158,8 +161,9 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
-online reviewed-learning milestone, local validation now passes 256 typed-operator
-tests plus 20 subtests and all 623 repository tests; `shadow` remains the default.
+online reviewed-learning and shared grounding milestones, local validation now passes
+263 typed-operator tests plus 20 subtests and all 630 repository tests; `shadow`
+remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

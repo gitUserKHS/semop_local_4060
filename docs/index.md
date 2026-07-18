@@ -36,6 +36,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - immutable typed IR, verifier-first search, three domain adapters, and migration modes
 - `trust_provenance_and_metrics.md`
   - assertion/evidence/logical 신뢰 축, 가정 의존 proof, replay integrity와 semantic correctness 분리, CI 계약
+- `typed_grounding_boundary.md`
+  - 언어·수학·비전 공통 candidate/decision/trace, 모델 제안 권한, 검증·사람 리뷰 hard negative 학습 계약
 - `lmv_semantic_benchmark.md`
   - digest-bound 사람 리뷰, 언어·수학·비전 near-miss seed, 권한별 의미 정확도 평가 절차
 - `language_math_vision_typed_runtime.md`

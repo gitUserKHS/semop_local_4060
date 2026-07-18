@@ -3,11 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
-    Fact,
-    FactStatus,
     Goal,
     OperatorFamily,
     Rule,
@@ -322,33 +327,29 @@ class LinearEquationAdapter:
             family=OperatorFamily.QUANTIFY.value,
             tags=("math", "algebra", "solve"),
         )
+        input_digest = grounding_payload_digest(text)
+        grounding_trace = GroundingTrace(
+            tuple(
+                make_grounding_record(
+                    domain="math",
+                    statement=str(atom),
+                    atom=atom,
+                    producer_id="exact_linear_equation_parser",
+                    source="linear_equation_parser",
+                    disposition=GroundingDisposition.OBSERVED,
+                    authority=GroundingAuthority.DETERMINISTIC_ADAPTER,
+                    assertion_status=AssertionStatus.EXPLICIT,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    rationale="exact linear parser verified the equation structure",
+                    input_digest=input_digest,
+                    evidence=(f"input:{input_digest}",),
+                )
+                for atom in (equation_fact, left_fact, right_fact)
+            )
+        )
         return DomainInstance(
             registry=registry,
-            state=WorldState(
-                (
-                    Fact(
-                        equation_fact,
-                        FactStatus.OBSERVED,
-                        "linear_equation_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    ),
-                    Fact(
-                        left_fact,
-                        FactStatus.OBSERVED,
-                        "linear_equation_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    ),
-                    Fact(
-                        right_fact,
-                        FactStatus.OBSERVED,
-                        "linear_equation_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    ),
-                )
-            ),
+            state=WorldState(grounding_trace.facts),
             goals=(Goal(solved, label=f"{variable_name} = {format_fraction(solution)}"),),
             domain="math",
             metadata={
@@ -372,7 +373,9 @@ class LinearEquationAdapter:
                 "operator_depth": 2,
                 "node_count": node_count,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @staticmethod

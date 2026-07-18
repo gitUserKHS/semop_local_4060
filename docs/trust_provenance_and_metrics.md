@@ -13,6 +13,9 @@ SemOp의 verifier는 typed operator program이 등록된 규칙대로 실행됐�
 2. 그 assertion을 어떤 evidence가 뒷받침하는가
 3. proof engine에서 어떤 logical status를 갖는가
 
+입력에서 `Fact`가 만들어지기 전의 후보, 결정 권한, verifier와 hard negative lineage는
+`typed_grounding_boundary.md`의 `GroundingTrace`가 담당한다.
+
 ## Fact의 세 축
 
 `Fact`는 이제 서로 독립적인 다음 필드를 가진다.
@@ -147,3 +150,4 @@ python -m pytest
 4. assumption과 observed dependency가 결과에 나타나는지 테스트한다.
 5. 사람 gold가 없다면 `semantic_correctness`를 보고하지 않는다.
 6. positive와 표현이 가까운 verifier-confirmed negative를 함께 추가한다.
+7. 새 adapter의 모든 입력 fact를 `GroundingTrace`에 연결하고 state audit을 통과한다.

@@ -592,6 +592,9 @@ class VerifiedTaskDiscovery:
             instance = replace(
                 task.instance,
                 state=state,
+                grounding_trace=task.instance.grounding_trace.restrict_to_facts(
+                    state.facts
+                ),
                 metadata={
                     **task.instance.metadata,
                     "discovery_mutation": "support_ablation",

@@ -4,6 +4,13 @@ from dataclasses import asdict, dataclass
 import re
 
 from ..catalog import register_transitive_relation
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
@@ -342,7 +349,9 @@ class LanguageLogicAdapter:
         contradictions = tuple(sorted(positive & negative))
         contradiction_set = set(contradictions)
         facts: list[Fact] = []
+        grounding_records = []
         goals: list[Goal] = []
+        input_digest = grounding_payload_digest(problem.text)
 
         for claim in parsed.claims:
             left, right = claim.arguments
@@ -363,19 +372,32 @@ class LanguageLogicAdapter:
                 and claim.arguments in contradiction_set
                 else FactStatus.OBSERVED
             )
-            facts.append(
-                Fact(
-                    atom,
-                    status,
-                    source=(
-                        "language_logic_conflict"
-                        if status is FactStatus.CONTRADICTED
-                        else "language_logic_parser"
-                    ),
-                    assertion_status=AssertionStatus.EXPLICIT,
-                    evidence_status=EvidenceStatus.UNVERIFIED,
-                )
+            source = (
+                "language_logic_conflict"
+                if status is FactStatus.CONTRADICTED
+                else "language_logic_parser"
             )
+            record = make_grounding_record(
+                domain="language",
+                statement=claim.statement,
+                atom=atom,
+                producer_id="controlled_language_logic_parser",
+                source=source,
+                disposition=(
+                    GroundingDisposition.CONTRADICTED
+                    if status is FactStatus.CONTRADICTED
+                    else GroundingDisposition.OBSERVED
+                ),
+                authority=GroundingAuthority.EXPLICIT_INPUT,
+                assertion_status=AssertionStatus.EXPLICIT,
+                evidence_status=EvidenceStatus.UNVERIFIED,
+                rationale="controlled logic parser matched an explicit assertion",
+                input_digest=input_digest,
+                evidence=(f"input:{input_digest}",),
+            )
+            grounding_records.append(record)
+            if record.fact is not None:
+                facts.append(record.fact)
 
         for index, rule in enumerate(parsed.rules):
             item = registry.variable("item", "Individual")
@@ -404,6 +426,7 @@ class LanguageLogicAdapter:
                 tags=("language", "logic", "conjunction"),
             )
 
+        grounding_trace = GroundingTrace(tuple(grounding_records))
         return DomainInstance(
             registry=registry,
             state=WorldState(tuple(facts)),
@@ -418,7 +441,9 @@ class LanguageLogicAdapter:
                 "contradictions": contradictions,
                 "unparsed_statements": parsed.unparsed_statements,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @staticmethod

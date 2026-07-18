@@ -35,6 +35,10 @@ LLM의 긍정 판정은 `JudgeDecision(SUPPORTS, ...)`로 기록한다. 사실 �
 독립적인 도메인 verifier가 해당 atom을 직접 검사한 경우에만
 `promote_judged_fact()`가 `OBSERVED`로 승격한다.
 
+이 API는 이제 공통 `GroundingCandidate -> GroundingDecision -> GroundingRecord`
+경계를 재사용한다. 따라서 frontier judge, 작은 local grounder, 언어 heuristic과 비전
+proposal이 서로 다른 우회 경로로 observed fact를 만들 수 없다.
+
 ## 프로그램 검증 경로
 
 LLM이 operator program을 제안한 경우에는 다음 경계를 통과한다.

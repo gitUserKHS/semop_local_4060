@@ -525,6 +525,7 @@ def _missing_dependency_control(
                 depth=instance.state.depth,
                 path_cost=instance.state.path_cost,
             ),
+            grounding_trace=instance.grounding_trace.restrict_to_facts(retained),
         )
         result = OperatorKernel(candidate.registry).solve(
             candidate.state,

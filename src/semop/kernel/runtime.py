@@ -55,6 +55,11 @@ class UnifiedTypedResult:
             "verified": self.verified,
             "projection_applied": self.projection_applied,
             "metadata": dict(self.instance.metadata) if self.instance else {},
+            "grounding": (
+                self.instance.grounding_trace.to_dict()
+                if self.instance is not None
+                else {}
+            ),
             "typed_result": (
                 self.typed_result.to_dict() if self.typed_result is not None else None
             ),

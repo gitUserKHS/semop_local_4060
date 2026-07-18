@@ -9,11 +9,16 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from ..catalog import normalize_predicate_name
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    GroundingTrace,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
     Fact,
-    FactStatus,
     Goal,
     OperatorFamily,
     Rule,
@@ -345,6 +350,7 @@ class _RasterWorld:
     query: str
     entities: list[_RasterEntityRecord]
     relations: list[_RasterRelationRecord]
+    input_digest: str = ""
 
 
 class RasterVisionAdapter:
@@ -475,7 +481,12 @@ class RasterVisionAdapter:
             )
             for item in analysis.relations
         ]
-        world = _RasterWorld(value.query, entities, relations)
+        world = _RasterWorld(
+            value.query,
+            entities,
+            relations,
+            analysis.image_digest,
+        )
         symbolic = self.symbolic_adapter.adapt_world(
             world,
             tuple(resolved_goals),
@@ -527,6 +538,7 @@ class RasterVisionAdapter:
                 "observation_count_selectors": value.count_selectors,
                 "segmentation_config": asdict(active),
             },
+            grounding_trace=symbolic.grounding_trace,
         )
 
     @staticmethod
@@ -607,47 +619,48 @@ def _extend_raster_reasoning(
         return color_symbols[value]
 
     extra_facts: list[Fact] = []
+    grounding_records = list(instance.grounding_trace.records)
+
+    def observe_measurement(atom, source: str) -> None:
+        record = make_grounding_record(
+            domain="vision",
+            statement=str(atom),
+            atom=atom,
+            producer_id="deterministic_raster_adapter",
+            source=source,
+            disposition=GroundingDisposition.OBSERVED,
+            authority=GroundingAuthority.DETERMINISTIC_ADAPTER,
+            assertion_status=AssertionStatus.MEASURED,
+            evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+            rationale="deterministic raster measurement verified the typed fact",
+            input_digest=analysis.image_digest,
+            evidence=(f"image:{analysis.image_digest}",),
+        )
+        grounding_records.append(record)
+        if record.fact is not None:
+            extra_facts.append(record.fact)
+
     for obj in analysis.objects:
         symbol = object_symbols[obj.id]
-        extra_facts.extend(
-            (
-                Fact(
-                    registry.atom("PIXEL_AREA", symbol, number(obj.area)),
-                    FactStatus.OBSERVED,
-                    "deterministic_pixel_measurement",
-                    assertion_status=AssertionStatus.MEASURED,
-                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                ),
-                Fact(
-                    registry.atom("HAS_COLOR", symbol, color(obj.color_name)),
-                    FactStatus.OBSERVED,
-                    "deterministic_component_color",
-                    assertion_status=AssertionStatus.MEASURED,
-                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                ),
-            )
+        observe_measurement(
+            registry.atom("PIXEL_AREA", symbol, number(obj.area)),
+            "deterministic_pixel_measurement",
+        )
+        observe_measurement(
+            registry.atom("HAS_COLOR", symbol, color(obj.color_name)),
+            "deterministic_component_color",
         )
         width = obj.right - obj.left + 1
         height = obj.bottom - obj.top + 1
         if width >= 2 and height >= 2 and obj.area == width * height:
-            extra_facts.append(
-                Fact(
-                    registry.atom("FILLS_BOUNDING_BOX", symbol),
-                    FactStatus.OBSERVED,
-                    "deterministic_pixel_geometry",
-                    assertion_status=AssertionStatus.MEASURED,
-                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                )
+            observe_measurement(
+                registry.atom("FILLS_BOUNDING_BOX", symbol),
+                "deterministic_pixel_geometry",
             )
         if width == height:
-            extra_facts.append(
-                Fact(
-                    registry.atom("EQUAL_EXTENT", symbol),
-                    FactStatus.OBSERVED,
-                    "deterministic_pixel_geometry",
-                    assertion_status=AssertionStatus.MEASURED,
-                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                )
+            observe_measurement(
+                registry.atom("EQUAL_EXTENT", symbol),
+                "deterministic_pixel_geometry",
             )
 
     base_state = WorldState(instance.state.facts + tuple(extra_facts))
@@ -773,6 +786,7 @@ def _extend_raster_reasoning(
             )
         )
 
+    grounding_trace = GroundingTrace(tuple(grounding_records))
     return DomainInstance(
         registry=registry,
         state=base_state,
@@ -789,7 +803,9 @@ def _extend_raster_reasoning(
                 "prepared_count_selectors": count_selectors,
                 "prepared_area_comparisons": tuple(prepared_area_pairs),
             },
+            "grounding": grounding_trace.to_dict(include_records=False),
         },
+        grounding_trace=grounding_trace,
     )
 
 

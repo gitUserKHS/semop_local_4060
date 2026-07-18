@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import re
 
 from .contracts import DomainInstance
+from .grounding import GroundingRecord, GroundingTrace, remap_grounding_record
 from .model import (
     Atom,
     Fact,
@@ -101,12 +102,18 @@ def compose_domain_instances(
 
     all_facts: list[Fact] = []
     all_goals: list[Goal] = []
+    all_grounding_records: list[GroundingRecord] = []
     imports: list[RegistryImport] = []
     for component, alias in zip(normalized, aliases, strict=True):
-        imported, facts, goals = _import_component(target, component, alias)
+        imported, facts, goals, grounding_records = _import_component(
+            target,
+            component,
+            alias,
+        )
         imports.append(imported)
         all_facts.extend(facts)
         all_goals.extend(goals)
+        all_grounding_records.extend(grounding_records)
 
     unique_goals: dict[tuple[object, ...], Goal] = {}
     for goal in all_goals:
@@ -142,6 +149,7 @@ def compose_domain_instances(
             ),
             "reviewed_examples": 0,
         },
+        grounding_trace=GroundingTrace(tuple(all_grounding_records)),
     )
     return DomainComposition(instance=instance, imports=tuple(imports))
 
@@ -150,7 +158,12 @@ def _import_component(
     target: KernelRegistry,
     component: CompositionComponent,
     alias: str,
-) -> tuple[RegistryImport, tuple[Fact, ...], tuple[Goal, ...]]:
+) -> tuple[
+    RegistryImport,
+    tuple[Fact, ...],
+    tuple[Goal, ...],
+    tuple[GroundingRecord, ...],
+]:
     source = component.instance.registry
     function_map = {}
     for name, function in sorted(source.functions.items()):
@@ -260,8 +273,18 @@ def _import_component(
             fact.status,
             fact.source,
             fact.confidence,
+            assertion_status=fact.assertion_status,
+            evidence_status=fact.evidence_status,
         )
         for fact in component.instance.state.facts
+    )
+    grounding_records = tuple(
+        remap_grounding_record(
+            record,
+            remap_atom,
+            candidate_id_prefix=alias,
+        )
+        for record in component.instance.grounding_trace.records
     )
     goals = (
         tuple(
@@ -281,6 +304,7 @@ def _import_component(
         ),
         facts,
         goals,
+        grounding_records,
     )
 
 

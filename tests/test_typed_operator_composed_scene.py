@@ -159,6 +159,12 @@ class SceneThresholdReasoningTests(unittest.TestCase):
             instance.metadata["operator_domains"],
             ("vision", "math", "language"),
         )
+        grounding_audit = instance.grounding_trace.audit(instance.state.facts)
+        self.assertTrue(grounding_audit.coverage_complete)
+        self.assertEqual(
+            instance.metadata["grounding"]["record_count"],
+            len(instance.grounding_trace.records),
+        )
 
     def test_korean_query_uses_the_same_three_stage_program(self) -> None:
         _instance, result = _solve(

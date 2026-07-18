@@ -4,11 +4,15 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 from ..composition import CompositionComponent, compose_domain_instances
+from ..grounding import (
+    GroundingAuthority,
+    GroundingDisposition,
+    grounding_payload_digest,
+    make_grounding_record,
+)
 from ..model import (
     AssertionStatus,
     EvidenceStatus,
-    Fact,
-    FactStatus,
     Goal,
     OperatorFamily,
     Rule,
@@ -189,19 +193,29 @@ class NumericComparisonAdapter:
         left_answer = Fraction(str(left.metadata["answer"]))
         right_answer = Fraction(str(right.metadata["answer"]))
         truth_value = _compare(parsed.operator, left_answer, right_answer)
+        input_digest = grounding_payload_digest(problem.expression)
+        request_record = make_grounding_record(
+            domain="math",
+            statement=str(request),
+            atom=request,
+            producer_id="exact_numeric_comparison_parser",
+            source="math_comparison_parser",
+            disposition=GroundingDisposition.OBSERVED,
+            authority=GroundingAuthority.DETERMINISTIC_ADAPTER,
+            assertion_status=AssertionStatus.EXPLICIT,
+            evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+            rationale="exact comparison parser verified the requested relation",
+            input_digest=input_digest,
+            evidence=(f"input:{input_digest}",),
+        )
+        grounding_trace = composition.instance.grounding_trace.with_record(
+            request_record
+        )
         return DomainInstance(
             registry=registry,
             state=WorldState(
                 composition.instance.state.facts
-                + (
-                    Fact(
-                        request,
-                        FactStatus.OBSERVED,
-                        "math_comparison_parser",
-                        assertion_status=AssertionStatus.EXPLICIT,
-                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
-                    ),
-                )
+                + ((request_record.fact,) if request_record.fact is not None else ())
             ),
             goals=(Goal(result_atom, label=problem.expression.strip()),),
             domain="math",
@@ -226,7 +240,9 @@ class NumericComparisonAdapter:
                 + int(right.metadata["node_count"])
                 + 1,
                 "reviewed_examples": 0,
+                "grounding": grounding_trace.to_dict(include_records=False),
             },
+            grounding_trace=grounding_trace,
         )
 
     @staticmethod
