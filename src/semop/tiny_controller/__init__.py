@@ -20,6 +20,13 @@ from .grounding_features import (
     encode_grounding_candidate,
     grounding_feature_support,
 )
+from .grounding_curriculum import (
+    DomainGroundingCurriculumAudit,
+    GroundingCurriculumAudit,
+    GroundingCurriculumSelection,
+    audit_grounding_curriculum_selection,
+    select_feature_novel_grounding_examples,
+)
 from .grounding_policy import (
     GroundingPolicyOutcome,
     GroundingPolicyReport,
@@ -57,6 +64,9 @@ __all__ = [
     "DomainGroundingMetrics",
     "GROUNDING_FEATURE_VERSION",
     "GroundingFeatureVector",
+    "DomainGroundingCurriculumAudit",
+    "GroundingCurriculumAudit",
+    "GroundingCurriculumSelection",
     "GroundingLearningBudget",
     "GroundingLearningResult",
     "GroundingOnlineLearningResult",
@@ -88,6 +98,8 @@ __all__ = [
     "grounding_feature_support",
     "evaluate_grounding_policy",
     "grounding_risk_coverage_curve",
+    "audit_grounding_curriculum_selection",
     "select_grounding_review_candidates",
+    "select_feature_novel_grounding_examples",
     "stable_bucket",
 ]

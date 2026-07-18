@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,8 +16,13 @@ from semop.kernel import (
     GroundingLearningExample,
     GroundingTrace,
     KernelRegistry,
+    LearningSplit,
+    SemanticGroundingFeatureProfile,
+    generate_operator_boundary_semantic_benchmark,
     grounding_payload_digest,
     make_grounding_candidate,
+    profile_semantic_grounding_examples,
+    programmatic_semantic_learning_examples,
     promote_grounding_proposal,
     stage_grounding_proposal,
 )
@@ -29,10 +35,12 @@ from semop.tiny_controller import (
     SparseGroundingPolicy,
     VerifiedGroundingLearningLoop,
     VerifiedGroundingOnlineLearningLoop,
+    audit_grounding_curriculum_selection,
     audit_grounding_split,
     encode_grounding_candidate,
     evaluate_grounding_policy,
     grounding_risk_coverage_curve,
+    select_feature_novel_grounding_examples,
     select_grounding_review_candidates,
 )
 
@@ -189,6 +197,111 @@ class GroundingFeatureTests(unittest.TestCase):
                 signal=1.0,
                 sensor_name="detector.verified_label",
             )
+
+    def test_numeric_sensor_basis_exposes_label_free_operator_boundaries(self) -> None:
+        cases = (
+            (0.0, "zero"),
+            (0.75, "fractional"),
+            (1.0, "unit"),
+            (-2.0, "superunit"),
+        )
+        for signal, expected_state in cases:
+            with self.subTest(signal=signal):
+                values = dict(
+                    encode_grounding_candidate(
+                        _candidate("vision", f"basis:{signal}", signal=signal)
+                    ).values
+                )
+                prefix = "sensor:shared:measurement.consistency:state:"
+                self.assertEqual(values[f"{prefix}{expected_state}"], 1.0)
+                self.assertEqual(
+                    values[f"{prefix}{'zero' if signal == 0.0 else 'nonzero'}"],
+                    1.0,
+                )
+                self.assertEqual(
+                    values[
+                        "derived:interaction:predicate.supported|"
+                        f"measurement.consistency:state:{expected_state}"
+                    ],
+                    1.0,
+                )
+
+    def test_old_feature_artifact_is_rejected_after_basis_version_change(self) -> None:
+        artifact = json.loads(SparseGroundingPolicy().to_artifact().decode("utf-8"))
+        artifact["feature_version"] = 3
+
+        with self.assertRaisesRegex(ValueError, "feature version mismatch"):
+            SparseGroundingPolicy.from_artifact(
+                json.dumps(artifact, sort_keys=True).encode("utf-8")
+            )
+
+    def test_unseen_typed_decision_signature_forces_abstention(self) -> None:
+        candidate = replace(
+            _candidate("math", "decision-signature", signal=1.0),
+            sensor_features=(
+                ("math.kind.numeric_comparison", 1.0),
+                ("math.relation.less", 1.0),
+                ("math.relation_margin", 0.0),
+            ),
+        )
+        vector = encode_grounding_candidate(candidate)
+        raw_support = tuple(
+            sorted(
+                (name, 2)
+                for name, value in vector.values
+                if value and name.startswith("sensor:shared:")
+            )
+        )
+        policy = SparseGroundingPolicy(feature_support=raw_support)
+
+        prediction = policy.predict(candidate)
+
+        self.assertEqual(prediction.feature_support, 0)
+        self.assertIs(prediction.outcome, GroundingPolicyOutcome.ABSTAIN)
+        self.assertTrue(
+            any(
+                name.startswith("derived:decision:math.relation.less:")
+                for name, value in vector.values
+                if value
+            )
+        )
+
+
+class GroundingCurriculumTests(unittest.TestCase):
+    def test_feature_novel_selection_is_balanced_deterministic_and_covering(self) -> None:
+        pool = profile_semantic_grounding_examples(
+            programmatic_semantic_learning_examples(
+                generate_operator_boundary_semantic_benchmark(
+                    per_domain=32,
+                    split=LearningSplit.TRAIN,
+                    seed=47,
+                    namespace="feature-novel-curriculum",
+                )
+            ),
+            SemanticGroundingFeatureProfile.PRIMITIVES_ONLY,
+        )
+        selected = select_feature_novel_grounding_examples(pool, per_domain=5)
+        repeated = select_feature_novel_grounding_examples(pool, per_domain=5)
+        prefix = tuple(
+            example
+            for domain in ("language", "math", "vision")
+            for example in [
+                item for item in pool if item.candidate.domain == domain
+            ][:5]
+        )
+        prefix_audit = audit_grounding_curriculum_selection(prefix, pool)
+
+        self.assertEqual(selected.examples, repeated.examples)
+        self.assertEqual(selected.selection_digest, repeated.selection_digest)
+        self.assertEqual(len(selected.examples), 15)
+        self.assertGreaterEqual(
+            selected.audit.feature_state_coverage,
+            prefix_audit.feature_state_coverage,
+        )
+        for domain in selected.audit.by_domain:
+            self.assertEqual(domain.selected_examples, 5)
+            self.assertGreaterEqual(domain.accept_examples, 1)
+            self.assertGreaterEqual(domain.reject_examples, 1)
 
 
 class VerifiedGroundingLearningTests(unittest.TestCase):

@@ -11,7 +11,7 @@ from semop.kernel.model import Symbol, Term, TermApplication
 from .features import stable_bucket
 
 
-GROUNDING_FEATURE_VERSION = 1
+GROUNDING_FEATURE_VERSION = 4
 DEFAULT_SURFACE_BUCKETS = 512
 MAX_SURFACE_TOKENS = 64
 MAX_SENSOR_ABS_VALUE = 16.0
@@ -70,10 +70,18 @@ def encode_grounding_candidate(
         features[f"shared:argument:{index}:type:{argument.type.name}"] = 1.0
         _encode_term_shape(argument, f"shared:argument:{index}", features, depth=0)
 
+    sensor_values: list[tuple[str, float]] = []
     for name, value in candidate.sensor_features:
         clipped = max(-MAX_SENSOR_ABS_VALUE, min(MAX_SENSOR_ABS_VALUE, value))
-        features[f"sensor:{candidate.domain}:{name}"] = clipped
-        features[f"sensor:shared:{name}"] = clipped
+        sensor_values.append((name, clipped))
+        domain_prefix = f"sensor:{candidate.domain}:{name}"
+        shared_prefix = f"sensor:shared:{name}"
+        features[domain_prefix] = clipped
+        features[shared_prefix] = clipped
+        for state in _sensor_basis_states(clipped):
+            features[f"{domain_prefix}:state:{state}"] = 1.0
+            features[f"{shared_prefix}:state:{state}"] = 1.0
+    _encode_sensor_interactions(candidate, tuple(sensor_values), features)
 
     anonymized = _anonymize_statement(candidate)
     tokens = _surface_tokens(anonymized)[:MAX_SURFACE_TOKENS]
@@ -117,6 +125,13 @@ def grounding_feature_support(
         for name, value in values
         if value and name.startswith("sensor:shared:")
     ]
+    decision_names = [
+        name
+        for name, value in values
+        if value and name.startswith("derived:decision:")
+    ]
+    if any(support.get(name, 0) == 0 for name in decision_names):
+        return 0
     if sensor_names:
         return min(support.get(name, 0) for name in sensor_names)
     return max(
@@ -126,6 +141,83 @@ def grounding_feature_support(
             if value and name != "shared:bias"
         ),
         default=0,
+    )
+
+
+def _sensor_basis_states(value: float) -> tuple[str, ...]:
+    """Encode operator boundaries without consulting a candidate label."""
+
+    tolerance = 1e-12
+    if abs(value) <= tolerance:
+        return ("zero",)
+    states = ["nonzero", "positive" if value > 0.0 else "negative"]
+    magnitude = abs(value)
+    if abs(magnitude - 1.0) <= tolerance:
+        states.append("unit")
+    elif magnitude < 1.0:
+        states.append("fractional")
+    else:
+        states.append("superunit")
+    return tuple(states)
+
+
+def _encode_sensor_interactions(
+    candidate: GroundingCandidate,
+    sensor_values: tuple[tuple[str, float], ...],
+    features: dict[str, float],
+) -> None:
+    """Cross typed operator roles with numeric states in a bounded namespace."""
+
+    anchors = {f"predicate.{candidate.atom.predicate.name.lower()}"}
+    for name, value in sensor_values:
+        if abs(value - 1.0) <= 1e-12 and any(
+            marker in name for marker in (".goal.", ".kind.", ".relation.")
+        ):
+            anchors.add(name)
+    states = tuple(
+        (name, state)
+        for name, value in sensor_values
+        if not name.startswith("context.")
+        for state in _sensor_basis_states(value)
+    )
+    for anchor in sorted(anchors):
+        for name, state in states:
+            if name == anchor:
+                continue
+            features[
+                f"derived:interaction:{anchor}|{name}:state:{state}"
+            ] = 1.0
+    decision_states = tuple(
+        sorted(
+            f"{name}:state:{state}"
+            for name, value in sensor_values
+            if _is_decision_sensor(name)
+            for state in _sensor_basis_states(value)
+        )
+    )
+    if decision_states:
+        signature = grounding_payload_digest("|".join(decision_states))[:24]
+        for anchor in sorted(anchors):
+            features[f"derived:decision:{anchor}:{signature}"] = 1.0
+
+
+def _is_decision_sensor(name: str) -> bool:
+    return any(
+        marker in name
+        for marker in (
+            ".absolute_gap",
+            ".area.",
+            ".area_margin",
+            ".boundary",
+            ".count_delta",
+            ".count_gap",
+            ".directional_margin",
+            ".extent_similarity",
+            ".fill_ratio",
+            ".order.",
+            ".premise_",
+            ".relation_margin",
+        )
     )
 
 

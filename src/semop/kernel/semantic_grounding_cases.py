@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from .runtime import DomainKind
 from .semantic_benchmark import SemanticBenchmark, SemanticBenchmarkCase
+from .semantic_grounding_case_common import (
+    PROGRAMMATIC_ORACLE_ID,
+    make_programmatic_semantic_case,
+)
 from .self_learning import LearningSplit
-
-
-PROGRAMMATIC_ORACLE_ID = "semop:controlled-semantic-oracle-v1"
 
 
 def generate_controlled_semantic_benchmark(
@@ -105,7 +106,7 @@ def _language_case(
     else:
         text = f"Goal: {goal}; Requires: {first}; Satisfied: {second}"
         expected, phenomenon = False, "entity_binding"
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-language-{index:04d}",
         domain=DomainKind.LANGUAGE,
         payload={"text": text, "use_legacy_heuristics": False},
@@ -143,7 +144,7 @@ def _math_case(
     else:
         expression = f"{base * other} / {other} <= {base}"
         expected, phenomenon = True, "comparison_boundary"
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-math-{index:04d}",
         domain=DomainKind.MATH,
         payload={"expression": expression},
@@ -199,7 +200,7 @@ def _vision_case(
             }
             expected = not reversed_area
             phenomenon = "pixel_area_order" if expected else "area_relation_direction"
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-vision-{index:04d}",
         domain=DomainKind.VISION,
         payload={
@@ -270,7 +271,7 @@ def _structural_language_case(
             f"{first} is ready"
         )
         expected, phenomenon = True, "structural_language_duplicate_evidence"
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-language-{index:04d}",
         domain=DomainKind.LANGUAGE,
         payload={"text": text, "use_legacy_heuristics": False},
@@ -319,7 +320,7 @@ def _structural_math_case(
             f"({base} * ({other} + 1) - {base} * {other}) >= {base}"
         )
         expected, phenomenon = True, "structural_math_derived_boundary"
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-math-{index:04d}",
         domain=DomainKind.MATH,
         payload={"expression": expression},
@@ -407,7 +408,7 @@ def _structural_vision_case(
             if expected
             else "structural_vision_larger_canvas_area_reversal"
         )
-    return _programmatic_case(
+    return make_programmatic_semantic_case(
         case_id=f"{namespace}-vision-{index:04d}",
         domain=DomainKind.VISION,
         payload={
@@ -421,41 +422,6 @@ def _structural_vision_case(
         split=split,
         difficulty=2,
         extra_tags=("structural_holdout", "unseen_raster_structure"),
-    )
-
-
-def _programmatic_case(
-    *,
-    case_id: str,
-    domain: DomainKind,
-    payload: Mapping[str, Any],
-    expected: bool,
-    phenomenon: str,
-    split: LearningSplit,
-    difficulty: int = 1,
-    extra_tags: tuple[str, ...] = (),
-) -> SemanticBenchmarkCase:
-    return SemanticBenchmarkCase.from_mapping(
-        {
-            "case_id": case_id,
-            "domain": domain.value,
-            "payload": dict(payload),
-            "expected_solved": expected,
-            "phenomenon": phenomenon,
-            "rationale": (
-                "controlled generator independently specifies whether the exact "
-                "typed goal is supported by the raw input"
-            ),
-            "split": split.value,
-            "difficulty": difficulty,
-            "author": PROGRAMMATIC_ORACLE_ID,
-            "tags": [
-                "programmatic_oracle",
-                "controlled_semantics",
-                "closed_world_support",
-                *extra_tags,
-            ],
-        }
     )
 
 

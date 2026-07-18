@@ -46,6 +46,7 @@ python tools/eval/evaluate_semantic_benchmark.py --gate-semantic-correctness 1.0
 python tools/eval/evaluate_grounding_self_learning.py --checkpoint-root artifacts/grounding_self_learning --output artifacts/grounding_self_learning/report.json
 python tools/eval/evaluate_semantic_grounding_learning.py --checkpoint-root artifacts/semantic_grounding_learning --output artifacts/semantic_grounding_learning/report.json
 python tools/eval/evaluate_semantic_grounding_ablation.py --output artifacts/semantic_grounding_ablation_v1.json
+python tools/eval/evaluate_semantic_grounding_curriculum.py --require-pass --output artifacts/semantic_grounding_curriculum.json
 python tools/eval/review_semantic_grounding.py --case-id language-ready-two-requirements
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db stats
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db list --status pending
@@ -136,6 +137,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/sparse_grounding_self_learning.md`: shared accept/reject/abstain policy, continual replay, risk-coverage gates, evaluation, and honest limits
 - `docs/semantic_grounding_self_learning.md`: exact candidate reviews and real-adapter 0/5/20/100 semantic grounding evaluation
 - `docs/semantic_data_acquisition.md`: pinned public sources, audited downloads, and generated/model-proposed data trust rules
+- `docs/operator_boundary_curriculum.md`: verified synthetic/public/model data authority, typed decision features, feature-novel selection, and honest low-shot results
 - `docs/lmv_semantic_benchmark.md`: digest-bound review workflow and authority-separated three-domain semantic evaluation
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
@@ -161,6 +163,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_raw_grounded_self_learning.py`: language-only raw training followed by untouched raw math/pixel transfer gates
 - `tools/eval/evaluate_semantic_grounding_learning.py`: controlled raw LMV candidate learning, rollback, untouched test, and human-review audit
 - `tools/eval/evaluate_semantic_grounding_ablation.py`: surface/margin shortcut audit against unseen compositions and raster structures
+- `tools/eval/evaluate_semantic_grounding_curriculum.py`: prefix-vs-feature-novel low-resource A/B with fail-closed development extrapolation gates
 - `tools/eval/review_semantic_grounding.py`: inspect and attest one exact typed candidate label
 - `tools/eval/review_typed_experience.py`: inspect, attest, review, and export persistent typed runtime experience
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
@@ -176,7 +179,7 @@ grounding boundary and reduces untouched raw math and pixel expansions from 6 to
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
 online reviewed-learning and sparse grounding self-learning milestones, local
-validation now passes 288 typed-operator tests plus 20 subtests and all 655
+validation now passes 306 typed-operator tests plus 24 subtests and all 673
 repository tests; `shadow`
 remains the default.
 

@@ -30,6 +30,10 @@ from .semantic_grounding_features import (
     semantic_candidate_statement,
     semantic_sensor_features,
 )
+from .semantic_grounding_curriculum_cases import (
+    generate_extrapolation_semantic_benchmark,
+    generate_operator_boundary_semantic_benchmark,
+)
 from .self_learning import LearningSplit
 
 
@@ -604,6 +608,8 @@ __all__ = [
     "build_semantic_grounding_targets",
     "create_semantic_grounding_review",
     "generate_controlled_semantic_benchmark",
+    "generate_extrapolation_semantic_benchmark",
+    "generate_operator_boundary_semantic_benchmark",
     "generate_structural_semantic_benchmark",
     "load_semantic_grounding_reviews",
     "programmatic_semantic_learning_examples",

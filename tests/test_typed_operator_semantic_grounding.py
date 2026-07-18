@@ -18,6 +18,8 @@ from semop.kernel import (
     create_semantic_grounding_review,
     create_semantic_review,
     generate_controlled_semantic_benchmark,
+    generate_extrapolation_semantic_benchmark,
+    generate_operator_boundary_semantic_benchmark,
     generate_structural_semantic_benchmark,
     load_semantic_benchmark,
     load_semantic_grounding_reviews,
@@ -292,3 +294,71 @@ def test_structural_holdout_is_disjoint_and_replay_verified() -> None:
         example.authority is GroundingAuthority.EXTERNAL_VERIFIER
         for example in examples
     )
+
+
+def test_no_margin_profile_retains_canonical_relation_role_primitives() -> None:
+    structural = generate_structural_semantic_benchmark(
+        per_domain=10,
+        split=LearningSplit.HELDOUT,
+        seed=37,
+        namespace="role-primitives",
+    )
+    examples = profile_semantic_grounding_examples(
+        programmatic_semantic_learning_examples(structural),
+        SemanticGroundingFeatureProfile.NO_MARGIN,
+    )
+    above = next(
+        example for example in examples if example.candidate.atom.predicate.name == "ABOVE"
+    )
+    area = next(
+        example
+        for example in examples
+        if example.candidate.atom.predicate.name == "LARGER_AREA"
+    )
+
+    above_features = dict(above.candidate.sensor_features)
+    area_features = dict(area.candidate.sensor_features)
+    assert "vision.relation.first_oriented_position" in above_features
+    assert "vision.relation.second_oriented_position" in above_features
+    assert "vision.area.first_role_scale" in area_features
+    assert "vision.area.second_role_scale" in area_features
+    assert all("margin" not in name for name in above_features)
+    assert all("margin" not in name for name in area_features)
+
+
+def test_boundary_curriculum_and_extrapolation_are_disjoint_and_verified() -> None:
+    boundary = generate_operator_boundary_semantic_benchmark(
+        per_domain=26,
+        split=LearningSplit.TRAIN,
+        seed=41,
+        namespace="boundary-curriculum",
+    )
+    extrapolation = generate_extrapolation_semantic_benchmark(
+        per_domain=12,
+        split=LearningSplit.HELDOUT,
+        seed=43,
+        namespace="final-extrapolation",
+    )
+
+    boundary_examples = programmatic_semantic_learning_examples(boundary)
+    extrapolation_examples = programmatic_semantic_learning_examples(extrapolation)
+
+    assert len(boundary_examples) == 78
+    assert len(extrapolation_examples) == 36
+    assert {case.phenomenon for case in boundary.cases}.isdisjoint(
+        {case.phenomenon for case in extrapolation.cases}
+    )
+    assert {case.digest for case in boundary.cases}.isdisjoint(
+        {case.digest for case in extrapolation.cases}
+    )
+    assert all("operator_boundary_curriculum" in case.tags for case in boundary.cases)
+    assert all("extrapolation_holdout" in case.tags for case in extrapolation.cases)
+    assert {
+        "boundary_math_less_equal_miss",
+        "boundary_math_greater_equal_miss",
+        "boundary_math_equal_near_miss",
+        "boundary_math_less_strict_boundary_miss",
+        "boundary_math_greater_strict_boundary_miss",
+    } <= {case.phenomenon for case in boundary.cases}
+    assert {example.label for example in boundary_examples} == set(GroundingLabel)
+    assert {example.label for example in extrapolation_examples} == set(GroundingLabel)

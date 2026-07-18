@@ -256,6 +256,14 @@ def _math_sensor_features(
         "<=": -normalized_delta,
     }[operator]
     features[f"math.relation.{_relation_name(operator)}"] = 1.0
+    if operator in {">", ">=", "<", "<="}:
+        orientation = -1.0 if operator in {">", ">="} else 1.0
+        features["math.order.first_oriented_value"] = orientation * float(
+            left / scale
+        )
+        features["math.order.second_oriented_value"] = orientation * float(
+            right / scale
+        )
     features["math.relation_margin"] = max(-1.0, min(1.0, relation_margin))
     features["operator.support_margin"] = max(
         -1.0,
@@ -303,6 +311,17 @@ def _vision_sensor_features(
         if first is not None and second is not None:
             first_x, first_y = first["centroid"]
             second_x, second_y = second["centroid"]
+            if predicate in {"LEFT_OF", "RIGHT_OF"}:
+                first_axis, second_axis, extent = first_x, second_x, width
+            else:
+                first_axis, second_axis, extent = first_y, second_y, height
+            orientation = -1.0 if predicate in {"RIGHT_OF", "BELOW"} else 1.0
+            features["vision.relation.first_oriented_position"] = (
+                orientation * float(first_axis) / extent
+            )
+            features["vision.relation.second_oriented_position"] = (
+                orientation * float(second_axis) / extent
+            )
             directional_margin = {
                 "LEFT_OF": (second_x - first_x) / width,
                 "RIGHT_OF": (first_x - second_x) / width,
@@ -331,6 +350,9 @@ def _vision_sensor_features(
         if first is not None and second is not None:
             first_area = int(first["area"])
             second_area = int(second["area"])
+            area_scale = max(1, first_area, second_area)
+            features["vision.area.first_role_scale"] = first_area / area_scale
+            features["vision.area.second_role_scale"] = second_area / area_scale
             features["vision.area_margin"] = (
                 (first_area - second_area) / max(1, first_area, second_area)
             )

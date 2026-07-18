@@ -268,10 +268,12 @@ def _generate_examples(
     novel_sensor_every: int = 0,
 ):
     examples = []
-    for domain_index, domain in enumerate(DOMAINS):
+    for domain in DOMAINS:
         for index in range(per_domain):
             accepted = index % 5 == 0
-            magnitude = 0.25 if (index + seed + domain_index) % 7 == 0 else 1.0
+            # A five-example/domain fixture must support both common negative
+            # magnitude states at least twice across the shared LMV policy.
+            magnitude = 0.25 if index % 3 == 2 else 1.0
             signal = magnitude if accepted else -magnitude
             sensor_name = (
                 f"novel.{domain}.consistency"
