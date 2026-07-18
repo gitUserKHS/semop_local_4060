@@ -167,6 +167,7 @@ class TinyControllerTests(unittest.TestCase):
             self.assertEqual(summary["verified_synthetic_traces"], 1)
             self.assertEqual(summary["decision_examples"], 5)
             self.assertEqual(summary["hard_negative_records"], 20)
+            self.assertEqual(summary["feature_profile"], "typed_structure")
             policy = NumpyTinyController.load(output)
             self.assertEqual(policy.parameter_count, summary["parameter_count"])
 
@@ -384,7 +385,7 @@ class TinyControllerTests(unittest.TestCase):
         candidate = learner.train(cases)
         restored = learner.restore(candidate.artifact)
 
-        self.assertEqual(candidate.kind, "tiny-controller-v5")
+        self.assertEqual(candidate.kind, "tiny-controller-v6")
         self.assertEqual(candidate.artifact_suffix, ".npz")
         self.assertEqual(candidate.parameter_count, restored.parameter_count)
         self.assertEqual(candidate.training_updates, (len(cases) + 1))

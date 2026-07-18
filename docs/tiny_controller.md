@@ -18,21 +18,25 @@ model.
 | Shared relation message blocks | 2 |
 | Internal recurrent passes | 4 |
 | Confident greedy margin | 0.1 logit |
-| Name-free token buckets | 24,576 |
+| Hashed token buckets | 24,576 |
 | Relation buckets | 2,048 |
 | Operator buckets | 2,048 |
 | Parameter count | 5,837,578 |
 | Float32 uncompressed size | about 22.3 MiB |
 | Hard cap | 15,000,000 parameters / 64 MiB artifact |
 
-Symbols are anonymized by type and relational role. The model receives type,
-predicate, fact status, verifier-goal/frontier role, operator schema, argument type,
-and proof-state features. Each operator embedding pools its domain-neutral family, semantic tags, typed
-precondition/effect signatures, cost, and schema name. Raw point, object, and variable
-names are not model features. Training-only `hard_negative` and `synthetic` tags are
-explicitly removed before encoding. The current NumPy artifact format version is `5`;
-v2 zero-head and v3 unscaled-head artifacts are migrated while loading, and v4 weight
-arrays remain loadable under the bounded v5 scoring contract.
+Symbols are anonymized by type and relational role. `ControllerFeatureProfile.FULL`
+retains predicate, function, schema, and semantic tag identities for artifact
+compatibility. New training defaults to `TYPED_STRUCTURE`, which removes those
+identities while retaining nominal types, arity, verification/symmetry shape,
+domain-neutral operator family, fact/goal roles, cost, and goal compatibility.
+Symmetric predicate/function arguments are re-sorted by anonymous node index so
+their prior symbol-name ordering cannot leak into the graph. The profile also drops
+ordinal anonymous-node tokens and represents function arguments as typed relation
+edges instead of hashed node-id strings.
+Training-only `hard_negative` and `synthetic` tags are hidden in both profiles.
+The current NumPy artifact format version is `6`; v2-v5 arrays remain loadable and
+missing profile metadata migrates to `full`. See `controller_feature_profiles.md`.
 
 Each recurrent pass performs relation-aware message aggregation over term nodes.
 The final state vector feeds:
@@ -157,7 +161,8 @@ python tools/train/train_tiny_controller.py `
   --output artifacts/tiny_debug.npz `
   --examples-per-domain 1 `
   --epochs 1 `
-  --debug-small
+  --debug-small `
+  --feature-profile typed_structure
 ```
 
 Remove `--debug-small` to train the default 5.84M architecture. The command writes
@@ -169,7 +174,7 @@ Use `--curriculum language-math-vision-composed` to add replayable 4/5-step
 vision-count -> exact-comparison -> conjunctive-language traces as a fourth domain.
 These curricula are synthetic and record `reviewed_examples: 0`; none may be
 reported as a 5/20/100-shot human-reviewed run. The summary records the curriculum,
-trained domain list, and verified trace count per domain.
+trained domain list, feature profile, and verified trace count per domain.
 
 ```powershell
 python tools/train/train_tiny_controller.py `
@@ -207,7 +212,12 @@ executor or replay verifier.
 ## Current Status
 
 The architecture, NumPy artifact format, PyTorch mirror, loss, trace extraction, and
-fallback path are implemented. A leakage-controlled full-model smoke trained on two
+fallback path are implemented. A dependency-free identity ablation now removes 224
+identity tokens and reduces the LMV operator vocabulary from 105 to 41 while keeping
+100% action top-1 and primitive replay on all three symbolic domain holdouts. This is
+a small fixed-seed structural gate, not open-domain evidence.
+
+A leakage-controlled full-model smoke trained on two
 synthetic traces per holdout and transferred goal-binding selection to all three
 unseen domains. Language and math passed the 30% held-out median reduction gate;
 vision's dedicated distractor fell from 13 to 1 while its median remained 1 because
@@ -231,6 +241,11 @@ surpassed symbolic guidance.
   and halt behavior remain ablation targets rather than assumed truths.
 - [Generalist Neural Algorithmic Learner](https://arxiv.org/abs/2209.11142) motivates
   sharing a graph processor across algorithms and domains.
+- [GOAL](https://proceedings.iclr.cc/paper_files/paper/2025/hash/826aea2253363fe04e8c4991b2a8869e-Abstract-Conference.html)
+  supports a shared backbone with light domain adapters for heterogeneous typed
+  combinatorial problems.
+- [Shortcut Learning](https://www.nature.com/articles/s42256-020-00257-z) motivates
+  the explicit full-vs-typed-structure identity ablation and domain holdouts.
 - [Faithful Compositional Networks](https://arxiv.org/abs/2005.00724) supports keeping
   explanation fidelity separate from neural intermediate activations; SemOp uses
   executable proof replay instead.

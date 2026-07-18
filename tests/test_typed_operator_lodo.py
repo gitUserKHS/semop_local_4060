@@ -14,6 +14,7 @@ for path in (SRC, EVAL):
         sys.path.insert(0, str(path))
 
 from run_lodo_controller_experiment import run_lodo_experiment
+from semop.tiny_controller import ControllerFeatureProfile
 
 
 class LodoControllerExperimentTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class LodoControllerExperimentTests(unittest.TestCase):
                 epochs=1,
                 debug_small=True,
                 max_expansions=2_000,
+                feature_profile=ControllerFeatureProfile.TYPED_STRUCTURE,
             )
             saved_report = Path(report["report_path"])
             self.assertTrue(saved_report.exists())
@@ -38,6 +40,7 @@ class LodoControllerExperimentTests(unittest.TestCase):
         run = report["runs"]["vision"]
         self.assertEqual(run["trained_domains"], ["language", "math"])
         self.assertEqual(run["evaluation_mode"], "verified_domain_held_out")
+        self.assertEqual(run["feature_profile"], "typed_structure")
         self.assertEqual(run["proof_soundness"], 1.0)
         self.assertEqual(run["composed_v4"]["proof_soundness"], 1.0)
         self.assertEqual(run["composed_v4"]["false_positives"], 0)

@@ -277,7 +277,7 @@ class TypedCurriculumTests(unittest.TestCase):
         ).run(training, heldout)
 
         iteration = result.rounds[0].learning_iteration
-        self.assertEqual(iteration.candidate_kind, "tiny-controller-v5")
+        self.assertEqual(iteration.candidate_kind, "tiny-controller-v6")
         self.assertEqual(iteration.verified_training_traces, 6)
         self.assertGreater(iteration.training_updates, iteration.decision_cases)
         self.assertEqual(iteration.candidate_metrics.proof_soundness, 1.0)

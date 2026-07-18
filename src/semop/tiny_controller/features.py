@@ -2,13 +2,30 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from enum import Enum
 from hashlib import blake2b
 from typing import Sequence
 
-from semop.kernel import Goal, GroundAction, Symbol, Term, TermApplication, WorldState
+from semop.kernel import (
+    Atom,
+    Goal,
+    GroundAction,
+    Predicate,
+    Symbol,
+    Term,
+    TermApplication,
+    WorldState,
+)
 
 
 ACTION_STRUCTURAL_FEATURE_COUNT = 8
+
+
+class ControllerFeatureProfile(str, Enum):
+    """Controls whether the policy may observe domain-specific identities."""
+
+    FULL = "full"
+    TYPED_STRUCTURE = "typed_structure"
 
 
 @dataclass(frozen=True)
@@ -34,6 +51,7 @@ class CanonicalProblemGraph:
     goals: tuple[CanonicalRelation, ...]
     actions: tuple[CanonicalAction, ...]
     term_to_node: dict[Term, int]
+    feature_profile: ControllerFeatureProfile
 
 
 def stable_bucket(value: str, buckets: int) -> int:
@@ -45,9 +63,12 @@ def canonicalize_problem(
     state: WorldState,
     goals: Sequence[Goal],
     actions: Sequence[GroundAction] = (),
+    *,
+    feature_profile: ControllerFeatureProfile | str = ControllerFeatureProfile.FULL,
 ) -> CanonicalProblemGraph:
     """Anonymize symbol names while preserving type and relational roles."""
 
+    profile = ControllerFeatureProfile(feature_profile)
     all_atoms = [fact.atom for fact in state.facts] + [goal.atom for goal in goals]
     symbols: set[Symbol] = set()
 
@@ -67,17 +88,23 @@ def canonicalize_problem(
 
     role_signatures: dict[Symbol, Counter[str]] = defaultdict(Counter)
     for fact in state.facts:
+        predicate = _predicate_token(fact.atom.predicate, profile)
         for index, argument in enumerate(fact.atom.arguments):
             for symbol in _symbols_in(argument):
                 role_signatures[symbol][
-                    f"fact:{fact.atom.predicate.name}:{index}:{fact.status.value}"
+                    "fact:"
+                    f"{predicate}:"
+                    f"{_argument_role(fact.atom.predicate, index, profile)}:"
+                    f"{fact.status.value}"
                 ] += 1
     for goal in goals:
         role = _goal_role(goal)
+        predicate = _predicate_token(goal.atom.predicate, profile)
         for index, argument in enumerate(goal.atom.arguments):
             for symbol in _symbols_in(argument):
                 role_signatures[symbol][
-                    f"{role}:{goal.atom.predicate.name}:{index}"
+                    f"{role}:{predicate}:"
+                    f"{_argument_role(goal.atom.predicate, index, profile)}"
                 ] += 1
 
     ordered_symbols = sorted(
@@ -99,8 +126,13 @@ def canonicalize_problem(
             f"role:{name}:{count}"
             for name, count in sorted(role_signatures[symbol].items())
         )
+        identity_token = (
+            f"anon:{symbol.type.name}:{anonymous_index}"
+            if profile is ControllerFeatureProfile.FULL
+            else "term:symbol"
+        )
         node_tokens.append(
-            (f"type:{symbol.type.name}", f"anon:{symbol.type.name}:{anonymous_index}")
+            (f"type:{symbol.type.name}", identity_token)
             + role_tokens
         )
 
@@ -129,35 +161,51 @@ def canonicalize_problem(
             raise ValueError("cyclic or incomplete term graph")
         ready.sort(
             key=lambda term: (
-                term.function.name,
-                tuple(term_to_node[arg] for arg in term.arguments),
+                _function_token(term, profile),
+                _canonical_term_argument_nodes(term, term_to_node, profile),
                 term.type.name,
             )
         )
         for term in ready:
             term_to_node[term] = len(node_tokens)
-            node_tokens.append(
-                (
+            if profile is ControllerFeatureProfile.FULL:
+                tokens = (
                     f"type:{term.type.name}",
-                    f"function:{term.function.name}",
+                    _function_token(term, profile),
                     *(
                         f"arg:{index}:node:{term_to_node[argument]}"
                         for index, argument in enumerate(term.arguments)
                     ),
                 )
-            )
+            else:
+                tokens = (
+                    f"type:{term.type.name}",
+                    "term:application",
+                    _function_token(term, profile),
+                )
+            node_tokens.append(tokens)
             pending.remove(term)
 
+    fact_relations = tuple(
+        CanonicalRelation(
+            _predicate_token(fact.atom.predicate, profile),
+            _canonical_atom_argument_nodes(
+                fact.atom,
+                term_to_node,
+                profile,
+            ),
+            fact.status.value,
+        )
+        for fact in state.facts
+    )
+    application_relations = (
+        _application_relations(applications, term_to_node)
+        if profile is ControllerFeatureProfile.TYPED_STRUCTURE
+        else ()
+    )
     relations = tuple(
         sorted(
-            (
-                CanonicalRelation(
-                    fact.atom.predicate.name,
-                    tuple(term_to_node[term] for term in fact.atom.arguments),
-                    fact.status.value,
-                )
-                for fact in state.facts
-            ),
+            fact_relations + application_relations,
             key=lambda relation: (relation.name, relation.arguments, relation.role),
         )
     )
@@ -165,8 +213,12 @@ def canonicalize_problem(
         sorted(
             (
                 CanonicalRelation(
-                    goal.atom.predicate.name,
-                    tuple(term_to_node[term] for term in goal.atom.arguments),
+                    _predicate_token(goal.atom.predicate, profile),
+                    _canonical_atom_argument_nodes(
+                        goal.atom,
+                        term_to_node,
+                        profile,
+                    ),
                     _goal_role(goal),
                 )
                 for goal in goals
@@ -176,8 +228,17 @@ def canonicalize_problem(
     )
     canonical_actions = tuple(
         CanonicalAction(
-            operator=action.operator.name,
-            operator_features=_operator_features(action, state, goals),
+            operator=(
+                action.operator.name
+                if profile is ControllerFeatureProfile.FULL
+                else f"family:{action.operator.family}"
+            ),
+            operator_features=_operator_features(
+                action,
+                state,
+                goals,
+                profile,
+            ),
             argument_nodes=tuple(term_to_node[term] for _, term in action.bindings),
             argument_types=tuple(term.type.name for _, term in action.bindings),
             structural_values=_action_structural_values(action, state, goals),
@@ -190,6 +251,7 @@ def canonicalize_problem(
         goals=goal_relations,
         actions=canonical_actions,
         term_to_node=term_to_node,
+        feature_profile=profile,
     )
 
 
@@ -209,34 +271,52 @@ def _operator_features(
     action: GroundAction,
     state: WorldState,
     goals: Sequence[Goal],
+    profile: ControllerFeatureProfile,
 ) -> tuple[str, ...]:
     features = {
-        f"schema:{action.operator.name}",
         f"family:{action.operator.family}",
         f"cost:{action.operator.cost:.2f}",
         f"structure:binding_count:{min(len(action.bindings), 8)}",
         f"structure:precondition_count:{min(len(action.preconditions), 8)}",
         f"structure:effect_count:{min(len(action.effects), 8)}",
     }
-    features.update(
-        f"tag:{tag}"
-        for tag in action.operator.tags
-        if tag not in {"hard_negative", "synthetic"}
-    )
-    features.update(
-        "precondition:"
-        + atom.predicate.name
-        + ":"
-        + ",".join(term.type.name for term in atom.arguments)
-        for atom in action.operator.preconditions
-    )
-    features.update(
-        "effect:"
-        + atom.predicate.name
-        + ":"
-        + ",".join(term.type.name for term in atom.arguments)
-        for atom in action.operator.effects
-    )
+    if profile is ControllerFeatureProfile.FULL:
+        features.add(f"schema:{action.operator.name}")
+        features.update(
+            f"tag:{tag}"
+            for tag in action.operator.tags
+            if tag not in {"hard_negative", "synthetic"}
+        )
+        features.update(
+            "precondition:"
+            + atom.predicate.name
+            + ":"
+            + ",".join(term.type.name for term in atom.arguments)
+            for atom in action.operator.preconditions
+        )
+        features.update(
+            "effect:"
+            + atom.predicate.name
+            + ":"
+            + ",".join(term.type.name for term in atom.arguments)
+            for atom in action.operator.effects
+        )
+    else:
+        features.add(
+            f"structure:guard_count:{min(len(action.operator.guards), 8)}"
+        )
+        features.update(
+            "precondition:" + _atom_signature(atom)
+            for atom in action.operator.preconditions
+        )
+        features.update(
+            "effect:" + _atom_signature(atom)
+            for atom in action.operator.effects
+        )
+        features.update(
+            f"parameter:type:{parameter.type.name}"
+            for parameter in action.operator.parameters
+        )
     verifier_atoms = tuple(
         goal.atom for goal in goals if _goal_role(goal) == "goal"
     )
@@ -283,6 +363,115 @@ def _operator_features(
         }
     )
     return tuple(sorted(features))
+
+
+def _predicate_token(
+    predicate: Predicate,
+    profile: ControllerFeatureProfile,
+) -> str:
+    if profile is ControllerFeatureProfile.FULL:
+        return predicate.name
+    types = ",".join(type_ref.name for type_ref in predicate.argument_types)
+    symmetry = ",".join(
+        ".".join(str(index) for index in group)
+        for group in predicate.symmetry_groups
+    )
+    return (
+        f"typed:arity:{predicate.arity}:types:{types}:"
+        f"verified:{str(predicate.verified).lower()}:symmetry:{symmetry or 'none'}"
+    )
+
+
+def _atom_signature(atom: Atom) -> str:
+    types = ",".join(type_ref.name for type_ref in atom.predicate.argument_types)
+    return (
+        f"typed:arity:{atom.predicate.arity}:types:{types}:"
+        f"verified:{str(atom.predicate.verified).lower()}"
+    )
+
+
+def _function_token(
+    term: TermApplication,
+    profile: ControllerFeatureProfile,
+) -> str:
+    if profile is ControllerFeatureProfile.FULL:
+        return f"function:{term.function.name}"
+    inputs = ",".join(type_ref.name for type_ref in term.function.input_types)
+    return (
+        f"function:typed:arity:{term.function.arity}:inputs:{inputs}:"
+        f"output:{term.function.output_type.name}"
+    )
+
+
+def _argument_role(
+    predicate: Predicate,
+    index: int,
+    profile: ControllerFeatureProfile,
+) -> str:
+    if profile is ControllerFeatureProfile.TYPED_STRUCTURE:
+        for group in predicate.symmetry_groups:
+            if index in group:
+                return "symmetry:" + ".".join(str(item) for item in group)
+    return str(index)
+
+
+def _canonical_atom_argument_nodes(
+    atom: Atom,
+    term_to_node: dict[Term, int],
+    profile: ControllerFeatureProfile,
+) -> tuple[int, ...]:
+    nodes = [term_to_node[term] for term in atom.arguments]
+    if profile is ControllerFeatureProfile.TYPED_STRUCTURE:
+        _sort_symmetry_groups(nodes, atom.predicate.symmetry_groups)
+    return tuple(nodes)
+
+
+def _canonical_term_argument_nodes(
+    term: TermApplication,
+    term_to_node: dict[Term, int],
+    profile: ControllerFeatureProfile,
+) -> tuple[int, ...]:
+    nodes = [term_to_node[argument] for argument in term.arguments]
+    if profile is ControllerFeatureProfile.TYPED_STRUCTURE:
+        _sort_symmetry_groups(nodes, term.function.symmetry_groups)
+    return tuple(nodes)
+
+
+def _sort_symmetry_groups(
+    values: list[int],
+    groups: tuple[tuple[int, ...], ...],
+) -> None:
+    for group in groups:
+        ordered_indices = sorted(group)
+        ordered_values = sorted(values[index] for index in group)
+        for index, value in zip(ordered_indices, ordered_values, strict=True):
+            values[index] = value
+
+
+def _application_relations(
+    applications: set[TermApplication],
+    term_to_node: dict[Term, int],
+) -> tuple[CanonicalRelation, ...]:
+    relations: list[CanonicalRelation] = []
+    for term in sorted(applications, key=lambda item: term_to_node[item]):
+        function = _function_token(term, ControllerFeatureProfile.TYPED_STRUCTURE)
+        for index, argument in enumerate(term.arguments):
+            role = _function_argument_role(term, index)
+            relations.append(
+                CanonicalRelation(
+                    f"{function}:argument:{role}",
+                    (term_to_node[term], term_to_node[argument]),
+                    "function",
+                )
+            )
+    return tuple(relations)
+
+
+def _function_argument_role(term: TermApplication, index: int) -> str:
+    for group in term.function.symmetry_groups:
+        if index in group:
+            return "symmetry:" + ".".join(str(item) for item in group)
+    return str(index)
 
 
 def _action_structural_values(

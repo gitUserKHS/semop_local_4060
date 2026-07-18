@@ -143,10 +143,10 @@ catalog의 신뢰 계약과 평가 fixture가 충분히 안정된 뒤 별도 변
 
 ## 다음 리팩터링 순서
 
-1. controller 입력에서 domain one-hot 의존성을 측정하고 capability 기반 표현과 비교
+1. 완료: `controller_feature_profiles.md`의 identity audit와 typed-structure LODO 게이트
 2. 언어 parser의 grammar-constrained typed candidate API 추가
 3. 비전 neural object producer를 `PROPOSED` grounding 경계 뒤에 연결
-4. LMV operator family별 leave-one-domain-out 전이 게이트 강화
+4. full recurrent controller의 LMV operator family별 LODO 전이 게이트 강화
 5. 검증 trace에서만 macro를 학습하고 catalog capability 조합별 회귀 검사
 
 이 순서는 “세 기능이 한 화면에 있다”가 아니라 “세 기능이 같은 실행 계약과 학습 권한을

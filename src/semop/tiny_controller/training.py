@@ -268,7 +268,12 @@ def encode_training_example(
         raise ValueError("target_action is outside the candidate action range")
     if not actions and target_action != -1:
         raise ValueError("terminal examples must use target_action=-1")
-    graph = canonicalize_problem(state, goals, actions)
+    graph = canonicalize_problem(
+        state,
+        goals,
+        actions,
+        feature_profile=resolved.feature_profile,
+    )
     max_tokens = max(len(tokens) for tokens in graph.node_tokens)
     node_ids = torch.zeros((len(graph.node_tokens), max_tokens), dtype=torch.long)
     node_mask = torch.zeros((len(graph.node_tokens), max_tokens), dtype=torch.float32)

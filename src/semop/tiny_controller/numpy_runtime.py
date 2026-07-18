@@ -11,6 +11,7 @@ from semop.kernel import Goal, GroundAction, PolicyDecision, WorldState
 
 from .features import (
     ACTION_STRUCTURAL_FEATURE_COUNT,
+    ControllerFeatureProfile,
     canonicalize_problem,
     stable_bucket,
 )
@@ -25,9 +26,15 @@ class TinyControllerConfig:
     message_blocks: int = 2
     recursion_steps: int = 4
     action_limit_score_margin: float = 0.1
+    feature_profile: ControllerFeatureProfile | str = ControllerFeatureProfile.FULL
     max_parameters: int = 15_000_000
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "feature_profile",
+            ControllerFeatureProfile(self.feature_profile),
+        )
         if self.d_model <= 0 or self.message_blocks <= 0 or self.recursion_steps <= 0:
             raise ValueError("controller dimensions and iteration counts must be positive")
         if min(self.token_buckets, self.relation_buckets, self.operator_buckets) <= 0:
@@ -64,7 +71,7 @@ class TinyControllerConfig:
 class NumpyTinyController:
     """Relation-aware recurrent policy runtime with no PyTorch dependency."""
 
-    FORMAT_VERSION = 5
+    FORMAT_VERSION = 6
 
     def __init__(self, config: TinyControllerConfig, weights: dict[str, Any]) -> None:
         import numpy as np
@@ -123,7 +130,7 @@ class NumpyTinyController:
         try:
             with np.load(BytesIO(artifact), allow_pickle=False) as payload:
                 version = int(payload["format_version"].item())
-                if version not in {2, 3, 4, cls.FORMAT_VERSION}:
+                if version not in {2, 3, 4, 5, cls.FORMAT_VERSION}:
                     raise ValueError(
                         f"unsupported tiny-controller format: {version}"
                     )
@@ -183,7 +190,12 @@ class NumpyTinyController:
     ) -> PolicyDecision:
         import numpy as np
 
-        graph = canonicalize_problem(state, goals, actions)
+        graph = canonicalize_problem(
+            state,
+            goals,
+            actions,
+            feature_profile=self.config.feature_profile,
+        )
         node_vectors = self._initial_node_vectors(graph.node_tokens)
         relation_vectors = self._relation_vectors(graph.relations, graph.goals)
         d = self.config.d_model

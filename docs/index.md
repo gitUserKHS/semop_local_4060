@@ -50,10 +50,12 @@ This folder contains the active documentation for SemOp Local 4060.
   - direct language/math/vision adapters, trust boundaries, unified runtime, and benchmark workflow
 - `lmv_domain_catalog.md`
   - 언어·수학·비전 adapter/codec/capability 공통 catalog, 빠른 게이트, 연구 근거와 확장 절차
+- `controller_feature_profiles.md`
+  - domain identity shortcut을 숨기는 typed-structure 입력, sparse LODO replay 게이트, artifact migration
 - `language_text_adapter.md`
   - 명시적 한국어·영어 문장을 typed 전제로 바꾸고 애매한 후보를 격리하는 계약
 - `typed_compositional_extensions.md`
-  - 언어 Horn 추론, exact 일차방정식, raster 도형·개수·면적, controller v5 점수 계약
+  - 언어 Horn 추론, exact 일차방정식, raster 도형·개수·면적, controller v6 점수 계약
 - `composed_operator_runtime.md`
   - 공통 registry 조합, goal-independent 관측, operator frontier, 비전→수학→언어 proof program
 - `typed_dataflow.md`

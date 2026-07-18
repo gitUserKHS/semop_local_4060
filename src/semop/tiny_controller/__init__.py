@@ -8,6 +8,7 @@ from .features import (
     CanonicalAction,
     CanonicalProblemGraph,
     CanonicalRelation,
+    ControllerFeatureProfile,
     canonicalize_problem,
     stable_bucket,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "CanonicalAction",
     "CanonicalProblemGraph",
     "CanonicalRelation",
+    "ControllerFeatureProfile",
     "DomainGroundingMetrics",
     "GROUNDING_FEATURE_VERSION",
     "GroundingFeatureVector",

@@ -18,6 +18,7 @@ for path in (SRC, TRAIN, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
+from semop.tiny_controller import ControllerFeatureProfile
 
 
 LMV_DOMAINS = ("language", "math", "vision")
@@ -33,6 +34,9 @@ def run_lodo_experiment(
     device: str = "cpu",
     debug_small: bool = True,
     max_expansions: int = 20_000,
+    feature_profile: ControllerFeatureProfile | str = (
+        ControllerFeatureProfile.TYPED_STRUCTURE
+    ),
 ) -> dict[str, Any]:
     selected = tuple(held_out_domains)
     if not selected:
@@ -42,6 +46,7 @@ def run_lodo_experiment(
     unknown = sorted(set(selected) - set(LMV_DOMAINS))
     if unknown:
         raise ValueError(f"unknown LODO domains: {unknown}")
+    resolved_profile = ControllerFeatureProfile(feature_profile)
 
     try:
         from train_tiny_controller import train
@@ -68,6 +73,7 @@ def run_lodo_experiment(
             debug_small=debug_small,
             curriculum="language-math-vision",
             domains=trained_domains,
+            feature_profile=resolved_profile,
         )
         evaluation = evaluate(
             str(artifact),
@@ -114,6 +120,7 @@ def run_lodo_experiment(
             "parameter_count": training["parameter_count"],
             "artifact_bytes": training["artifact_bytes"],
             "verified_synthetic_traces": training["verified_synthetic_traces"],
+            "feature_profile": training["feature_profile"],
             "training_seconds": training["elapsed_seconds"],
             "verified_solve_rate": heldout_metrics["verified_solve_rate"],
             "proof_soundness": heldout_metrics["proof_soundness"],
@@ -184,6 +191,7 @@ def run_lodo_experiment(
             "device": device,
             "debug_small": debug_small,
             "max_expansions": max_expansions,
+            "feature_profile": resolved_profile.value,
         },
         "runs": runs,
         "aggregate": {
@@ -228,6 +236,11 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-expansions", type=int, default=20_000)
     parser.add_argument(
+        "--feature-profile",
+        choices=tuple(item.value for item in ControllerFeatureProfile),
+        default=ControllerFeatureProfile.TYPED_STRUCTURE.value,
+    )
+    parser.add_argument(
         "--full-model",
         action="store_true",
         help="use the 5.84M controller; default is a smoke-only 29K model",
@@ -242,6 +255,7 @@ def main() -> int:
         device=args.device,
         debug_small=not args.full_model,
         max_expansions=args.max_expansions,
+        feature_profile=args.feature_profile,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["aggregate"]["proof_soundness_100_percent"] else 1

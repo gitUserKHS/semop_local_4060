@@ -70,7 +70,7 @@ class LowResourceEvalTests(unittest.TestCase):
             seed=31,
         )
 
-        self.assertEqual(report["controller"]["kind"], "tiny-controller-v5")
+        self.assertEqual(report["controller"]["kind"], "tiny-controller-v6")
         self.assertEqual(report["controller"]["parameters"], 29_834)
         self.assertEqual(report["controller"]["training_updates"], 60)
         self.assertEqual(
@@ -106,7 +106,7 @@ class LowResourceEvalTests(unittest.TestCase):
         )
 
         self.assertEqual(report["controller"]["profile"], "recurrent-diagnostic")
-        self.assertEqual(report["learning"]["controller_kind"], "tiny-controller-v5")
+        self.assertEqual(report["learning"]["controller_kind"], "tiny-controller-v6")
         self.assertEqual(report["learning"]["controller_parameters"], 29_834)
         self.assertEqual(report["learning"]["controller_training_updates"], 30)
         self.assertEqual(

@@ -33,6 +33,7 @@ At the research level, the longer-term target is broader: learn how logical word
 
 The architectural target is a logical-operator-based intelligence system organized around four axes: operator learning, world-model construction, reusable memory, and verifier loops.
 The central hypothesis is combinatorial: a small shared controller should learn to assemble many typed operator programs, while language, mathematics, and vision enter through domain adapters and every claimed result remains executor-verifiable.
+New controller training now defaults to a `typed_structure` feature profile. It removes operator, predicate, function, and domain-tag identities while preserving nominal types, domain-neutral operator families, graph roles, and goal compatibility. A dependency-free leave-one-domain-out gate compares it with the legacy `full` profile before larger recurrent training.
 The resource doctrine is CPU-first and sample-efficient: the symbolic core should run offline on an ordinary PC, while small local models and RTX 4060-class GPUs remain optional parsing, perception, and training accelerators.
 A verifier-first typed operator core now runs beside the legacy runtime. It turns domain inputs into immutable typed facts, uses goal-relevant monotonic agenda chaining instead of enumerating fact subsets, slices the first supporting operator DAG, and replays every successful proof before returning it. The pipeline defaults to `shadow`: legacy output remains user-facing while typed proof, timing, allocation, and expansion measurements are written to the audit trace.
 A shared typed grounding boundary now records language, math, and vision inputs as candidate, authority decision, fact, and immutable trace. Neural and heuristic producers can only propose; deterministic verifiers and explicit human reviews create the accept/reject examples used by later grounding-policy learning.
@@ -57,6 +58,7 @@ python tools/eval/evaluate_low_resource_transfer.py
 python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
 python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
 python tools/eval/evaluate_lmv_core_gate.py --require-pass
+python tools/eval/evaluate_controller_feature_transfer.py --require-pass
 python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/evaluate_active_macro_learning.py
@@ -71,7 +73,7 @@ python tools/eval/evaluate_semantic_grounding_curriculum.py --require-pass --out
 python tools/eval/review_semantic_grounding.py --case-id language-ready-two-requirements
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db stats
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db list --status pending
-python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
+python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug --feature-profile typed_structure
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
 python examples/typed_cross_domain_scene_demo.py
@@ -141,7 +143,7 @@ Optional controller training:
 
 ```powershell
 python -m pip install -r requirements-train.txt
-python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --examples-per-domain 1 --epochs 1 --debug-small
+python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --examples-per-domain 1 --epochs 1 --debug-small --feature-profile typed_structure
 ```
 
 - `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and verifier-gated MDL macro activation
@@ -153,8 +155,10 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/kernel/semantic_grounding*.py`: exact candidate review/learning bridge, input-only operator features, and controlled semantic case generation
 - `src/semop/tiny_controller/grounding_*.py`: anonymized LMV features, sparse selective policy, verified replay, online promotion, and hash-checked artifacts
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
+- `src/semop/tiny_controller/features.py`: full-vs-typed-structure canonical graph profiles that expose or hide domain identities deterministically
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/lmv_domain_catalog.md`: shared LMV boundary refactor, fast contract gate, research basis, and extension steps
+- `docs/controller_feature_profiles.md`: identity-shortcut ablation, typed-structure contract, sparse LODO evidence, and artifact migration
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
 - `docs/typed_grounding_boundary.md`: shared language/math/vision grounding trace, authority rules, review promotion, and research basis
 - `docs/sparse_grounding_self_learning.md`: shared accept/reject/abstain policy, continual replay, risk-coverage gates, evaluation, and honest limits
@@ -187,6 +191,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_semantic_grounding_learning.py`: controlled raw LMV candidate learning, rollback, untouched test, and human-review audit
 - `tools/eval/evaluate_semantic_grounding_ablation.py`: surface/margin shortcut audit against unseen compositions and raster structures
 - `tools/eval/evaluate_semantic_grounding_curriculum.py`: prefix-vs-feature-novel low-resource A/B with fail-closed development extrapolation gates
+- `tools/eval/evaluate_controller_feature_transfer.py`: dependency-free full-vs-typed-structure identity audit and LMV LODO replay gate
 - `tools/eval/review_semantic_grounding.py`: inspect and attest one exact typed candidate label
 - `tools/eval/review_typed_experience.py`: inspect, attest, review, and export persistent typed runtime experience
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
@@ -202,9 +207,8 @@ grounding boundary and reduces untouched raw math and pixel expansions from 6 to
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
 online reviewed-learning and sparse grounding self-learning milestones, local
-validation now passes 306 typed-operator tests plus 24 subtests and all 673
-repository tests; `shadow`
-remains the default.
+`python -m pytest -q` validation now passes 700 tests plus 34 subtests;
+`shadow` remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI
@@ -782,6 +786,9 @@ If you do not have customer data yet, start from:
 ## Validation Status
 
 Latest verified commands:
+- `python -m pytest -q`
+- `python tools/eval/evaluate_lmv_core_gate.py --require-pass`
+- `python tools/eval/evaluate_controller_feature_transfer.py --require-pass`
 - `python -m unittest discover -s tests -v`
 - `.\.venv312\Scripts\python.exe -m unittest discover -s tests -v`
 - `python solve_contest.py --query "Given a weighted graph with N cities and M roads, answer the shortest path from city 1 to all cities."`

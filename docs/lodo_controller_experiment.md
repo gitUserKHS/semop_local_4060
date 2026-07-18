@@ -19,6 +19,9 @@ adjacent summary declares `trained_domains` and omits the evaluated domain.
 ## Leakage Controls
 
 - `hard_negative` and `synthetic` provenance tags are not controller features.
+- New runs default to `typed_structure`, which also removes schema, predicate,
+  function, and domain-tag identities. `full` remains an explicit compatibility
+  control.
 - Training distractors use the same goal predicate and argument types with the wrong
   ground binding.
 - The policy receives eight domain-neutral structural values: exact goal effect,
@@ -38,7 +41,8 @@ Fast 29K diagnostic run:
 python tools/eval/run_lodo_controller_experiment.py `
   --output-dir artifacts/lodo_debug `
   --examples-per-domain 20 `
-  --epochs 5
+  --epochs 5 `
+  --feature-profile typed_structure
 ```
 
 Default 5.84M controller:
@@ -56,7 +60,26 @@ directory contains three `.npz` artifacts, verified trace corpora, adjacent trai
 summaries, and `lodo_report.json`. Each run now evaluates both the held-out slice of
 `language-math-vision` and the complete `composed-v4` suite automatically.
 
-## 2026-07-17 Full-Model Smoke Result
+## 2026-07-19 Dependency-Free Identity Ablation
+
+Before another full recurrent run, the sparse CPU gate trains on two domains and
+holds out the third. With 8 training and 12 held-out problems per domain,
+`typed_structure` reduced exposed identity tokens from 224 to 0 and union feature
+vocabulary from 105 to 41. All three held-out domains kept 100% action top-1, solve
+rate, and primitive replay integrity. Median expansions were language `7 -> 5`, math
+`9 -> 9`, and vision `5 -> 1`.
+
+Run it independently with:
+
+```powershell
+python tools/eval/evaluate_controller_feature_transfer.py --require-pass
+```
+
+This gate uses verified symbolic curricula and tiny sparse policies. It establishes
+the identity-free input contract but does not replace the full 5.84M recurrent LODO
+or human-reviewed semantic evaluation.
+
+## 2026-07-17 Full-Model `full` Profile Smoke Result
 
 This local smoke used the 5,837,578-parameter model, 20 synthetic traces from each
 available training domain, five epochs, and seed 0. Each holdout trained on 40 traces.

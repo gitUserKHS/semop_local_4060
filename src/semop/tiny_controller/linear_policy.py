@@ -10,7 +10,12 @@ from semop.kernel.model import Goal, GroundAction, WorldState
 from semop.kernel.self_learning import PolicyCandidate
 from semop.kernel.traces import DecisionTrainingCase
 
-from .features import ACTION_STRUCTURAL_FEATURE_COUNT, CanonicalAction, canonicalize_problem
+from .features import (
+    ACTION_STRUCTURAL_FEATURE_COUNT,
+    CanonicalAction,
+    ControllerFeatureProfile,
+    canonicalize_problem,
+)
 
 
 _DENSE_FEATURES = (
@@ -38,11 +43,19 @@ class StructuralLinearPolicy:
 
     weights: tuple[tuple[str, float], ...] = ()
     action_limit_score_margin: float = 0.5
+    feature_profile: ControllerFeatureProfile | str = (
+        ControllerFeatureProfile.FULL
+    )
 
-    FORMAT_VERSION = 1
-    KIND = "structural-linear-v1"
+    FORMAT_VERSION = 2
+    KIND = "structural-linear-v2"
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "feature_profile",
+            ControllerFeatureProfile(self.feature_profile),
+        )
         if self.action_limit_score_margin <= 0:
             raise ValueError("action-limit score margin must be positive")
         names = [name for name, _value in self.weights]
@@ -63,7 +76,12 @@ class StructuralLinearPolicy:
         goals: Sequence[Goal],
         actions: Sequence[GroundAction],
     ) -> PolicyDecision:
-        graph = canonicalize_problem(state, goals, actions)
+        graph = canonicalize_problem(
+            state,
+            goals,
+            actions,
+            feature_profile=self.feature_profile,
+        )
         weights = dict(self.weights)
         scores = tuple(
             sum(
@@ -90,6 +108,7 @@ class StructuralLinearPolicy:
                 "format_version": self.FORMAT_VERSION,
                 "kind": self.KIND,
                 "action_limit_score_margin": self.action_limit_score_margin,
+                "feature_profile": self.feature_profile.value,
                 "weights": self.weights,
             },
             ensure_ascii=True,
@@ -101,9 +120,11 @@ class StructuralLinearPolicy:
     def from_artifact(cls, artifact: bytes) -> "StructuralLinearPolicy":
         try:
             payload = json.loads(artifact.decode("utf-8"))
-            if payload.get("format_version") != cls.FORMAT_VERSION:
+            version = int(payload.get("format_version", 0))
+            if version not in {1, cls.FORMAT_VERSION}:
                 raise ValueError("unsupported structural policy format")
-            if payload.get("kind") != cls.KIND:
+            expected_kind = "structural-linear-v1" if version == 1 else cls.KIND
+            if payload.get("kind") != expected_kind:
                 raise ValueError("structural policy kind mismatch")
             return cls(
                 weights=tuple(
@@ -112,6 +133,10 @@ class StructuralLinearPolicy:
                 ),
                 action_limit_score_margin=float(
                     payload["action_limit_score_margin"]
+                ),
+                feature_profile=payload.get(
+                    "feature_profile",
+                    ControllerFeatureProfile.FULL.value,
                 ),
             )
         except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -129,10 +154,18 @@ class StructuralPolicyLearner:
     max_features: int = 4_096
     weight_clip: float = 16.0
     min_absolute_weight: float = 1e-9
+    feature_profile: ControllerFeatureProfile | str = (
+        ControllerFeatureProfile.FULL
+    )
 
     name = StructuralLinearPolicy.KIND
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "feature_profile",
+            ControllerFeatureProfile(self.feature_profile),
+        )
         if self.epochs <= 0 or self.max_features <= 0:
             raise ValueError("structural learner limits must be positive")
         numeric = (
@@ -154,6 +187,10 @@ class StructuralPolicyLearner:
         if not cases:
             raise ValueError("structural policy training requires decision cases")
         if isinstance(incumbent, StructuralLinearPolicy):
+            if incumbent.feature_profile is not self.feature_profile:
+                raise ValueError(
+                    "incumbent structural policy feature profile differs from learner"
+                )
             weights = dict(incumbent.weights)
         else:
             weights = {}
@@ -162,7 +199,12 @@ class StructuralPolicyLearner:
         for case in cases:
             if not 0 <= case.target_action < len(case.actions):
                 raise ValueError("decision case target is out of range")
-            graph = canonicalize_problem(case.state, case.goals, case.actions)
+            graph = canonicalize_problem(
+                case.state,
+                case.goals,
+                case.actions,
+                feature_profile=self.feature_profile,
+            )
             action_features = tuple(_action_features(action) for action in graph.actions)
             gold = action_features[case.target_action]
             negatives = tuple(
@@ -199,6 +241,7 @@ class StructuralPolicyLearner:
         policy = StructuralLinearPolicy(
             weights=tuple(sorted(weights.items())),
             action_limit_score_margin=self.action_limit_score_margin,
+            feature_profile=self.feature_profile,
         )
         artifact = policy.to_artifact()
         return PolicyCandidate(
@@ -212,6 +255,7 @@ class StructuralPolicyLearner:
                 f"verified_decision_cases={len(cases)}",
                 f"pairwise_updates={updates}",
                 f"sparse_parameters={policy.parameter_count}",
+                f"feature_profile={self.feature_profile.value}",
             ),
         )
 

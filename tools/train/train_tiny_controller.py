@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -22,7 +23,7 @@ from semop.kernel import (
     hard_negative_records,
     symbolic_curriculum_domains,
 )
-from semop.tiny_controller import TinyControllerConfig
+from semop.tiny_controller import ControllerFeatureProfile, TinyControllerConfig
 from semop.tiny_controller.training import (
     TorchTinyController,
     encode_training_example,
@@ -40,14 +41,21 @@ def train(
     debug_small: bool = False,
     curriculum: str = "language-math-vision",
     domains: Sequence[str] | None = None,
+    feature_profile: ControllerFeatureProfile | str = (
+        ControllerFeatureProfile.TYPED_STRUCTURE
+    ),
 ) -> dict:
     import torch
 
     torch.manual_seed(seed)
-    config = (
+    base_config = (
         TinyControllerConfig.diagnostic()
         if debug_small
         else TinyControllerConfig()
+    )
+    config = replace(
+        base_config,
+        feature_profile=ControllerFeatureProfile(feature_profile),
     )
     corpus = TraceCorpus()
     encoded = []
@@ -145,6 +153,7 @@ def train(
         "seed": seed,
         "device": device,
         "curriculum": curriculum,
+        "feature_profile": config.feature_profile.value,
         "curriculum_domains": list(available_domains),
         "requested_domains": list(requested_domains),
         "trained_domains": sorted(verified_by_domain),
@@ -208,6 +217,12 @@ def main() -> int:
         help="use a tiny architecture for pipeline smoke tests only",
     )
     parser.add_argument(
+        "--feature-profile",
+        choices=tuple(item.value for item in ControllerFeatureProfile),
+        default=ControllerFeatureProfile.TYPED_STRUCTURE.value,
+        help="controller input identity profile",
+    )
+    parser.add_argument(
         "--domain",
         action="append",
         choices=(
@@ -231,6 +246,7 @@ def main() -> int:
         debug_small=args.debug_small,
         curriculum=args.curriculum,
         domains=args.domain,
+        feature_profile=args.feature_profile,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

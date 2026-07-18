@@ -22,7 +22,7 @@ class TinyControllerPolicyLearner:
     device: str = "cpu"
     seed: int = 0
 
-    name = "tiny-controller-v5"
+    name = "tiny-controller-v6"
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
