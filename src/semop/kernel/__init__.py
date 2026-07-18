@@ -279,7 +279,17 @@ from .rule_discovery import (
     TypedRuleHypothesis,
     VerifiedRuleDiscovery,
     VerifiedRuleLibrary,
+    rule_discovery_semantic_fingerprint,
     rule_discovery_task_digest,
+)
+from .rule_learning import (
+    RuleLearningBudget,
+    RuleLearningResult,
+    RuleLibraryActivationAudit,
+    RuleLibraryCheckpoint,
+    RuleLibraryEvaluation,
+    RulePromotionCertificate,
+    VerifiedRuleLearningLoop,
 )
 
 __all__ = [
@@ -399,6 +409,12 @@ __all__ = [
     "RuleDiscoveryRecord",
     "RuleDiscoveryResult",
     "RuleEvaluationSummary",
+    "RuleLearningBudget",
+    "RuleLearningResult",
+    "RuleLibraryActivationAudit",
+    "RuleLibraryCheckpoint",
+    "RuleLibraryEvaluation",
+    "RulePromotionCertificate",
     "RuleParameterTemplate",
     "RuleReviewEvidence",
     "SEMANTIC_CASE_SCHEMA_VERSION",
@@ -468,9 +484,11 @@ __all__ = [
     "VerifiedMacroProgram",
     "VerifiedMacroLearningLoop",
     "VerifiedRuleDiscovery",
+    "VerifiedRuleLearningLoop",
     "VerifiedRuleLibrary",
     "WorldState",
     "render_proof_ko",
+    "rule_discovery_semantic_fingerprint",
     "rule_discovery_task_digest",
     "build_decision_training_cases",
     "compose_domain_instances",

@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 
 
@@ -27,11 +28,13 @@ from semop.kernel import (  # noqa: E402
     OperatorKernel,
     RuleAtomTemplate,
     RuleDiscoveryBudget,
+    RuleLearningBudget,
     RuleParameterTemplate,
     SemanticLabelAuthority,
     SemanticLabelEvidence,
     TypedRuleHypothesis,
     VerifiedRuleDiscovery,
+    VerifiedRuleLearningLoop,
     VerifiedRuleLibrary,
     WorldState,
     rule_discovery_task_digest,
@@ -300,6 +303,212 @@ class VerifiedTypedRuleDiscoveryTests(unittest.TestCase):
             )
 
 
+class VerifiedTypedRuleLearningTests(unittest.TestCase):
+    def test_joint_holdout_promotes_three_domain_rule_library(self) -> None:
+        training, validation, candidate_heldout = _rule_splits()
+        joint_heldout = _joint_rule_tasks()
+
+        result = VerifiedRuleLearningLoop().run(
+            training,
+            validation,
+            candidate_heldout,
+            joint_heldout,
+        )
+
+        self.assertTrue(result.promoted, result.rejection_reasons)
+        self.assertEqual(len(result.discovery.library.records), 3)
+        self.assertEqual(len(result.active_library.records), 3)
+        self.assertEqual(len(result.newly_solved_task_ids), 3)
+        self.assertEqual(len(result.used_new_rule_ids), 3)
+        self.assertEqual(
+            result.improved_domains,
+            ("language", "math", "vision"),
+        )
+        self.assertEqual(result.candidate.metrics.labeled_outcome_accuracy, 1.0)
+        self.assertEqual(result.candidate.metrics.semantic_correctness, 1.0)
+        self.assertEqual(result.candidate.metrics.primitive_replay_integrity, 1.0)
+        self.assertEqual(result.candidate.metrics.false_positives, 0)
+        self.assertLess(result.baseline.metrics.labeled_outcome_accuracy, 1.0)
+        self.assertIsNotNone(result.promotion_certificate)
+        assert result.promotion_certificate is not None
+        self.assertEqual(
+            len(result.promotion_certificate.joint_review_evidence),
+            6,
+        )
+        self.assertEqual(
+            result.promotion_certificate.candidate_library_sha256,
+            result.active_library.artifact_sha256,
+        )
+        json.dumps(result.to_dict())
+
+    def test_joint_composition_false_positive_rolls_back_all_new_rules(self) -> None:
+        training, validation, candidate_heldout, joint_heldout = (
+            _chain_rule_learning_splits()
+        )
+
+        result = VerifiedRuleLearningLoop().run(
+            training,
+            validation,
+            candidate_heldout,
+            joint_heldout,
+        )
+
+        self.assertEqual(len(result.discovery.library.records), 2)
+        self.assertFalse(result.promoted)
+        self.assertEqual(
+            result.false_positive_task_ids,
+            ("joint:chain:composition-negative",),
+        )
+        self.assertTrue(
+            any(
+                reason.startswith("candidate_joint_false_positive")
+                for reason in result.rejection_reasons
+            )
+        )
+        self.assertEqual(result.candidate.metrics.primitive_replay_integrity, 1.0)
+        self.assertLess(result.candidate.metrics.semantic_correctness, 1.0)
+        self.assertEqual(result.active_library.records, ())
+        false_positive = result.candidate.results[
+            "joint:chain:composition-negative"
+        ]
+        self.assertTrue(false_positive.success and false_positive.verified)
+        self.assertEqual(len(false_positive.proof), 2)
+
+    def test_final_joint_holdout_requires_reviews_and_no_overlap(self) -> None:
+        training, validation, candidate_heldout = _rule_splits()
+        joint_heldout = _joint_rule_tasks()
+        unreviewed = (_remove_review(joint_heldout[0]),) + joint_heldout[1:]
+
+        with self.assertRaisesRegex(ValueError, "human labels"):
+            VerifiedRuleLearningLoop().run(
+                training,
+                validation,
+                candidate_heldout,
+                unreviewed,
+            )
+
+        overlap = replace(
+            candidate_heldout[0],
+            task_id="joint:semantic-overlap",
+        )
+        with self.assertRaisesRegex(ValueError, "joint holdout semantic overlap"):
+            VerifiedRuleLearningLoop().run(
+                training,
+                validation,
+                candidate_heldout,
+                (overlap,) + joint_heldout,
+            )
+
+        positive_only = tuple(
+            task for task in joint_heldout if task.expected_solved
+        )
+        missing_negatives = VerifiedRuleLearningLoop().run(
+            training,
+            validation,
+            candidate_heldout,
+            positive_only,
+        )
+        self.assertFalse(missing_negatives.promoted)
+        self.assertTrue(
+            any(
+                reason.startswith("candidate_joint_missing_negative_domains")
+                for reason in missing_negatives.rejection_reasons
+            )
+        )
+
+    def test_persistence_is_atomic_and_rejection_preserves_incumbent(self) -> None:
+        training, validation, candidate_heldout = _rule_splits()
+        promoted = VerifiedRuleLearningLoop().run(
+            training,
+            validation,
+            candidate_heldout,
+            _joint_rule_tasks(),
+        )
+        reordered = VerifiedRuleLearningLoop().run(
+            tuple(reversed(training)),
+            tuple(reversed(validation)),
+            tuple(reversed(candidate_heldout)),
+            tuple(reversed(_joint_rule_tasks())),
+        )
+        chain = _chain_rule_learning_splits()
+        rejected = VerifiedRuleLearningLoop().run(
+            *chain,
+            incumbent_library=promoted.active_library,
+        )
+        self.assertEqual(rejected.active_library, promoted.active_library)
+        self.assertGreater(
+            len(rejected.candidate_library.records),
+            len(rejected.active_library.records),
+        )
+
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "active-rules.json"
+            checkpoint = VerifiedRuleLearningLoop.persist_promoted(
+                promoted,
+                path,
+            )
+            self.assertIsNotNone(checkpoint)
+            assert checkpoint is not None
+            original = path.read_bytes()
+            self.assertEqual(
+                checkpoint.library_sha256,
+                promoted.active_library.artifact_sha256,
+            )
+            second_path = Path(temporary) / "reordered-rules.json"
+            VerifiedRuleLearningLoop.persist_promoted(reordered, second_path)
+            self.assertEqual(second_path.read_bytes(), original)
+            restored = VerifiedRuleLearningLoop.load_active(
+                path,
+                expected_sha256=checkpoint.artifact_sha256,
+            )
+            self.assertEqual(restored, promoted.active_library)
+
+            self.assertIsNone(
+                VerifiedRuleLearningLoop.persist_promoted(rejected, path)
+            )
+            self.assertEqual(path.read_bytes(), original)
+
+            tampered_payload = json.loads(original.decode("utf-8"))
+            tampered_payload["promotion_certificate"][
+                "used_new_rule_ids"
+            ] = []
+            tampered = json.dumps(tampered_payload).encode("utf-8")
+            path.write_bytes(tampered)
+            with self.assertRaisesRegex(ValueError, "unused new rules"):
+                VerifiedRuleLearningLoop.load_active(
+                    path,
+                    expected_sha256=sha256(tampered).hexdigest(),
+                )
+
+            path.write_bytes(original + b"\n")
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                VerifiedRuleLearningLoop.load_active(
+                    path,
+                    expected_sha256=checkpoint.artifact_sha256,
+                )
+
+    def test_joint_task_and_active_rule_budgets_fail_closed(self) -> None:
+        training, validation, candidate_heldout = _rule_splits()
+        joint = _joint_rule_tasks()
+
+        with self.assertRaisesRegex(ValueError, "joint task limit"):
+            VerifiedRuleLearningLoop(
+                RuleLearningBudget(max_joint_tasks=2)
+            ).run(training, validation, candidate_heldout, joint)
+
+        capped = VerifiedRuleLearningLoop(
+            RuleLearningBudget(max_library_rules=2)
+        ).run(training, validation, candidate_heldout, joint)
+        self.assertFalse(capped.promoted)
+        self.assertTrue(
+            capped.rejection_reasons[0].startswith(
+                "candidate_joint_rule_limit_exceeded"
+            )
+        )
+        self.assertFalse(capped.candidate_executed)
+        self.assertEqual(capped.active_library.records, ())
+
+
 def _rule_splits(
     *,
     blocked_language_validation: bool = False,
@@ -336,6 +545,17 @@ def _rule_splits(
         )
     )
     return training, validation, heldout
+
+
+def _joint_rule_tasks() -> tuple[LearningTask, ...]:
+    return tuple(
+        item
+        for domain in DOMAINS
+        for item in (
+            _task(domain, "joint-positive", LearningSplit.HELDOUT, True),
+            _task(domain, "joint-negative", LearningSplit.HELDOUT, False),
+        )
+    )
 
 
 def _task(
@@ -400,6 +620,8 @@ def _task(
         task_id = f"validation:{domain}:{token.removeprefix('validation-')}"
     elif token.startswith("heldout-"):
         task_id = f"heldout:{domain}:{token.removeprefix('heldout-')}"
+    elif token.startswith("joint-"):
+        task_id = f"joint:{domain}:{token.removeprefix('joint-')}"
     reviewed = split is LearningSplit.HELDOUT
     return LearningTask(
         task_id=task_id,
@@ -475,6 +697,121 @@ def _remove_review(task: LearningTask) -> LearningTask:
         source="verifier",
         label_authority=SemanticLabelAuthority.CURATED_UNREVIEWED,
         label_evidence=SemanticLabelEvidence(),
+    )
+
+
+def _chain_rule_learning_splits() -> tuple[
+    tuple[LearningTask, ...],
+    tuple[LearningTask, ...],
+    tuple[LearningTask, ...],
+    tuple[LearningTask, ...],
+]:
+    training = tuple(
+        _chain_task(
+            f"train:chain:{rule_name}:{index}",
+            LearningSplit.TRAIN,
+            premise,
+            effect,
+            expected_solved=True,
+        )
+        for rule_name, premise, effect in (
+            ("first", "START", "MIDDLE"),
+            ("second", "MIDDLE", "FINISH"),
+        )
+        for index in range(3)
+    )
+    validation = _chain_evaluation_tasks("validation")
+    candidate_heldout = _chain_evaluation_tasks("candidate")
+    joint_heldout = _chain_evaluation_tasks("joint")
+    return training, validation, candidate_heldout, joint_heldout
+
+
+def _chain_evaluation_tasks(prefix: str) -> tuple[LearningTask, ...]:
+    return (
+        _chain_task(
+            f"{prefix}:chain:first-positive",
+            LearningSplit.HELDOUT,
+            "START",
+            "MIDDLE",
+            expected_solved=True,
+        ),
+        _chain_task(
+            f"{prefix}:chain:first-negative",
+            LearningSplit.HELDOUT,
+            "START",
+            "MIDDLE",
+            expected_solved=False,
+        ),
+        _chain_task(
+            f"{prefix}:chain:second-positive",
+            LearningSplit.HELDOUT,
+            "MIDDLE",
+            "FINISH",
+            expected_solved=True,
+        ),
+        _chain_task(
+            f"{prefix}:chain:second-negative",
+            LearningSplit.HELDOUT,
+            "MIDDLE",
+            "FINISH",
+            expected_solved=False,
+        ),
+        _chain_task(
+            f"{prefix}:chain:composition-negative",
+            LearningSplit.HELDOUT,
+            "START",
+            "FINISH",
+            expected_solved=False,
+            shared_symbol=True,
+        ),
+    )
+
+
+def _chain_task(
+    task_id: str,
+    split: LearningSplit,
+    premise: str,
+    effect: str,
+    *,
+    expected_solved: bool,
+    shared_symbol: bool | None = None,
+) -> LearningTask:
+    registry = KernelRegistry()
+    entity = registry.types.register("Entity")
+    for predicate in ("START", "MIDDLE", "FINISH"):
+        registry.register_predicate(predicate, (entity,))
+    source = registry.symbol(f"source-{task_id}", entity)
+    use_shared = expected_solved if shared_symbol is None else shared_symbol
+    target = (
+        source
+        if use_shared
+        else registry.symbol(f"other-{task_id}", entity)
+    )
+    reviewed = split is LearningSplit.HELDOUT
+    return LearningTask(
+        task_id=task_id,
+        instance=DomainInstance(
+            registry=registry,
+            state=WorldState((_fact(registry.atom(premise, source)),)),
+            goals=(Goal(registry.atom(effect, target)),),
+            domain="language",
+            metadata={"fixture": "joint-rule-learning"},
+        ),
+        expected_solved=expected_solved,
+        split=split,
+        source="reviewed" if reviewed else "verifier",
+        domain="language",
+        capability="discover-composed-chain",
+        structure_key=f"joint-rule-learning:{premise}:{effect}",
+        difficulty=3,
+        label_authority=(
+            SemanticLabelAuthority.HUMAN_REVIEWED
+            if reviewed
+            else SemanticLabelAuthority.CURATED_UNREVIEWED
+        ),
+        label_evidence=(
+            _review_evidence(task_id) if reviewed else SemanticLabelEvidence()
+        ),
     )
 
 

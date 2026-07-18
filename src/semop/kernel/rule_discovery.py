@@ -1118,9 +1118,18 @@ def _validate_rule_discovery_splits(
     if len(identifiers) != len(set(identifiers)):
         raise ValueError("rule discovery task ids must be unique across splits")
     fingerprints = (
-        {task.task_id: _task_fingerprint(task) for task in training},
-        {task.task_id: _task_fingerprint(task) for task in validation},
-        {task.task_id: _task_fingerprint(task) for task in heldout},
+        {
+            task.task_id: rule_discovery_semantic_fingerprint(task)
+            for task in training
+        },
+        {
+            task.task_id: rule_discovery_semantic_fingerprint(task)
+            for task in validation
+        },
+        {
+            task.task_id: rule_discovery_semantic_fingerprint(task)
+            for task in heldout
+        },
     )
     names = ("training", "validation", "heldout")
     for name, split_fingerprints in zip(names, fingerprints, strict=True):
@@ -1139,7 +1148,9 @@ def _validate_rule_discovery_splits(
             )
 
 
-def _task_fingerprint(task: LearningTask) -> str:
+def rule_discovery_semantic_fingerprint(task: LearningTask) -> str:
+    """Hash typed facts and goals while deliberately excluding the label."""
+
     payload = {
         "facts": [
             fact.atom.canonical_key() for fact in task.instance.state.eligible_facts

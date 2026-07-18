@@ -72,6 +72,10 @@ anti-unifies repeated unsolved tasks into executable flat Horn-rule candidates.
 Only rules that newly solve digest-recorded, human-reviewed validation and untouched
 held-out positives while preserving matched negatives enter a hash-checked library;
 activation remains explicit and every use is proof-replayed.
+`VerifiedRuleLearningLoop` then combines those rules with the incumbent library and
+uses a fourth final joint holdout to catch unsafe rule interactions. Promotion writes
+an atomic hash-checked envelope containing the library and exact joint-review
+certificate; rejection leaves the incumbent artifact untouched.
 `evaluate_semantic_flow_self_learning.py` trains only on short verified
 vision-to-math-to-language flows, then gates promotion on new phrasing, larger images,
 reused measurements, deeper operator programs, and sound negative controls.
@@ -119,7 +123,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/active_macro_learning.md`: primitive-expanded procedural memory, schema pinning, promotion gates, and rollback
 - `docs/hierarchical_operator_brain.md`: shared controller plus procedural memory, independent split gates, and portable brain artifacts
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
-- `docs/verified_rule_discovery.md`: bounded typed Horn induction, review provenance, held-out falsification, and retained-rule activation
+- `docs/verified_rule_discovery.md`: bounded typed Horn induction, joint-library promotion, review provenance, held-out falsification, and atomic rollback
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
 - `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
@@ -141,8 +145,8 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
-rule-discovery milestone, local validation now passes 234 typed-operator tests plus
-20 subtests and all 601 repository tests; `shadow` remains the default.
+rule-discovery milestone, local validation now passes 239 typed-operator tests plus
+20 subtests and all 606 repository tests; `shadow` remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

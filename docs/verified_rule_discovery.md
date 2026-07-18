@@ -113,6 +113,69 @@ augmented_task = restored.augment_task(new_task)
 `RuleActivationIssue`로 남는다. 직접 `activate_into`를 호출하는 경우에도 반환된
 활성화 목록과 issue를 확인해야 한다.
 
+## Joint Library Promotion
+
+개별 규칙이 각각 held-out을 통과해도 함께 활성화하면 전에 없던 합성 경로가 생길 수
+있다. `VerifiedRuleLearningLoop`는 이 상호작용을 같은 candidate held-out으로 다시
+평가하지 않고, 네 번째 **final joint holdout**에서 incumbent library와 합친 후보를
+A/B 평가한다.
+
+```text
+training -> validation -> candidate held-out -> final joint held-out
+   제안        선택             개별 반증                전체 library 승격
+```
+
+기본 joint gate는 다음을 모두 요구한다.
+
+- final joint의 모든 라벨이 digest가 기록된 사람 검토 라벨이다.
+- candidate held-out과 final joint는 task ID와 exact typed semantics가 겹치지 않는다.
+- 새 규칙마다 final positive proof에서 실제 사용된 기록이 있다.
+- 새 규칙의 모든 training domain에 final positive와 negative가 모두 있다.
+- incumbent가 풀지 못한 positive를 하나 이상 새로 완료한다.
+- labeled outcome accuracy와 human-only semantic correctness가 100%다.
+- 성공 proof의 primitive replay integrity가 100%다.
+- false positive와 기존 positive regression이 0이다.
+
+기본 자원 상한은 final joint task 256개, 누적 active rule 256개다. 각 solve는 별도의
+`SolveBudget`으로 step, expansion과 timeout을 제한한다. 후보 library가 rule 상한을
+넘으면 그 후보는 실행하지 않고 `candidate_executed=False`로 기록한 뒤 거절한다.
+
+예를 들어 `START(x) -> MIDDLE(x)`와 `MIDDLE(x) -> FINISH(x)`는 각각의 negative를
+통과할 수 있다. 하지만 두 규칙이 함께 `START(x) -> FINISH(x)`라는 사람 라벨 negative를
+증명하면 논리 replay 자체는 정확해도 semantic correctness가 떨어진다. joint gate는
+이 조합 전체를 거절하고 incumbent library를 유지한다.
+
+```python
+from semop.kernel import VerifiedRuleLearningLoop
+
+loop = VerifiedRuleLearningLoop()
+learning = loop.run(
+    training_tasks,
+    validation_tasks,
+    candidate_heldout_tasks,
+    final_joint_heldout_tasks,
+    incumbent_library=incumbent,
+)
+
+checkpoint = loop.persist_promoted(
+    learning,
+    "artifacts/rules/active-rules.json",
+)
+```
+
+거절된 결과에 `persist_promoted`를 호출하면 기존 파일을 변경하지 않는다. 승격된 파일은
+단순 rule JSON이 아니라 다음을 함께 넣은 결정론적 envelope다.
+
+- incumbent와 candidate library digest
+- 모든 final joint task의 원본 case digest와 exact grounded-task digest
+- reviewer, timestamp, domain과 positive/negative 방향
+- 새로 완료한 task, 실제 사용된 새 규칙, 개선된 domain
+- outcome accuracy, semantic correctness와 replay integrity
+
+파일 전체 SHA-256을 알고 있을 때만 `load_active(..., expected_sha256=...)`로 다시
+활성화할 수 있다. 규칙 또는 promotion certificate 어느 한쪽만 바뀌어도 로드가
+실패한다.
+
 ## 현재 한계
 
 현재 구현은 다음 범위를 넘지 않는다.
@@ -125,7 +188,9 @@ augmented_task = restored.augment_task(new_task)
 따라서 자유 자연어 문법, 자연 이미지 객체 개념, 새 수학 primitive, delete effect,
 시간 상태 전이, 모순 철회 또는 open-domain 법칙을 스스로 발견했다는 뜻은 아니다.
 실제 온라인 자가 학습으로 확장하려면 사용자 실패 수집, 독립 review queue, 장기
-regression corpus, 서명된 artifact provenance와 rollback을 이 경계 바깥에 연결해야 한다.
+regression corpus와 서명된 reviewer identity를 이 경계 바깥에 연결해야 한다. 현재
+artifact는 atomic rollback과 hash provenance를 제공하지만 공개키 서명은 제공하지
+않는다.
 
 ## 검증
 
@@ -137,4 +202,5 @@ python -m pytest
 
 전용 테스트는 언어·수학·비전의 이름이 다른 held-out 전이, 관계가 끊긴 near-miss,
 `BLOCKED` 반례, review 부재, split 누수, support/candidate budget, effect-only 변수,
-artifact 변조와 proof replay를 검사한다.
+joint-only 합성 false positive, atomic rollback, promotion certificate 변조와 proof
+replay를 검사한다.
