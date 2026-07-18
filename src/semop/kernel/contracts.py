@@ -24,3 +24,10 @@ class TypedDomainAdapter(Protocol[InputT]):
     """Boundary contract for language, math, vision, or composed adapters."""
 
     def adapt(self, value: InputT) -> DomainInstance: ...
+
+
+@runtime_checkable
+class TypedInstanceAugmenter(Protocol):
+    """Add verified executable structure to a freshly grounded instance."""
+
+    def augment_instance(self, instance: DomainInstance) -> DomainInstance: ...

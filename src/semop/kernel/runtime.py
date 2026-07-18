@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Mapping, Sequence
 
 from .adapters import MigrationMode
-from .contracts import DomainInstance, TypedDomainAdapter
+from .contracts import DomainInstance, TypedDomainAdapter, TypedInstanceAugmenter
 from .domains.language_text import LanguageInputAdapter
 from .domains.linear_equation import MathInputAdapter
 from .domains.composed_scene import SceneThresholdAdapter
@@ -69,6 +69,8 @@ class UnifiedTypedReasoner:
     def __init__(
         self,
         adapters: Mapping[DomainKind | str, TypedDomainAdapter[Any]] | None = None,
+        *,
+        augmenters: Sequence[TypedInstanceAugmenter] = (),
     ) -> None:
         defaults: dict[DomainKind, TypedDomainAdapter[Any]] = {
             DomainKind.LANGUAGE: LanguageInputAdapter(),
@@ -80,9 +82,18 @@ class UnifiedTypedReasoner:
             for key, adapter in adapters.items():
                 defaults[DomainKind(key)] = adapter
         self.adapters = defaults
+        resolved_augmenters = tuple(augmenters)
+        if any(
+            not isinstance(augmenter, TypedInstanceAugmenter)
+            for augmenter in resolved_augmenters
+        ):
+            raise TypeError(
+                "typed reasoner augmenters must implement augment_instance"
+            )
+        self.augmenters = resolved_augmenters
 
     def ground(self, request: TypedDomainRequest) -> DomainInstance:
-        """Adapt one raw request through the same boundary used by execution."""
+        """Adapt one raw request without adding learned executable structure."""
 
         domain = DomainKind(request.domain)
         if isinstance(request.payload, DomainInstance):
@@ -90,6 +101,38 @@ class UnifiedTypedReasoner:
         instance = self.adapters[domain].adapt(request.payload)
         if not isinstance(instance, DomainInstance):
             raise TypeError("typed domain adapter did not return a DomainInstance")
+        return instance
+
+    def prepare(self, request: TypedDomainRequest) -> DomainInstance:
+        """Ground input and apply only explicitly configured verified augmenters."""
+
+        instance = self.ground(request)
+        for augmenter in self.augmenters:
+            registry_contract = _registry_contract(instance)
+            augmented = augmenter.augment_instance(instance)
+            if not isinstance(augmented, DomainInstance):
+                raise TypeError(
+                    "typed instance augmenter did not return a DomainInstance"
+                )
+            if augmented is instance or augmented.registry is instance.registry:
+                raise ValueError(
+                    "typed instance augmenter must return a copied registry"
+                )
+            _require_operator_only_augmentation(
+                instance,
+                augmented,
+                registry_contract,
+            )
+            if (
+                augmented.state != instance.state
+                or augmented.goals != instance.goals
+                or augmented.domain != instance.domain
+            ):
+                raise ValueError(
+                    "typed instance augmenter may add operators only; "
+                    "facts, goals, and domain are immutable"
+                )
+            instance = augmented
         return instance
 
     def run(
@@ -111,7 +154,7 @@ class UnifiedTypedReasoner:
             )
 
         prebuilt_instance = isinstance(request.payload, DomainInstance)
-        instance = self.ground(request)
+        instance = self.prepare(request)
         if not instance.goals:
             return UnifiedTypedResult(
                 domain=domain,
@@ -164,4 +207,36 @@ class UnifiedTypedReasoner:
     ) -> tuple[UnifiedTypedResult, ...]:
         return tuple(
             self.run(request, policy=policy, budget=budget) for request in requests
+        )
+
+
+def _registry_contract(instance: DomainInstance) -> tuple[Any, ...]:
+    registry = instance.registry
+    return (
+        registry.types.snapshot(),
+        dict(registry.functions),
+        dict(registry.predicates),
+        dict(registry.operators),
+        dict(registry.guards),
+    )
+
+
+def _require_operator_only_augmentation(
+    original: DomainInstance,
+    augmented: DomainInstance,
+    contract: tuple[Any, ...],
+) -> None:
+    types, functions, predicates, operators, guards = contract
+    if _registry_contract(original) != contract:
+        raise ValueError("typed instance augmenter mutated the source registry")
+    registry = augmented.registry
+    if (
+        registry.types.snapshot() != types
+        or registry.functions != functions
+        or registry.predicates != predicates
+        or registry.guards != guards
+        or any(registry.operators.get(name) != spec for name, spec in operators.items())
+    ):
+        raise ValueError(
+            "typed instance augmenter may only append operators to the registry"
         )

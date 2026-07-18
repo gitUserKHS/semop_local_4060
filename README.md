@@ -40,6 +40,8 @@ python tools/eval/evaluate_hierarchical_self_learning.py
 python tools/eval/evaluate_raw_grounded_self_learning.py
 python tools/eval/evaluate_semantic_benchmark.py
 python tools/eval/evaluate_semantic_benchmark.py --gate-semantic-correctness 1.0 --gate-min-gold 3 --gate-min-gold-per-domain 1 --gate-domains language,math,vision
+python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db stats
+python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db list --status pending
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -76,6 +78,13 @@ activation remains explicit and every use is proof-replayed.
 uses a fourth final joint holdout to catch unsafe rule interactions. Promotion writes
 an atomic hash-checked envelope containing the library and exact joint-review
 certificate; rejection leaves the incumbent artifact untouched.
+`TypedExperienceCollector` now connects this rule path to real language, math, and
+raster-vision executions. Noteworthy runs enter an append-audited SQLite queue;
+user or frontier-judge labels remain proposals until a separate digest-bound human
+review. Approved cases are assigned by a precommitted four-way hash partition,
+grounded again, checked for cross-split semantic leakage, and only then enter joint
+rule promotion. A promoted library is activated explicitly through
+`UnifiedTypedReasoner(augmenters=(library,))` and every derived result is replayed.
 `evaluate_semantic_flow_self_learning.py` trains only on short verified
 vision-to-math-to-language flows, then gates promotion on new phrasing, larger images,
 reused measurements, deeper operator programs, and sound negative controls.
@@ -108,6 +117,8 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 
 - `src/semop/kernel/`: immutable typed IR, operators, forward search, proof replay, adapters, traces, and verifier-gated MDL macro activation
 - `src/semop/kernel/experience.py`: audited raw input grounding, split fingerprints, bounded hard negatives, and the end-to-end raw self-learning API
+- `src/semop/kernel/experience_queue.py`: append-audited LMV execution queue, digest-bound reviews, and deterministic four-way partitioning
+- `src/semop/kernel/experience_collection.py`: production failure collection, reviewed-corpus grounding, leakage audit, and joint rule-learning bridge
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
@@ -124,6 +135,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `docs/hierarchical_operator_brain.md`: shared controller plus procedural memory, independent split gates, and portable brain artifacts
 - `docs/self_discovered_curriculum.md`: verifier-backed task composition, failure signals, counterfactual generation, lineage, and bounded self-discovery
 - `docs/verified_rule_discovery.md`: bounded typed Horn induction, joint-library promotion, review provenance, held-out falsification, and atomic rollback
+- `docs/online_verified_self_learning.md`: persistent LMV runtime experience, independent review, four-way split, rule promotion, and explicit activation
 - `docs/raster_vision.md`: dependency-free raster input, pixel trust boundary, and learned-detector extension point
 - `docs/tiny_controller.md`: architecture, losses, data limits, and artifact format
 - `docs/low_resource_transfer_evaluation.md`: three-domain A/B benchmark and promotion gates
@@ -133,6 +145,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `tools/eval/evaluate_active_macro_learning.py`: machine-readable three-domain macro induction, primitive replay, and resource gates
 - `tools/eval/evaluate_hierarchical_self_learning.py`: machine-readable controller/macro/joint ablation and family-transfer gates
 - `tools/eval/evaluate_raw_grounded_self_learning.py`: language-only raw training followed by untouched raw math/pixel transfer gates
+- `tools/eval/review_typed_experience.py`: inspect, attest, review, and export persistent typed runtime experience
 - `docs/lodo_controller_experiment.md`: leakage-controlled language/math/vision holdout training and evaluation
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic
@@ -145,8 +158,8 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
-rule-discovery milestone, local validation now passes 239 typed-operator tests plus
-20 subtests and all 606 repository tests; `shadow` remains the default.
+online reviewed-learning milestone, local validation now passes 256 typed-operator
+tests plus 20 subtests and all 623 repository tests; `shadow` remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

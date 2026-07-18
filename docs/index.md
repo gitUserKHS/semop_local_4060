@@ -62,6 +62,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 검증된 seed에서 새 다중도메인 조합과 counterfactual을 발견하고 계보·중복·깊이를 통제하는 curriculum
 - `verified_rule_discovery.md`
   - flat Horn 규칙 귀납, 개별 반증, final joint library 승격, promotion certificate와 atomic rollback 경계
+- `online_verified_self_learning.md`
+  - 실제 언어·수학·비전 실행 수집, SQLite 검토 큐, 고정 4분할, 누수 감사, joint rule 승격과 runtime 활성화
 - `raster_vision.md`
   - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
 - `tiny_controller.md`

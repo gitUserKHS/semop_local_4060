@@ -9,6 +9,7 @@ from .contracts import DomainInstance
 from .engine import ActionPolicy
 from .library import operator_schema_fingerprint
 from .runtime import DomainKind, TypedDomainRequest, UnifiedTypedReasoner
+from .semantic_codec import semantic_request_digest
 from .self_learning import (
     LearningSplit,
     LearningTask,
@@ -180,11 +181,11 @@ class RawExperienceGrounder:
                         "DomainInstance"
                     )
                 domain = DomainKind(example.request.domain)
-                input_fingerprint = _input_fingerprint(example.request)
+                input_fingerprint = raw_request_fingerprint(example.request)
                 instance = self.reasoner.ground(example.request)
                 if not instance.goals:
                     raise ValueError("grounded raw request has no explicit typed goals")
-                semantic_fingerprint = _semantic_fingerprint(instance)
+                semantic_fingerprint = grounded_instance_fingerprint(instance)
                 if self.hard_negatives_per_example:
                     instance = with_hard_negative_distractors(
                         instance,
@@ -334,7 +335,13 @@ def _require_split(
         )
 
 
-def _input_fingerprint(request: TypedDomainRequest) -> str:
+def raw_request_fingerprint(request: TypedDomainRequest) -> str:
+    domain = DomainKind(request.domain)
+    if (
+        domain in {DomainKind.LANGUAGE, DomainKind.MATH, DomainKind.VISION}
+        and not isinstance(request.payload, DomainInstance)
+    ):
+        return semantic_request_digest(request)
     payload = request.payload
     image = getattr(payload, "image", None)
     digest = getattr(image, "digest", None)
@@ -347,7 +354,7 @@ def _input_fingerprint(request: TypedDomainRequest) -> str:
             f"{getattr(payload, 'count_selectors', ())!r}"
         )
     elif isinstance(payload, DomainInstance):
-        material = "prebuilt|" + _semantic_fingerprint(payload)
+        material = "prebuilt|" + grounded_instance_fingerprint(payload)
     else:
         material = (
             f"{DomainKind(request.domain).value}|{type(payload).__name__}|"
@@ -356,7 +363,7 @@ def _input_fingerprint(request: TypedDomainRequest) -> str:
     return sha256(material.encode("utf-8")).hexdigest()
 
 
-def _semantic_fingerprint(instance: DomainInstance) -> str:
+def grounded_instance_fingerprint(instance: DomainInstance) -> str:
     facts = tuple(
         (
             fact.atom.canonical_key(),

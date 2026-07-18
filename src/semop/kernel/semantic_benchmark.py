@@ -9,15 +9,6 @@ from pathlib import Path
 from time import process_time
 from typing import Any, Mapping, Sequence
 
-from .domains.language_text import LanguageTextProblem
-from .domains.raster_vision import (
-    RasterImage,
-    RasterVisionProblem,
-    VisionAreaGoal,
-    VisionCountGoal,
-    VisionPropertyGoal,
-)
-from .domains.vision import VisionRelationGoal
 from .engine import OperatorKernel
 from .experience import (
     GroundedLearningBatch,
@@ -26,6 +17,7 @@ from .experience import (
 )
 from .model import SolveBudget
 from .runtime import DomainKind, TypedDomainRequest
+from .semantic_codec import canonical_json, decode_semantic_request
 from .self_learning import (
     HUMAN_REVIEW_ATTESTATION,
     LearningMetrics,
@@ -43,16 +35,6 @@ SEMANTIC_REVIEW_SCHEMA_VERSION = 1
 _SUPPORTED_DOMAINS = frozenset(
     {DomainKind.LANGUAGE, DomainKind.MATH, DomainKind.VISION}
 )
-_COLOR_NAMES = {
-    "black": (0, 0, 0),
-    "blue": (0, 0, 255),
-    "green": (0, 255, 0),
-    "red": (255, 0, 0),
-    "white": (255, 255, 255),
-    "yellow": (255, 255, 0),
-}
-
-
 class SemanticReviewDecision(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -161,14 +143,7 @@ class SemanticBenchmarkCase:
         }
 
     def to_request(self) -> TypedDomainRequest:
-        payload = self.payload
-        if self.domain is DomainKind.LANGUAGE:
-            request_payload = _decode_language_payload(payload)
-        elif self.domain is DomainKind.MATH:
-            request_payload = _decode_math_payload(payload)
-        else:
-            request_payload = _decode_vision_payload(payload)
-        return TypedDomainRequest(self.domain, request_payload, "shadow")
+        return decode_semantic_request(self.domain, self.payload)
 
 
 @dataclass(frozen=True)
@@ -573,124 +548,6 @@ def evaluate_semantic_benchmark(
     )
 
 
-def _decode_language_payload(payload: Mapping[str, Any]) -> LanguageTextProblem:
-    text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("language semantic case requires non-empty payload.text")
-    source_context = payload.get("source_context", "")
-    if not isinstance(source_context, str):
-        raise TypeError("language payload.source_context must be a string")
-    heuristics = payload.get("use_legacy_heuristics", False)
-    if type(heuristics) is not bool:
-        raise TypeError("language payload.use_legacy_heuristics must be boolean")
-    return LanguageTextProblem(text, source_context, heuristics)
-
-
-def _decode_math_payload(payload: Mapping[str, Any]) -> str:
-    expression = payload.get("expression")
-    if not isinstance(expression, str) or not expression.strip():
-        raise ValueError("math semantic case requires non-empty payload.expression")
-    return expression
-
-
-def _decode_vision_payload(payload: Mapping[str, Any]) -> RasterVisionProblem:
-    rows = payload.get("rows")
-    if isinstance(rows, str) or not isinstance(rows, Sequence) or not rows:
-        raise TypeError("vision payload.rows must be a non-empty list")
-    decoded_rows: list[list[tuple[int, int, int]]] = []
-    for row in rows:
-        if isinstance(row, str) or not isinstance(row, Sequence) or not row:
-            raise TypeError("each vision raster row must be a non-empty list")
-        decoded_rows.append([_decode_color(pixel) for pixel in row])
-    background_value = payload.get("background")
-    background = (
-        _decode_color(background_value) if background_value is not None else None
-    )
-    image = RasterImage.from_rows(
-        decoded_rows,
-        background=background,
-        source=str(payload.get("source", "semantic-benchmark")),
-    )
-    raw_goals = payload.get("goals")
-    if isinstance(raw_goals, str) or not isinstance(raw_goals, Sequence) or not raw_goals:
-        raise TypeError("vision payload.goals must be a non-empty list")
-    goals: list[
-        VisionRelationGoal | VisionPropertyGoal | VisionCountGoal | VisionAreaGoal
-    ] = []
-    for raw_goal in raw_goals:
-        if not isinstance(raw_goal, Mapping):
-            raise TypeError("vision goal must be an object")
-        kind = str(raw_goal.get("kind", "")).strip().lower()
-        label = str(raw_goal.get("label", ""))
-        if kind == "relation":
-            goals.append(
-                VisionRelationGoal(
-                    str(raw_goal.get("predicate", "")),
-                    str(raw_goal.get("source", "")),
-                    str(raw_goal.get("target", "")),
-                    label,
-                )
-            )
-        elif kind == "property":
-            goals.append(
-                VisionPropertyGoal(
-                    str(raw_goal.get("predicate", "")),
-                    str(raw_goal.get("subject", "")),
-                    label,
-                )
-            )
-        elif kind == "count":
-            expected = raw_goal.get("expected")
-            if type(expected) is not int:
-                raise TypeError("vision count goal expected must be an integer")
-            goals.append(
-                VisionCountGoal(str(raw_goal.get("selector", "")), expected, label)
-            )
-        elif kind == "area":
-            goals.append(
-                VisionAreaGoal(
-                    str(raw_goal.get("larger", "")),
-                    str(raw_goal.get("smaller", "")),
-                    label,
-                )
-            )
-        else:
-            raise ValueError(f"unsupported vision goal kind: {kind or '<empty>'}")
-    count_selectors = payload.get("count_selectors", ())
-    if isinstance(count_selectors, str) or not isinstance(count_selectors, Sequence):
-        raise TypeError("vision payload.count_selectors must be a list")
-    return RasterVisionProblem(
-        image=image,
-        goals=tuple(goals),
-        query=str(payload.get("query", "")),
-        count_selectors=tuple(str(item) for item in count_selectors),
-    )
-
-
-def _decode_color(value: Any) -> tuple[int, int, int]:
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in _COLOR_NAMES:
-            return _COLOR_NAMES[normalized]
-        if len(normalized) == 7 and normalized.startswith("#"):
-            try:
-                return tuple(
-                    int(normalized[index : index + 2], 16)
-                    for index in (1, 3, 5)
-                )
-            except ValueError as exc:
-                raise ValueError(f"invalid RGB hex color: {value}") from exc
-        raise ValueError(f"unknown raster color: {value}")
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        channels = tuple(value)
-        if len(channels) != 3 or any(type(channel) is not int for channel in channels):
-            raise TypeError("RGB colors must contain three integer channels")
-        if any(channel < 0 or channel > 255 for channel in channels):
-            raise ValueError("RGB channels must be between 0 and 255")
-        return channels
-    raise TypeError("raster color must be a name, #RRGGBB, or RGB list")
-
-
 def _load_jsonl(path: Path, *, required: bool) -> tuple[dict[str, Any], ...]:
     if not path.exists():
         if required:
@@ -735,16 +592,7 @@ def _parse_review_timestamp(value: str) -> datetime:
 
 
 def _canonical_json(value: Any) -> str:
-    try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"semantic benchmark value is not canonical JSON: {exc}") from exc
+    return canonical_json(value)
 
 
 def _count_domains(
