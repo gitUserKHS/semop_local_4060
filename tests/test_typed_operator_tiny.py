@@ -410,13 +410,16 @@ class TinyControllerTests(unittest.TestCase):
         self.assertTrue(solved.verified)
 
     def test_torch_training_and_numpy_inference_action_scores_match(self) -> None:
-        import numpy as np
-        import torch
+        try:
+            import numpy as np
+            import torch
 
-        from semop.tiny_controller.training import (
-            TorchTinyController,
-            encode_training_example,
-        )
+            from semop.tiny_controller.training import (
+                TorchTinyController,
+                encode_training_example,
+            )
+        except ImportError:
+            self.skipTest("PyTorch training profile is not installed")
 
         config = TinyControllerConfig(
             d_model=16,

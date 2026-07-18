@@ -18,7 +18,6 @@ for path in (SRC, TRAIN, EVAL):
         sys.path.insert(0, str(path))
 
 from evaluate_low_resource_transfer import evaluate
-from train_tiny_controller import train
 
 
 LMV_DOMAINS = ("language", "math", "vision")
@@ -43,6 +42,13 @@ def run_lodo_experiment(
     unknown = sorted(set(selected) - set(LMV_DOMAINS))
     if unknown:
         raise ValueError(f"unknown LODO domains: {unknown}")
+
+    try:
+        from train_tiny_controller import train
+    except ImportError as exc:
+        raise RuntimeError(
+            "LODO training requires the optional PyTorch training profile"
+        ) from exc
 
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
