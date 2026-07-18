@@ -96,6 +96,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/kernel/experience.py`: audited raw input grounding, split fingerprints, bounded hard negatives, and the end-to-end raw self-learning API
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
+- `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
 - `docs/typed_compositional_extensions.md`: v2 language logic, exact equations, raster quantification, and controller scoring contract
@@ -127,8 +128,9 @@ rerun and verified human-reviewed 20/100-shot gates remain unevaluated. The same
 controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
-open-domain understanding. The raw experience tests, 199 typed-operator tests plus
-20 subtests, and all 566 repository tests pass; `shadow` remains the default.
+open-domain understanding. The trust/provenance milestone now passes 206
+typed-operator tests plus 20 subtests and all 573 repository tests; `shadow` remains
+the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI
@@ -711,8 +713,11 @@ Latest verified commands:
 - `python solve_contest.py --query "Given a weighted graph with N cities and M roads, answer the shortest path from city 1 to all cities."`
 - `.\.venv312\Scripts\python.exe tools/eval/compare_ops_baseline.py --input examples\ops_labeled_eval_ko.jsonl --baseline configurable_keyword --baseline-config examples\customer_baseline_config.json`
 
-At the time of the last validation:
-- all tests passed: `129`
+The old 129-test snapshot referred to the pre-typed product baseline. Current typed
+milestone counts and timings are recorded near the typed-core overview above and are
+independently exercised by `.github/workflows/typed-core.yml`.
+
+At the time of the legacy ops validation:
 - SemOp on labeled ops eval achieved:
   - `avg_relation_recall = 1.0`
   - `avg_answer_term_recall = 0.89`

@@ -159,8 +159,8 @@ def evaluate_self_learning(
             "promoted": iteration.accepted,
             "rejection_reasons": iteration.rejection_reasons,
         },
-        "before": asdict(iteration.baseline_metrics),
-        "after": asdict(candidate) if candidate is not None else None,
+        "before": iteration.baseline_metrics.to_dict(),
+        "after": candidate.to_dict() if candidate is not None else None,
         "ab": {
             "positive_expansions_before": (
                 iteration.baseline_metrics.positive_expansions

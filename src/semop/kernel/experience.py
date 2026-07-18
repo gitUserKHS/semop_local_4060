@@ -12,6 +12,7 @@ from .runtime import DomainKind, TypedDomainRequest, UnifiedTypedReasoner
 from .self_learning import (
     LearningSplit,
     LearningTask,
+    SemanticLabelAuthority,
     SelfLearningLoop,
     SelfLearningResult,
 )
@@ -30,6 +31,7 @@ class RawLearningExample:
     capability: str = ""
     structure_key: str = ""
     difficulty: int = 1
+    label_authority: SemanticLabelAuthority = SemanticLabelAuthority.PROGRAMMATIC
 
     def __post_init__(self) -> None:
         example_id = self.example_id.strip()
@@ -41,6 +43,11 @@ class RawLearningExample:
             raise ValueError("raw learning example difficulty must be positive")
         object.__setattr__(self, "example_id", example_id)
         object.__setattr__(self, "split", LearningSplit(self.split))
+        object.__setattr__(
+            self,
+            "label_authority",
+            SemanticLabelAuthority(self.label_authority),
+        )
 
 
 @dataclass(frozen=True)
@@ -192,6 +199,7 @@ class RawExperienceGrounder:
                         capability=example.capability,
                         structure_key=example.structure_key,
                         difficulty=example.difficulty,
+                        label_authority=example.label_authority,
                     )
                 )
                 input_fingerprints.append((example.example_id, input_fingerprint))
@@ -341,6 +349,8 @@ def _semantic_fingerprint(instance: DomainInstance) -> str:
             fact.status.value,
             fact.source,
             fact.confidence,
+            fact.assertion_status.value,
+            fact.evidence_status.value,
         )
         for fact in instance.state.facts
     )

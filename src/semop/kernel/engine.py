@@ -8,7 +8,9 @@ from time import perf_counter
 from typing import Protocol, runtime_checkable
 
 from .model import (
+    AssertionStatus,
     Atom,
+    EvidenceStatus,
     Fact,
     FactStatus,
     Goal,
@@ -22,6 +24,7 @@ from .model import (
     Term,
     TypeValidationError,
     WorldState,
+    collect_proof_dependencies,
 )
 from .registry import KernelRegistry
 from .unification import substitute_atom, unify_atom
@@ -187,13 +190,14 @@ class OperatorKernel:
             diagnostics += ("search trace was rejected by proof replay",)
 
         outcomes = self._goal_outcomes(normalized_goals, final_state, search.proof)
+        verified_proof = search.proof if verified else ()
         return SolveResult(
             success=verified and all(outcome.proven for outcome in outcomes),
             verified=verified,
             goals=outcomes,
             initial_state=state,
             final_state=final_state,
-            proof=search.proof if verified else (),
+            proof=verified_proof,
             expansions=search.expansions,
             elapsed_seconds=perf_counter() - started,
             halt_reason=(search.halt_reason if verified or not search.success else "replay_failed"),
@@ -201,6 +205,11 @@ class OperatorKernel:
             fallback_used=fallback_used,
             diagnostics=diagnostics,
             inference_rounds=search.inference_rounds,
+            dependencies=collect_proof_dependencies(
+                state,
+                normalized_goals,
+                verified_proof,
+            ),
         )
 
     def enumerate_actions(
@@ -1010,6 +1019,8 @@ class OperatorKernel:
                 atom=effect,
                 status=FactStatus.DERIVED,
                 source=action.operator.name,
+                assertion_status=AssertionStatus.GENERATED,
+                evidence_status=EvidenceStatus.DERIVED,
             )
             for effect in action.effects
             if effect not in existing

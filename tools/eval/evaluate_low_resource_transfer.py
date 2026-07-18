@@ -1050,16 +1050,22 @@ def summarize(measurements: list[CaseMeasurement]) -> dict[str, Any]:
     for domain in sorted({item.domain for item in measurements}):
         items = [item for item in measurements if item.domain == domain]
         domain_expected = [item for item in items if item.expected_solved]
+        replay_completion = _ratio(
+            sum(item.success and item.verified for item in domain_expected),
+            len(domain_expected),
+        )
+        replay_integrity = _ratio(
+            sum(item.verified for item in items if item.success),
+            sum(item.success for item in items),
+            empty=1.0,
+        )
         by_domain[domain] = {
-            "verified_solve_rate": _ratio(
-                sum(item.success and item.verified for item in domain_expected),
-                len(domain_expected),
-            ),
-            "proof_soundness": _ratio(
-                sum(item.verified and not item.false_positive for item in items if item.success),
-                sum(item.success for item in items),
-                empty=1.0,
-            ),
+            "replay_verified_goal_completion": replay_completion,
+            "primitive_replay_integrity": replay_integrity,
+            "semantic_correctness": None,
+            "semantic_gold_tasks": 0,
+            "verified_solve_rate": replay_completion,
+            "proof_soundness": replay_integrity,
             "median_expansions": statistics.median(
                 [item.expansions for item in domain_expected]
             ),
@@ -1070,15 +1076,21 @@ def summarize(measurements: list[CaseMeasurement]) -> dict[str, Any]:
                 [item.cpu_seconds for item in items], 0.95
             ),
         }
+    replay_completion = _ratio(
+        sum(item.success and item.verified for item in expected), len(expected)
+    )
+    replay_integrity = _ratio(
+        sum(item.verified for item in reported_success),
+        len(reported_success),
+        empty=1.0,
+    )
     return {
-        "verified_solve_rate": _ratio(
-            sum(item.success and item.verified for item in expected), len(expected)
-        ),
-        "proof_soundness": _ratio(
-            sum(item.verified and not item.false_positive for item in reported_success),
-            len(reported_success),
-            empty=1.0,
-        ),
+        "replay_verified_goal_completion": replay_completion,
+        "primitive_replay_integrity": replay_integrity,
+        "semantic_correctness": None,
+        "semantic_gold_tasks": 0,
+        "verified_solve_rate": replay_completion,
+        "proof_soundness": replay_integrity,
         "false_positives": sum(item.false_positive for item in measurements),
         "expansions": sum(item.expansions for item in measurements),
         "median_expansions": statistics.median(

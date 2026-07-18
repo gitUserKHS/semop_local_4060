@@ -34,6 +34,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - 작은 공유 뇌가 언어·수학·비전의 typed operator program을 조합하는 장기 구조와 코드 정리 원칙
 - `typed_operator_core.md`
   - immutable typed IR, verifier-first search, three domain adapters, and migration modes
+- `trust_provenance_and_metrics.md`
+  - assertion/evidence/logical 신뢰 축, 가정 의존 proof, replay integrity와 semantic correctness 분리, CI 계약
 - `language_math_vision_typed_runtime.md`
   - direct language/math/vision adapters, trust boundaries, unified runtime, and benchmark workflow
 - `language_text_adapter.md`

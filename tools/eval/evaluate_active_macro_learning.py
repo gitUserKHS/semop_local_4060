@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -197,8 +196,8 @@ def evaluate_active_macro_learning(
             "improved_domains": result.improved_domains,
             "activation_by_domain": activation_by_domain,
         },
-        "before": asdict(result.baseline_metrics),
-        "after": asdict(result.guided_metrics),
+        "before": result.baseline_metrics.to_dict(),
+        "after": result.guided_metrics.to_dict(),
         "ab": {
             "positive_expansions_before": (
                 result.baseline_metrics.positive_expansions

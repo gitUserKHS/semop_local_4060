@@ -6,7 +6,7 @@ from ..catalog import (
     register_all_requirements_ready,
     register_requirement_reasoning,
 )
-from ..model import Fact, FactStatus, Goal, WorldState
+from ..model import AssertionStatus, EvidenceStatus, Fact, FactStatus, Goal, WorldState
 from ..registry import KernelRegistry
 from .base import DomainInstance
 
@@ -36,7 +36,13 @@ def make_hidden_premise_instance(
         for name in sorted(set(required) | set(satisfied) | set(blocked))
     }
     facts: list[Fact] = [
-        Fact(registry.atom("GOAL", goal_symbol), FactStatus.OBSERVED, "adapter")
+        Fact(
+            registry.atom("GOAL", goal_symbol),
+            FactStatus.OBSERVED,
+            "adapter",
+            assertion_status=AssertionStatus.EXPLICIT,
+            evidence_status=EvidenceStatus.UNVERIFIED,
+        )
     ]
     for name in required:
         facts.append(
@@ -44,6 +50,8 @@ def make_hidden_premise_instance(
                 registry.atom("REQUIRES", goal_symbol, premise_symbols[name]),
                 FactStatus.OBSERVED,
                 "adapter",
+                assertion_status=AssertionStatus.EXPLICIT,
+                evidence_status=EvidenceStatus.UNVERIFIED,
             )
         )
     for name in satisfied:
@@ -52,6 +60,8 @@ def make_hidden_premise_instance(
                 registry.atom("SATISFIED", premise_symbols[name]),
                 FactStatus.OBSERVED,
                 "adapter",
+                assertion_status=AssertionStatus.EXPLICIT,
+                evidence_status=EvidenceStatus.UNVERIFIED,
             )
         )
     for name in blocked:
@@ -60,6 +70,8 @@ def make_hidden_premise_instance(
                 registry.atom("BLOCKED", premise_symbols[name]),
                 FactStatus.OBSERVED,
                 "adapter",
+                assertion_status=AssertionStatus.EXPLICIT,
+                evidence_status=EvidenceStatus.UNVERIFIED,
             )
         )
 

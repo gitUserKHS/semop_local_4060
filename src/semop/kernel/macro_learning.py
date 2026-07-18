@@ -54,6 +54,10 @@ class MacroLearningBudget:
         if not 1 <= self.min_domains_improved <= 3:
             raise ValueError("improved-domain gate must be between one and three")
 
+    @property
+    def required_replay_integrity(self) -> float:
+        return self.required_proof_soundness
+
 
 @dataclass(frozen=True)
 class MacroActivationAudit:
@@ -165,19 +169,23 @@ class VerifiedMacroLearningLoop:
         if not candidate_library.records:
             reasons.append("no_validation_retained_macro_candidates")
         minimum_rate = (
-            baseline_metrics.verified_solve_rate
+            baseline_metrics.replay_verified_goal_completion
             - self.budget.max_solve_rate_drop
         )
-        if guided_metrics.verified_solve_rate < minimum_rate:
+        if guided_metrics.replay_verified_goal_completion < minimum_rate:
             reasons.append(
-                "macro_guided_solve_rate_regressed: "
-                f"{guided_metrics.verified_solve_rate:.6f} < {minimum_rate:.6f}"
+                "macro_replay_verified_goal_completion_regressed: "
+                f"{guided_metrics.replay_verified_goal_completion:.6f} < "
+                f"{minimum_rate:.6f}"
             )
-        if guided_metrics.proof_soundness < self.budget.required_proof_soundness:
+        if (
+            guided_metrics.primitive_replay_integrity
+            < self.budget.required_replay_integrity
+        ):
             reasons.append(
-                "macro_guided_proof_soundness_below_gate: "
-                f"{guided_metrics.proof_soundness:.6f} < "
-                f"{self.budget.required_proof_soundness:.6f}"
+                "macro_primitive_replay_integrity_below_gate: "
+                f"{guided_metrics.primitive_replay_integrity:.6f} < "
+                f"{self.budget.required_replay_integrity:.6f}"
             )
         if guided_metrics.false_positives > self.budget.max_false_positives:
             reasons.append(

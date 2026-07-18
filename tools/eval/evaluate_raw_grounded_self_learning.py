@@ -257,10 +257,10 @@ def evaluate_raw_grounded_self_learning(
             ),
         },
         "transfer": {
-            "baseline": asdict(baseline_metrics),
-            "candidate": asdict(candidate_metrics),
+            "baseline": baseline_metrics.to_dict(),
+            "candidate": candidate_metrics.to_dict(),
             "restored": (
-                asdict(restored_metrics) if restored_metrics is not None else None
+                restored_metrics.to_dict() if restored_metrics is not None else None
             ),
             "per_domain_expansion_reduction": per_domain_reduction,
             "baseline_tasks": tuple(asdict(item) for item in baseline_tasks),

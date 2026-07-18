@@ -7,7 +7,9 @@ from typing import Protocol, runtime_checkable
 
 from .engine import OperatorKernel
 from .model import (
+    AssertionStatus,
     Atom,
+    EvidenceStatus,
     Fact,
     FactStatus,
     Goal,
@@ -17,6 +19,7 @@ from .model import (
     ProofStep,
     SolveResult,
     WorldState,
+    collect_proof_dependencies,
 )
 
 
@@ -132,6 +135,8 @@ def stage_judged_fact(
             FactStatus.PROPOSED,
             source,
             decision.confidence,
+            assertion_status=AssertionStatus.INFERRED,
+            evidence_status=EvidenceStatus.UNVERIFIED,
         ),
     )
 
@@ -161,6 +166,8 @@ def promote_judged_fact(
         FactStatus.OBSERVED,
         source,
         1.0,
+        assertion_status=AssertionStatus.INFERRED,
+        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
     )
 
 
@@ -366,6 +373,11 @@ def teacher_review_to_solve_result(
             f"judge_prompt_fingerprint={review.decision.prompt_fingerprint}",
         ),
         inference_rounds=len(revalidated.proof),
+        dependencies=collect_proof_dependencies(
+            initial_state,
+            normalized_goals,
+            revalidated.proof,
+        ),
     )
 
 

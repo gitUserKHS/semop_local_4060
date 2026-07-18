@@ -4,13 +4,19 @@
 
 `LanguageTextAdapter`는 한국어·영어 텍스트에서 명시적으로 표현된 목표, 필수 전제,
 충족 상태, 차단 상태를 typed fact로 바꾼다. 이 계층의 목적은 작은 언어 모델이 답을
-직접 생성하게 하는 것이 아니라, 신뢰할 수 있는 문장만 operator kernel의 증거로
-전달하는 것이다.
+직접 생성하게 하는 것이 아니라, 통제 문법으로 명시된 문장을 operator kernel의
+논리 입력으로 전달하고 그 외 후보를 격리하는 것이다.
 
 현재 구현은 범용 자연어 이해기가 아니다. 지원 문법과 일치하는 명시적 문장은
 `observed`, 기존 휴리스틱이 추측한 후보는 `proposed`, 서로 충돌하는 상태는
 `contradicted`가 된다. `observed`, `assumed`, `derived`만 proof 전제로 사용할 수
 있으므로 휴리스틱 추측만으로는 목표가 증명되지 않는다.
+
+여기서 `observed`는 문서 안에 명시된 assertion이라는 논리 상태다. 현실의 승인,
+완료 여부를 외부 시스템에서 확인했다는 뜻은 아니다. 명시 문장은
+`assertion_status=explicit`, `evidence_status=unverified`로 남으며, 성공 결과의
+`unverified_dependencies`에서 확인할 수 있다. 자세한 계약은
+`trust_provenance_and_metrics.md`를 참고한다.
 
 ## 입력 형태
 
@@ -47,7 +53,7 @@ Can we deploy?
 text
   -> LanguageTextParser
   -> LanguageClaim(GOAL | REQUIRES | SATISFIED | BLOCKED)
-  -> FactStatus trust boundary
+  -> AssertionStatus + EvidenceStatus + FactStatus trust boundary
   -> hidden-premise operators
   -> OperatorKernel.solve
   -> proof replay
@@ -76,7 +82,8 @@ result = runtime.run(
 )
 
 assert result.success
-assert result.verified
+assert result.verified  # operator program replay가 검증됨
+assert result.unverified_dependencies  # 현실 증거는 별도 확인 대상
 print(result.proof_ko)
 ```
 

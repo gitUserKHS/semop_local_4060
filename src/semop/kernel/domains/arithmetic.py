@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
-from ..model import Fact, FactStatus, Goal, OperatorFamily, Rule, WorldState
+from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    OperatorFamily,
+    Rule,
+    WorldState,
+)
 from ..registry import KernelRegistry
 from .base import DomainInstance
 from .math_common import format_fraction as _format_fraction
@@ -160,7 +169,15 @@ class ArithmeticExpressionAdapter:
                 numeric_value = Fraction(node.literal)
                 numeric_symbol = number_symbol(numeric_value)
                 structure = registry.atom("LITERAL", expression_symbol, numeric_symbol)
-                facts.append(Fact(structure, FactStatus.OBSERVED, "math_parser"))
+                facts.append(
+                    Fact(
+                        structure,
+                        FactStatus.OBSERVED,
+                        "math_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    )
+                )
                 guard_name = f"verify_literal_{node_id:03d}"
                 registry.register_guard(
                     guard_name,
@@ -189,7 +206,15 @@ class ArithmeticExpressionAdapter:
                 numeric_value = -child_value
                 numeric_symbol = number_symbol(numeric_value)
                 structure = registry.atom("NEG_NODE", expression_symbol, child_symbol)
-                facts.append(Fact(structure, FactStatus.OBSERVED, "math_parser"))
+                facts.append(
+                    Fact(
+                        structure,
+                        FactStatus.OBSERVED,
+                        "math_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    )
+                )
                 _register_ground_evaluation(
                     registry,
                     node_id=node_id,
@@ -215,7 +240,15 @@ class ArithmeticExpressionAdapter:
                     left_symbol,
                     right_symbol,
                 )
-                facts.append(Fact(structure, FactStatus.OBSERVED, "math_parser"))
+                facts.append(
+                    Fact(
+                        structure,
+                        FactStatus.OBSERVED,
+                        "math_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    )
+                )
                 _register_ground_evaluation(
                     registry,
                     node_id=node_id,

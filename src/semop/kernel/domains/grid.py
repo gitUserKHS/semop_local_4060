@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from ..model import Fact, FactStatus, Goal, Rule, WorldState
+from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    Rule,
+    WorldState,
+)
 from ..registry import KernelRegistry
 from .base import DomainInstance
 
@@ -75,7 +83,13 @@ def parse_grid_problem(text: str) -> DomainInstance:
     for (row, column), cell in cells.items():
         if rows[row][column] != "#":
             facts.append(
-                Fact(registry.atom("OPEN", cell), FactStatus.OBSERVED, "grid")
+                Fact(
+                    registry.atom("OPEN", cell),
+                    FactStatus.OBSERVED,
+                    "grid",
+                    assertion_status=AssertionStatus.EXPLICIT,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                )
             )
         for delta_row, delta_column in ((1, 0), (0, 1)):
             neighbor = (row + delta_row, column + delta_column)
@@ -85,6 +99,8 @@ def parse_grid_problem(text: str) -> DomainInstance:
                         registry.atom("ADJACENT", cell, cells[neighbor]),
                         FactStatus.OBSERVED,
                         "grid",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
                     )
                 )
     start_symbol = cells[starts[0]]
@@ -94,6 +110,8 @@ def parse_grid_problem(text: str) -> DomainInstance:
             registry.atom("REACHABLE", start_symbol),
             FactStatus.ASSUMED,
             "grid_start",
+            assertion_status=AssertionStatus.EXPLICIT,
+            evidence_status=EvidenceStatus.ASSUMED,
         )
     )
     return DomainInstance(

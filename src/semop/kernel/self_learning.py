@@ -29,6 +29,14 @@ class LearningSplit(str, Enum):
     HELDOUT = "heldout"
 
 
+class SemanticLabelAuthority(str, Enum):
+    """Authority behind an expected outcome used for semantic evaluation."""
+
+    PROGRAMMATIC = "programmatic"
+    HUMAN_REVIEWED = "human_reviewed"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class LearningTask:
     """One labeled problem at the verifier boundary.
@@ -47,6 +55,7 @@ class LearningTask:
     capability: str = ""
     structure_key: str = ""
     difficulty: int = 1
+    label_authority: SemanticLabelAuthority = SemanticLabelAuthority.UNKNOWN
 
     def __post_init__(self) -> None:
         task_id = self.task_id.strip()
@@ -62,6 +71,14 @@ class LearningTask:
             raise ValueError("learning task difficulty must be positive")
         if self.source not in TraceCorpus.VALID_SOURCES:
             raise ValueError(f"unknown learning task source: {self.source}")
+        authority = SemanticLabelAuthority(self.label_authority)
+        if authority is SemanticLabelAuthority.UNKNOWN:
+            authority = (
+                SemanticLabelAuthority.HUMAN_REVIEWED
+                if self.source == "reviewed"
+                else SemanticLabelAuthority.PROGRAMMATIC
+            )
+        object.__setattr__(self, "label_authority", authority)
         if not self.instance.goals:
             raise ValueError("learning tasks require at least one verifier goal")
 
@@ -85,6 +102,7 @@ class LearningTask:
             capability=problem.capability,
             structure_key=problem.structure_key,
             difficulty=problem.difficulty,
+            label_authority=SemanticLabelAuthority.PROGRAMMATIC,
         )
 
 
@@ -144,6 +162,12 @@ class SelfLearningBudget:
             raise ValueError("minimum expansion reduction must be between 0 and 1")
         if self.max_p95_cpu_seconds <= 0:
             raise ValueError("p95 CPU limit must be positive")
+
+    @property
+    def required_replay_integrity(self) -> float:
+        """Canonical name for the legacy constructor field."""
+
+        return self.required_proof_soundness
 
 
 @dataclass(frozen=True)
@@ -210,6 +234,18 @@ class TaskEvaluation:
     halt_reason: str
     policy_used: bool
     fallback_used: bool
+    label_authority: SemanticLabelAuthority = SemanticLabelAuthority.PROGRAMMATIC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "label_authority",
+            SemanticLabelAuthority(self.label_authority),
+        )
+
+    @property
+    def has_semantic_gold(self) -> bool:
+        return self.label_authority is SemanticLabelAuthority.HUMAN_REVIEWED
 
 
 @dataclass(frozen=True)
@@ -217,21 +253,44 @@ class DomainLearningMetrics:
     domain: str
     tasks: int
     positive_tasks: int
-    verified_solve_rate: float
-    proof_soundness: float
+    replay_verified_goal_completion: float
+    primitive_replay_integrity: float
+    semantic_correctness: float | None
+    semantic_gold_tasks: int
     false_positives: int
     positive_expansions: int
     median_positive_expansions: float
     p95_cpu_seconds: float
+
+    @property
+    def verified_solve_rate(self) -> float:
+        """Deprecated alias for replay-verified goal completion."""
+
+        return self.replay_verified_goal_completion
+
+    @property
+    def proof_soundness(self) -> float:
+        """Deprecated alias for primitive proof-replay integrity."""
+
+        return self.primitive_replay_integrity
+
+    def to_dict(self, *, legacy_aliases: bool = True) -> dict[str, object]:
+        payload = asdict(self)
+        if legacy_aliases:
+            payload["verified_solve_rate"] = self.verified_solve_rate
+            payload["proof_soundness"] = self.proof_soundness
+        return payload
 
 
 @dataclass(frozen=True)
 class LearningMetrics:
     tasks: int
     positive_tasks: int
-    verified_solve_rate: float
-    expected_outcome_accuracy: float
-    proof_soundness: float
+    replay_verified_goal_completion: float
+    programmatic_outcome_accuracy: float
+    primitive_replay_integrity: float
+    semantic_correctness: float | None
+    semantic_gold_tasks: int
     false_positives: int
     positive_expansions: int
     total_expansions: int
@@ -246,6 +305,35 @@ class LearningMetrics:
             if item.domain == domain:
                 return item
         raise KeyError(domain)
+
+    @property
+    def verified_solve_rate(self) -> float:
+        """Deprecated alias for replay-verified goal completion."""
+
+        return self.replay_verified_goal_completion
+
+    @property
+    def expected_outcome_accuracy(self) -> float:
+        """Deprecated alias for programmatic outcome accuracy."""
+
+        return self.programmatic_outcome_accuracy
+
+    @property
+    def proof_soundness(self) -> float:
+        """Deprecated alias for primitive proof-replay integrity."""
+
+        return self.primitive_replay_integrity
+
+    def to_dict(self, *, legacy_aliases: bool = True) -> dict[str, object]:
+        payload = asdict(self)
+        payload["by_domain"] = tuple(
+            item.to_dict(legacy_aliases=legacy_aliases) for item in self.by_domain
+        )
+        if legacy_aliases:
+            payload["verified_solve_rate"] = self.verified_solve_rate
+            payload["expected_outcome_accuracy"] = self.expected_outcome_accuracy
+            payload["proof_soundness"] = self.proof_soundness
+        return payload
 
 
 @dataclass(frozen=True)
@@ -741,22 +829,29 @@ class SelfLearningLoop:
         policy: PolicyCandidate,
     ) -> tuple[str, ...]:
         reasons: list[str] = []
-        if candidate.proof_soundness < self.budget.required_proof_soundness:
+        if (
+            candidate.primitive_replay_integrity
+            < self.budget.required_replay_integrity
+        ):
             reasons.append(
-                "proof_soundness_below_gate: "
-                f"{candidate.proof_soundness:.6f} < "
-                f"{self.budget.required_proof_soundness:.6f}"
+                "primitive_replay_integrity_below_gate: "
+                f"{candidate.primitive_replay_integrity:.6f} < "
+                f"{self.budget.required_replay_integrity:.6f}"
             )
         if candidate.false_positives > self.budget.max_false_positives:
             reasons.append(
                 "false_positive_gate_failed: "
                 f"{candidate.false_positives} > {self.budget.max_false_positives}"
             )
-        minimum_rate = baseline.verified_solve_rate - self.budget.max_solve_rate_drop
-        if candidate.verified_solve_rate < minimum_rate:
+        minimum_rate = (
+            baseline.replay_verified_goal_completion
+            - self.budget.max_solve_rate_drop
+        )
+        if candidate.replay_verified_goal_completion < minimum_rate:
             reasons.append(
-                "verified_solve_rate_regressed: "
-                f"{candidate.verified_solve_rate:.6f} < {minimum_rate:.6f}"
+                "replay_verified_goal_completion_regressed: "
+                f"{candidate.replay_verified_goal_completion:.6f} < "
+                f"{minimum_rate:.6f}"
             )
         baseline_domains = {item.domain: item for item in baseline.by_domain}
         candidate_domains = {item.domain: item for item in candidate.by_domain}
@@ -764,13 +859,16 @@ class SelfLearningLoop:
             baseline_domain = baseline_domains[domain]
             candidate_domain = candidate_domains[domain]
             minimum_domain_rate = (
-                baseline_domain.verified_solve_rate
+                baseline_domain.replay_verified_goal_completion
                 - self.budget.max_solve_rate_drop
             )
-            if candidate_domain.verified_solve_rate < minimum_domain_rate:
+            if (
+                candidate_domain.replay_verified_goal_completion
+                < minimum_domain_rate
+            ):
                 reasons.append(
                     f"domain_solve_rate_regressed[{domain}]: "
-                    f"{candidate_domain.verified_solve_rate:.6f} < "
+                    f"{candidate_domain.replay_verified_goal_completion:.6f} < "
                     f"{minimum_domain_rate:.6f}"
                 )
         reduction = learning_expansion_reduction(baseline, candidate)
@@ -864,6 +962,7 @@ def task_evaluation_from_result(
         halt_reason=result.halt_reason,
         policy_used=result.policy_used,
         fallback_used=result.fallback_used,
+        label_authority=task.label_authority,
     )
 
 
@@ -872,6 +971,7 @@ def summarize_task_evaluations(
 ) -> LearningMetrics:
     positive = tuple(item for item in evaluations if item.expected_solved)
     successes = tuple(item for item in evaluations if item.success)
+    semantic_gold = tuple(item for item in evaluations if item.has_semantic_gold)
     by_domain = tuple(
         _summarize_domain(
             domain,
@@ -882,19 +982,30 @@ def summarize_task_evaluations(
     return LearningMetrics(
         tasks=len(evaluations),
         positive_tasks=len(positive),
-        verified_solve_rate=_ratio(
+        replay_verified_goal_completion=_ratio(
             sum(item.success and item.verified for item in positive),
             len(positive),
         ),
-        expected_outcome_accuracy=_ratio(
+        programmatic_outcome_accuracy=_ratio(
             sum(item.success == item.expected_solved for item in evaluations),
             len(evaluations),
         ),
-        proof_soundness=_ratio(
-            sum(item.verified and not item.false_positive for item in successes),
+        primitive_replay_integrity=_ratio(
+            sum(item.verified for item in successes),
             len(successes),
             empty=1.0,
         ),
+        semantic_correctness=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved for item in semantic_gold
+                ),
+                len(semantic_gold),
+            )
+            if semantic_gold
+            else None
+        ),
+        semantic_gold_tasks=len(semantic_gold),
         false_positives=sum(item.false_positive for item in evaluations),
         positive_expansions=sum(item.expansions for item in positive),
         total_expansions=sum(item.expansions for item in evaluations),
@@ -918,19 +1029,31 @@ def _summarize_domain(
 ) -> DomainLearningMetrics:
     positive = tuple(item for item in evaluations if item.expected_solved)
     successes = tuple(item for item in evaluations if item.success)
+    semantic_gold = tuple(item for item in evaluations if item.has_semantic_gold)
     return DomainLearningMetrics(
         domain=domain,
         tasks=len(evaluations),
         positive_tasks=len(positive),
-        verified_solve_rate=_ratio(
+        replay_verified_goal_completion=_ratio(
             sum(item.success and item.verified for item in positive),
             len(positive),
         ),
-        proof_soundness=_ratio(
-            sum(item.verified and not item.false_positive for item in successes),
+        primitive_replay_integrity=_ratio(
+            sum(item.verified for item in successes),
             len(successes),
             empty=1.0,
         ),
+        semantic_correctness=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved for item in semantic_gold
+                ),
+                len(semantic_gold),
+            )
+            if semantic_gold
+            else None
+        ),
+        semantic_gold_tasks=len(semantic_gold),
         false_positives=sum(item.false_positive for item in evaluations),
         positive_expansions=sum(item.expansions for item in positive),
         median_positive_expansions=_median(
@@ -958,6 +1081,7 @@ def learning_expansion_reduction(
 def _trace_metadata(task: LearningTask) -> dict[str, str]:
     metadata = {
         "split": task.split.value,
+        "label_authority": task.label_authority.value,
         "difficulty": str(task.difficulty),
     }
     if task.capability:

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 import random
 from typing import Any, Callable
 
+from .engine import OperatorKernel
 from .domains import (
     DomainInstance,
     LanguageLogicAdapter,
@@ -28,7 +29,15 @@ from .domains import (
     parse_linear_equation,
     parse_numeric_comparison,
 )
-from .model import Fact, FactStatus, Goal, Rule, TypeValidationError, WorldState
+from .model import (
+    Fact,
+    FactStatus,
+    Goal,
+    Rule,
+    SolveResult,
+    TypeValidationError,
+    WorldState,
+)
 
 
 _SEMANTIC_FLOW_TRAIN_VARIANTS = (
@@ -436,7 +445,15 @@ def generate_hierarchical_brain_transfer_split(
 def generate_symbolic_negative_controls(
     problems: Sequence[SyntheticProblem],
 ) -> tuple[SyntheticProblem, ...]:
-    """Create deterministic unsolved controls without adding verifier facts."""
+    """Compatibility entry point for verifier-checked semantic near misses."""
+
+    return generate_semantic_near_miss_controls(problems)
+
+
+def generate_semantic_near_miss_controls(
+    problems: Sequence[SyntheticProblem],
+) -> tuple[SyntheticProblem, ...]:
+    """Remove one necessary proof leaf while preserving symbols and target meaning."""
 
     controls: list[SyntheticProblem] = []
     for problem in problems:
@@ -445,23 +462,38 @@ def generate_symbolic_negative_controls(
             raise ValueError(
                 f"negative control requires explicit goals: {problem.problem_id}"
             )
-        false_goals = []
-        safe_id = problem.problem_id.replace("-", "_")
-        for goal_index, goal in enumerate(instance.goals):
-            wrong_arguments = tuple(
-                instance.registry.symbol(
-                    f"negative_{safe_id}_{goal_index}_{argument_index}",
-                    argument.type,
-                )
-                for argument_index, argument in enumerate(goal.atom.arguments)
+        positive = OperatorKernel(instance.registry).solve(
+            instance.state,
+            instance.goals,
+        )
+        if not positive.success or not positive.verified:
+            raise ValueError(
+                f"near-miss source must be replay-verified: {problem.problem_id}"
             )
-            false_goals.append(
-                Goal(
-                    instance.registry.atom(goal.atom.predicate, *wrong_arguments),
-                    label="intentionally unreachable typed target",
-                )
+
+        control = _missing_dependency_control(instance, positive)
+        kind = "missing_proof_premise"
+        if control is None:
+            control = _reversed_goal_control(instance)
+            kind = "reversed_relation"
+        if control is None:
+            control = _unreachable_symbol_control(problem)
+            kind = "unreachable_symbol_fallback"
+
+        probe = OperatorKernel(control.registry).solve(control.state, control.goals)
+        if probe.success or probe.verified:
+            raise ValueError(
+                f"negative control unexpectedly solved: {problem.problem_id}"
             )
-        control = replace(instance, goals=tuple(false_goals))
+        control = replace(
+            control,
+            metadata={
+                **control.metadata,
+                "negative_control_kind": kind,
+                "negative_source_problem": problem.problem_id,
+                "negative_verified_unsolved": True,
+            },
+        )
         controls.append(
             SyntheticProblem(
                 problem_id=f"negative-{problem.problem_id}",
@@ -473,6 +505,94 @@ def generate_symbolic_negative_controls(
             )
         )
     return tuple(controls)
+
+
+def _missing_dependency_control(
+    instance: DomainInstance,
+    positive_result: SolveResult,
+) -> DomainInstance | None:
+    dependencies = positive_result.dependencies.all_dependencies
+    for dependency in dependencies:
+        retained = tuple(
+            fact for fact in instance.state.facts if fact.atom != dependency.atom
+        )
+        if len(retained) == len(instance.state.facts):
+            continue
+        candidate = replace(
+            instance,
+            state=WorldState(
+                retained,
+                depth=instance.state.depth,
+                path_cost=instance.state.path_cost,
+            ),
+        )
+        result = OperatorKernel(candidate.registry).solve(
+            candidate.state,
+            candidate.goals,
+        )
+        if not result.success:
+            return replace(
+                candidate,
+                metadata={
+                    **candidate.metadata,
+                    "removed_dependency": str(dependency.atom),
+                    "removed_dependency_source": dependency.source,
+                },
+            )
+    return None
+
+
+def _reversed_goal_control(instance: DomainInstance) -> DomainInstance | None:
+    reversed_goals: list[Goal] = []
+    changed = False
+    for goal in instance.goals:
+        if len(goal.atom.arguments) == 2:
+            reversed_arguments = tuple(reversed(goal.atom.arguments))
+            expected_types = goal.atom.predicate.argument_types
+            if not all(
+                instance.registry.types.is_assignable(argument.type, expected)
+                for argument, expected in zip(
+                    reversed_arguments,
+                    expected_types,
+                    strict=True,
+                )
+            ):
+                reversed_goals.append(goal)
+                continue
+            atom = instance.registry.atom(
+                goal.atom.predicate,
+                *reversed_arguments,
+            )
+            changed = changed or atom != goal.atom
+            reversed_goals.append(Goal(atom, label="reversed-relation near miss"))
+        else:
+            reversed_goals.append(goal)
+    if not changed:
+        return None
+    candidate = replace(instance, goals=tuple(reversed_goals))
+    result = OperatorKernel(candidate.registry).solve(candidate.state, candidate.goals)
+    return candidate if not result.success else None
+
+
+def _unreachable_symbol_control(problem: SyntheticProblem) -> DomainInstance:
+    instance = problem.instance
+    safe_id = problem.problem_id.replace("-", "_")
+    false_goals = []
+    for goal_index, goal in enumerate(instance.goals):
+        wrong_arguments = tuple(
+            instance.registry.symbol(
+                f"negative_{safe_id}_{goal_index}_{argument_index}",
+                argument.type,
+            )
+            for argument_index, argument in enumerate(goal.atom.arguments)
+        )
+        false_goals.append(
+            Goal(
+                instance.registry.atom(goal.atom.predicate, *wrong_arguments),
+                label="intentionally unreachable typed target",
+            )
+        )
+    return replace(instance, goals=tuple(false_goals))
 
 
 def _lmv_transfer_builders() -> tuple[

@@ -5,6 +5,8 @@ import re
 
 from ..catalog import register_transitive_relation
 from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
     Fact,
     FactStatus,
     Goal,
@@ -370,6 +372,8 @@ class LanguageLogicAdapter:
                         if status is FactStatus.CONTRADICTED
                         else "language_logic_parser"
                     ),
+                    assertion_status=AssertionStatus.EXPLICIT,
+                    evidence_status=EvidenceStatus.UNVERIFIED,
                 )
             )
 

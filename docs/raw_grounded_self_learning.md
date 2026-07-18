@@ -153,8 +153,9 @@ python -m pytest -k typed_operator
 python -m pytest
 ```
 
-이번 변경의 최종 실행에서는 raw experience 9건, typed operator 199건과 subtest 20건,
-전체 저장소 566건이 통과했다. 전체 회귀 시간은 개발 PC에서 261.61초였다.
+현재 trust/provenance 변경까지 포함한 최종 실행에서는 raw experience 9건,
+typed operator 206건과 subtest 20건, 전체 저장소 573건이 통과했다. 전체 회귀 시간은
+개발 PC에서 264.91초였다.
 
 ## 현재 한계와 다음 단계
 

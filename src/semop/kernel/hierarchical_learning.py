@@ -175,6 +175,10 @@ class HierarchicalLearningBudget:
         if self.max_p95_cpu_seconds <= 0:
             raise ValueError("hierarchical p95 CPU limit must be positive")
 
+    @property
+    def required_replay_integrity(self) -> float:
+        return self.required_proof_soundness
+
 
 @dataclass(frozen=True)
 class HierarchicalPolicyAblation:
@@ -346,16 +350,19 @@ class HierarchicalSelfLearningLoop:
             reasons.append("hierarchical_brain_candidate_unavailable")
 
         best_component_rate = max(
-            controller_only.metrics.verified_solve_rate,
-            macro_only.metrics.verified_solve_rate,
+            controller_only.metrics.replay_verified_goal_completion,
+            macro_only.metrics.replay_verified_goal_completion,
         )
         if (
-            joint.metrics.verified_solve_rate
+            joint.metrics.replay_verified_goal_completion
             < best_component_rate - self.budget.max_joint_solve_rate_drop
         ):
             reasons.append("joint_solve_rate_regressed_against_component")
-        if joint.metrics.proof_soundness < self.budget.required_proof_soundness:
-            reasons.append("joint_proof_soundness_below_gate")
+        if (
+            joint.metrics.primitive_replay_integrity
+            < self.budget.required_replay_integrity
+        ):
+            reasons.append("joint_primitive_replay_integrity_below_gate")
         if joint.metrics.false_positives > self.budget.max_false_positives:
             reasons.append("joint_false_positive_limit_exceeded")
         if joint_reduction < self.budget.min_joint_expansion_reduction:

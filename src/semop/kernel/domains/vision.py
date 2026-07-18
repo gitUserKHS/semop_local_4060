@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..catalog import normalize_predicate_name, register_transitive_relation
-from ..model import Fact, FactStatus, Goal, SolveResult, WorldState
+from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    SolveResult,
+    WorldState,
+)
 from ..registry import KernelRegistry
 from .base import DomainInstance
 
@@ -56,6 +64,8 @@ class VisionWorldAdapter:
         "verified",
         "geometry_verified",
         "symbolically_verified",
+        "adapter_verified",
+        "external_verified",
     )
 
     def __init__(self, *, minimum_verified_confidence: float = 0.5) -> None:
@@ -184,6 +194,8 @@ class VisionWorldAdapter:
                     registry.atom("VISUAL_ENTITY", symbol),
                     status,
                     source="vision_entity",
+                    assertion_status=AssertionStatus.IMPORTED,
+                    evidence_status=self._evidence_status(attributes),
                 )
             )
 
@@ -211,6 +223,8 @@ class VisionWorldAdapter:
                     status,
                     source="vision_relation",
                     confidence=confidence,
+                    assertion_status=AssertionStatus.IMPORTED,
+                    evidence_status=self._evidence_status(attributes),
                 )
             )
 
@@ -250,6 +264,14 @@ class VisionWorldAdapter:
     @classmethod
     def _independently_verified(cls, attributes: dict[str, Any]) -> bool:
         return any(attributes.get(key) is True for key in cls._VERIFICATION_KEYS)
+
+    @classmethod
+    def _evidence_status(cls, attributes: dict[str, Any]) -> EvidenceStatus:
+        if attributes.get("external_verified") is True:
+            return EvidenceStatus.EXTERNAL_VERIFIED
+        if attributes.get("adapter_verified") is True:
+            return EvidenceStatus.ADAPTER_VERIFIED
+        return EvidenceStatus.UNVERIFIED
 
     @staticmethod
     def project(value: VisionProblem, result: SolveResult) -> None:

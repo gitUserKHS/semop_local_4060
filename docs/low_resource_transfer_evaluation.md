@@ -58,14 +58,16 @@ remain goal-relevant. Static predicate pruning cannot remove them; a policy must
 the correct ground binding.
 
 Every domain includes an expected-unsolved control. A reported success on one of
-these cases counts as a false positive and breaks proof soundness.
+these cases counts as a false positive and breaks expected-outcome accuracy. The
+default synthetic controls now preserve the original target and remove one proof
+dependency before the verifier confirms that the near miss is unsolved.
 
 ## Gates
 
 The report evaluates these promotion conditions:
 
-- reported proof soundness is exactly 100%
-- guided verified solve rate is no more than 1 percentage point below unguided search
+- primitive replay integrity is exactly 100%
+- guided replay-verified goal completion is no more than 1 percentage point below unguided search
 - median expansions fall at least 30% in at least two of three domains
 - 20-shot verified solve rate reaches at least 90% of 100-shot rate
 - model at most 15M parameters and artifact at most 64 MiB
@@ -77,6 +79,11 @@ case `overall_status` is `not_evaluated`.
 An artifact is accepted for a shot curve only when its adjacent `.summary.json`
 declares the same `reviewed_examples_per_domain`; a filename or CLI label alone is
 not treated as evidence.
+
+The JSON report keeps `proof_soundness` and `verified_solve_rate` as compatibility
+aliases. They mean `primitive_replay_integrity` and
+`replay_verified_goal_completion`; neither is a human semantic-accuracy score.
+`semantic_correctness` remains `null` until human-reviewed gold tasks are supplied.
 
 Likewise, a domain slice is labeled `verified_domain_held_out` only when the adjacent
 training summary exists and its `trained_domains` omits that domain. An all-domain

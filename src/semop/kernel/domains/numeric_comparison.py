@@ -4,7 +4,17 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 from ..composition import CompositionComponent, compose_domain_instances
-from ..model import Fact, FactStatus, Goal, OperatorFamily, Rule, SolveResult, WorldState
+from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    OperatorFamily,
+    Rule,
+    SolveResult,
+    WorldState,
+)
 from .arithmetic import ArithmeticDslError, ArithmeticExpressionAdapter
 from .base import DomainInstance
 
@@ -183,7 +193,15 @@ class NumericComparisonAdapter:
             registry=registry,
             state=WorldState(
                 composition.instance.state.facts
-                + (Fact(request, FactStatus.OBSERVED, "math_comparison_parser"),)
+                + (
+                    Fact(
+                        request,
+                        FactStatus.OBSERVED,
+                        "math_comparison_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    ),
+                )
             ),
             goals=(Goal(result_atom, label=problem.expression.strip()),),
             domain="math",

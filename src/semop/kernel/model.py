@@ -218,6 +218,27 @@ class FactStatus(str, Enum):
         }
 
 
+class AssertionStatus(str, Enum):
+    """How an atom entered the typed world before logical execution."""
+
+    EXPLICIT = "explicit"
+    MEASURED = "measured"
+    INFERRED = "inferred"
+    IMPORTED = "imported"
+    GENERATED = "generated"
+    UNKNOWN = "unknown"
+
+
+class EvidenceStatus(str, Enum):
+    """What kind of evidence supports a fact, independently of logical status."""
+
+    EXTERNAL_VERIFIED = "external_verified"
+    ADAPTER_VERIFIED = "adapter_verified"
+    UNVERIFIED = "unverified"
+    ASSUMED = "assumed"
+    DERIVED = "derived"
+
+
 class OperatorFamily(str, Enum):
     """Domain-neutral behavior families exposed to the shared controller."""
 
@@ -240,15 +261,37 @@ class Fact:
     status: FactStatus = FactStatus.OBSERVED
     source: str = "input"
     confidence: float = 1.0
+    assertion_status: AssertionStatus = AssertionStatus.UNKNOWN
+    evidence_status: EvidenceStatus | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", FactStatus(self.status))
+        object.__setattr__(
+            self,
+            "assertion_status",
+            AssertionStatus(self.assertion_status),
+        )
+        evidence_status = self.evidence_status
+        if evidence_status is None:
+            if self.status is FactStatus.ASSUMED:
+                evidence_status = EvidenceStatus.ASSUMED
+            elif self.status is FactStatus.DERIVED:
+                evidence_status = EvidenceStatus.DERIVED
+            else:
+                evidence_status = EvidenceStatus.UNVERIFIED
+        object.__setattr__(self, "evidence_status", EvidenceStatus(evidence_status))
         if not 0.0 <= self.confidence <= 1.0:
             raise KernelError("fact confidence must be between 0 and 1")
 
     @property
     def proof_eligible(self) -> bool:
         return self.status.proof_eligible and self.atom.predicate.verified
+
+    @property
+    def logical_status(self) -> FactStatus:
+        """Compatibility-safe name for the proof engine's fact status axis."""
+
+        return self.status
 
     def __str__(self) -> str:
         return f"[{self.status.value}] {self.atom}"
@@ -363,7 +406,14 @@ class WorldState:
     def __post_init__(self) -> None:
         unique: dict[tuple[Any, ...], Fact] = {}
         for fact in self.facts:
-            key = (fact.atom.canonical_key(), fact.status.value, fact.source)
+            key = (
+                fact.atom.canonical_key(),
+                fact.status.value,
+                fact.source,
+                fact.confidence,
+                fact.assertion_status.value,
+                fact.evidence_status.value,
+            )
             unique[key] = fact
         ordered = tuple(
             sorted(
@@ -372,6 +422,9 @@ class WorldState:
                     fact.atom.canonical_key(),
                     fact.status.value,
                     fact.source,
+                    fact.confidence,
+                    fact.assertion_status.value,
+                    fact.evidence_status.value,
                 ),
             )
         )
@@ -395,7 +448,23 @@ class WorldState:
         return tuple(sorted(atom.canonical_key() for atom in self.eligible_atoms))
 
     def digest(self) -> str:
-        payload = json.dumps(self.signature(), ensure_ascii=True, sort_keys=True, default=str)
+        trust_signature = tuple(
+            (
+                fact.atom.canonical_key(),
+                fact.status.value,
+                fact.source,
+                fact.confidence,
+                fact.assertion_status.value,
+                fact.evidence_status.value,
+            )
+            for fact in self.facts
+        )
+        payload = json.dumps(
+            trust_signature,
+            ensure_ascii=True,
+            sort_keys=True,
+            default=str,
+        )
         return sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def terms(self) -> tuple[Term, ...]:
@@ -421,6 +490,41 @@ class ProofStep:
     effects: tuple[Atom, ...]
     before_digest: str
     after_digest: str
+
+
+@dataclass(frozen=True)
+class ProofDependencies:
+    """Initial proof leaves grouped by their logical trust role."""
+
+    observed: tuple[Fact, ...] = ()
+    assumed: tuple[Fact, ...] = ()
+    derived: tuple[Fact, ...] = ()
+
+    @property
+    def all_dependencies(self) -> tuple[Fact, ...]:
+        return self.observed + self.assumed + self.derived
+
+    @property
+    def unverified(self) -> tuple[Fact, ...]:
+        return tuple(
+            fact
+            for fact in self.all_dependencies
+            if fact.evidence_status is EvidenceStatus.UNVERIFIED
+        )
+
+    @property
+    def conditional(self) -> bool:
+        return bool(self.assumed)
+
+    @property
+    def evidence_complete(self) -> bool:
+        trusted = {
+            EvidenceStatus.EXTERNAL_VERIFIED,
+            EvidenceStatus.ADAPTER_VERIFIED,
+        }
+        return not self.assumed and not self.derived and all(
+            fact.evidence_status in trusted for fact in self.observed
+        )
 
 
 @dataclass(frozen=True)
@@ -468,6 +572,27 @@ class SolveResult:
     fallback_used: bool = False
     diagnostics: tuple[str, ...] = ()
     inference_rounds: int = 0
+    dependencies: ProofDependencies = ProofDependencies()
+
+    @property
+    def conditional(self) -> bool:
+        return self.dependencies.conditional
+
+    @property
+    def assumption_dependencies(self) -> tuple[Fact, ...]:
+        return self.dependencies.assumed
+
+    @property
+    def observed_dependencies(self) -> tuple[Fact, ...]:
+        return self.dependencies.observed
+
+    @property
+    def derived_input_dependencies(self) -> tuple[Fact, ...]:
+        return self.dependencies.derived
+
+    @property
+    def unverified_dependencies(self) -> tuple[Fact, ...]:
+        return self.dependencies.unverified
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -501,7 +626,86 @@ class SolveResult:
             "fallback_used": self.fallback_used,
             "diagnostics": list(self.diagnostics),
             "inference_rounds": self.inference_rounds,
+            "trust": {
+                "conditional": self.conditional,
+                "evidence_complete": self.dependencies.evidence_complete,
+                "observed_dependencies": [
+                    _fact_payload(fact) for fact in self.observed_dependencies
+                ],
+                "assumption_dependencies": [
+                    _fact_payload(fact) for fact in self.assumption_dependencies
+                ],
+                "derived_input_dependencies": [
+                    _fact_payload(fact) for fact in self.derived_input_dependencies
+                ],
+                "unverified_dependencies": [
+                    _fact_payload(fact) for fact in self.unverified_dependencies
+                ],
+            },
         }
+
+
+def collect_proof_dependencies(
+    initial_state: WorldState,
+    goals: Sequence[Goal],
+    proof: Sequence[ProofStep],
+) -> ProofDependencies:
+    """Find the strongest available initial fact for every proof-leaf atom."""
+
+    used_atoms = {premise for step in proof for premise in step.premises}
+    used_atoms.update(
+        goal.atom for goal in goals if initial_state.contains(goal.atom)
+    )
+    by_atom: dict[Atom, list[Fact]] = {}
+    for fact in initial_state.eligible_facts:
+        if fact.atom in used_atoms:
+            by_atom.setdefault(fact.atom, []).append(fact)
+
+    selected = tuple(
+        min(facts, key=_dependency_rank)
+        for _atom, facts in sorted(
+            by_atom.items(),
+            key=lambda item: item[0].canonical_key(),
+        )
+    )
+    return ProofDependencies(
+        observed=tuple(
+            fact for fact in selected if fact.status is FactStatus.OBSERVED
+        ),
+        assumed=tuple(
+            fact for fact in selected if fact.status is FactStatus.ASSUMED
+        ),
+        derived=tuple(
+            fact for fact in selected if fact.status is FactStatus.DERIVED
+        ),
+    )
+
+
+def _dependency_rank(fact: Fact) -> tuple[int, int, str, float]:
+    logical_rank = {
+        FactStatus.OBSERVED: 0,
+        FactStatus.DERIVED: 1,
+        FactStatus.ASSUMED: 2,
+    }.get(fact.status, 3)
+    evidence_rank = {
+        EvidenceStatus.EXTERNAL_VERIFIED: 0,
+        EvidenceStatus.ADAPTER_VERIFIED: 1,
+        EvidenceStatus.UNVERIFIED: 2,
+        EvidenceStatus.DERIVED: 3,
+        EvidenceStatus.ASSUMED: 4,
+    }[fact.evidence_status]
+    return logical_rank, evidence_rank, fact.source, -fact.confidence
+
+
+def _fact_payload(fact: Fact) -> dict[str, Any]:
+    return {
+        "atom": str(fact.atom),
+        "logical_status": fact.logical_status.value,
+        "assertion_status": fact.assertion_status.value,
+        "evidence_status": fact.evidence_status.value,
+        "source": fact.source,
+        "confidence": fact.confidence,
+    }
 
 
 def collect_variables(value: Atom | Term | Sequence[Atom]) -> frozenset[Variable]:

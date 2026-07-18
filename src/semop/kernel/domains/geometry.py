@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..model import (
+    AssertionStatus,
     Atom,
+    EvidenceStatus,
     Fact,
     FactStatus,
     Goal,
@@ -254,7 +256,13 @@ class _GeometryParser:
                     )
                 if keyword.value == "assume":
                     self.facts.append(
-                        Fact(expression, FactStatus.ASSUMED, source="geometry_dsl")
+                        Fact(
+                            expression,
+                            FactStatus.ASSUMED,
+                            source="geometry_dsl",
+                            assertion_status=AssertionStatus.EXPLICIT,
+                            evidence_status=EvidenceStatus.ASSUMED,
+                        )
                     )
                 else:
                     self.goals.append(Goal(expression))

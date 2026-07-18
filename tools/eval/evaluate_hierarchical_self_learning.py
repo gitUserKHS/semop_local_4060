@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -203,10 +202,10 @@ def evaluate_hierarchical_self_learning(
             artifact_round_trip = restored.to_artifact() == brain.to_artifact()
 
     ablations = {
-        "deterministic": asdict(result.deterministic.metrics),
-        "controller_only": asdict(result.controller_only.metrics),
-        "macro_only": asdict(result.macro_only.metrics),
-        "joint": asdict(result.joint.metrics),
+        "deterministic": result.deterministic.metrics.to_dict(),
+        "controller_only": result.controller_only.metrics.to_dict(),
+        "macro_only": result.macro_only.metrics.to_dict(),
+        "joint": result.joint.metrics.to_dict(),
     }
     controller_weights = dict(
         result.active_brain.base_policy.weights

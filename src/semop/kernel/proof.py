@@ -1,28 +1,27 @@
 from __future__ import annotations
 
-from .model import SolveResult
+from .model import EvidenceStatus, FactStatus, SolveResult
 
 
 def render_proof_ko(result: SolveResult) -> str:
     """Render a replay-verified operator program as concise Korean proof steps."""
 
     lines: list[str] = []
-    used_premises = {
-        premise for proof_step in result.proof for premise in proof_step.premises
-    }
-    used_premises.update(
-        outcome.goal.atom
-        for outcome in result.goals
-        if result.initial_state.contains(outcome.goal.atom)
-    )
-    eligible_initial = tuple(
-        fact
-        for fact in result.initial_state.eligible_facts
-        if fact.atom in used_premises
-    )
-    for index, fact in enumerate(eligible_initial, start=1):
-        origin = "관찰" if fact.status.value == "observed" else "가정"
-        lines.append(f"{index}. [{origin}] {fact.atom}")
+    dependencies = result.dependencies.all_dependencies
+    for index, fact in enumerate(dependencies, start=1):
+        origin = {
+            FactStatus.OBSERVED: "관찰",
+            FactStatus.ASSUMED: "가정",
+            FactStatus.DERIVED: "상위 도출",
+        }[fact.status]
+        evidence = {
+            EvidenceStatus.EXTERNAL_VERIFIED: "외부 검증",
+            EvidenceStatus.ADAPTER_VERIFIED: "어댑터 검증",
+            EvidenceStatus.UNVERIFIED: "증거 미검증",
+            EvidenceStatus.ASSUMED: "조건부",
+            EvidenceStatus.DERIVED: "도출",
+        }[fact.evidence_status]
+        lines.append(f"{index}. [{origin}/{evidence}] {fact.atom}")
     offset = len(lines)
     for proof_step in result.proof:
         description = proof_step.action.operator.rule.description_ko
@@ -43,5 +42,9 @@ def render_proof_ko(result: SolveResult) -> str:
         for outcome in result.goals
     )
     status = "검증 완료" if result.verified else "검증 실패"
+    if result.conditional:
+        status += ", 가정 의존"
+    elif result.unverified_dependencies:
+        status += ", 의미 증거 미검증"
     lines.append(f"결론 ({status}): {conclusion}")
     return "\n".join(lines)

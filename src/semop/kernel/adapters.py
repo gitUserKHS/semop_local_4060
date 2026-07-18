@@ -13,7 +13,17 @@ from .catalog import (
 )
 from .domains.base import DomainInstance
 from .engine import ActionPolicy, OperatorKernel, RegistryPolicyProvider
-from .model import Fact, FactStatus, Goal, SolveBudget, SolveResult, Symbol, WorldState
+from .model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    SolveBudget,
+    SolveResult,
+    Symbol,
+    WorldState,
+)
 from .registry import KernelRegistry
 
 if TYPE_CHECKING:
@@ -79,6 +89,8 @@ class StructuredMeaningGraphAdapter:
                     registry.atom("NODE", node_symbol),
                     FactStatus.OBSERVED,
                     source="structured_graph",
+                    assertion_status=AssertionStatus.IMPORTED,
+                    evidence_status=EvidenceStatus.UNVERIFIED,
                 )
             )
         for edge in graph.edges:
@@ -108,6 +120,8 @@ class StructuredMeaningGraphAdapter:
                     status,
                     source="structured_graph_edge",
                     confidence=max(0.0, min(1.0, edge.confidence)),
+                    assertion_status=AssertionStatus.IMPORTED,
+                    evidence_status=EvidenceStatus.UNVERIFIED,
                 )
             )
 
@@ -134,7 +148,13 @@ class StructuredMeaningGraphAdapter:
         for goal_name in hidden_goals:
             goal_symbol = symbol(goal_name)
             facts.append(
-                Fact(registry.atom("GOAL", goal_symbol), FactStatus.OBSERVED, "legacy_goal")
+                Fact(
+                    registry.atom("GOAL", goal_symbol),
+                    FactStatus.OBSERVED,
+                    "legacy_goal",
+                    assertion_status=AssertionStatus.IMPORTED,
+                    evidence_status=EvidenceStatus.UNVERIFIED,
+                )
             )
             required = tuple(sorted(required_by_goal.get(goal_name, ())))
             blocked = False
@@ -145,6 +165,8 @@ class StructuredMeaningGraphAdapter:
                         registry.atom("REQUIRES", goal_symbol, premise_symbol),
                         FactStatus.OBSERVED,
                         "legacy_premise",
+                        assertion_status=AssertionStatus.IMPORTED,
+                        evidence_status=EvidenceStatus.UNVERIFIED,
                     )
                 )
                 state = status_by_premise.get(premise, "unknown")
@@ -154,6 +176,8 @@ class StructuredMeaningGraphAdapter:
                             registry.atom("SATISFIED", premise_symbol),
                             FactStatus.OBSERVED,
                             "legacy_validation",
+                            assertion_status=AssertionStatus.IMPORTED,
+                            evidence_status=EvidenceStatus.UNVERIFIED,
                         )
                     )
                 elif state == "blocked":
@@ -163,6 +187,8 @@ class StructuredMeaningGraphAdapter:
                             registry.atom("BLOCKED", premise_symbol),
                             FactStatus.OBSERVED,
                             "legacy_validation",
+                            assertion_status=AssertionStatus.IMPORTED,
+                            evidence_status=EvidenceStatus.UNVERIFIED,
                         )
                     )
             if blocked:

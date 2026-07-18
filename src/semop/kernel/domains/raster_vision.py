@@ -10,6 +10,8 @@ from typing import Any, TypeAlias
 
 from ..catalog import normalize_predicate_name
 from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
     Fact,
     FactStatus,
     Goal,
@@ -441,6 +443,7 @@ class RasterVisionAdapter:
                 {
                     "verified": True,
                     "geometry_verified": True,
+                    "adapter_verified": True,
                     "source": "deterministic_raster_component",
                     "color_name": item.color_name,
                     "mean_rgb": item.mean_rgb,
@@ -460,6 +463,7 @@ class RasterVisionAdapter:
                 (
                     {
                         "geometry_verified": True,
+                        "adapter_verified": True,
                         "source": "deterministic_pixel_geometry",
                     }
                     if item.verified
@@ -611,11 +615,15 @@ def _extend_raster_reasoning(
                     registry.atom("PIXEL_AREA", symbol, number(obj.area)),
                     FactStatus.OBSERVED,
                     "deterministic_pixel_measurement",
+                    assertion_status=AssertionStatus.MEASURED,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
                 ),
                 Fact(
                     registry.atom("HAS_COLOR", symbol, color(obj.color_name)),
                     FactStatus.OBSERVED,
                     "deterministic_component_color",
+                    assertion_status=AssertionStatus.MEASURED,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
                 ),
             )
         )
@@ -627,6 +635,8 @@ def _extend_raster_reasoning(
                     registry.atom("FILLS_BOUNDING_BOX", symbol),
                     FactStatus.OBSERVED,
                     "deterministic_pixel_geometry",
+                    assertion_status=AssertionStatus.MEASURED,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
                 )
             )
         if width == height:
@@ -635,6 +645,8 @@ def _extend_raster_reasoning(
                     registry.atom("EQUAL_EXTENT", symbol),
                     FactStatus.OBSERVED,
                     "deterministic_pixel_geometry",
+                    assertion_status=AssertionStatus.MEASURED,
+                    evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
                 )
             )
 

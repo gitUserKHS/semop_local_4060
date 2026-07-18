@@ -3,7 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
-from ..model import Fact, FactStatus, Goal, OperatorFamily, Rule, SolveResult, WorldState
+from ..model import (
+    AssertionStatus,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    OperatorFamily,
+    Rule,
+    SolveResult,
+    WorldState,
+)
 from ..registry import KernelRegistry
 from .arithmetic import ArithmeticExpressionAdapter
 from .base import DomainInstance
@@ -316,9 +326,27 @@ class LinearEquationAdapter:
             registry=registry,
             state=WorldState(
                 (
-                    Fact(equation_fact, FactStatus.OBSERVED, "linear_equation_parser"),
-                    Fact(left_fact, FactStatus.OBSERVED, "linear_equation_parser"),
-                    Fact(right_fact, FactStatus.OBSERVED, "linear_equation_parser"),
+                    Fact(
+                        equation_fact,
+                        FactStatus.OBSERVED,
+                        "linear_equation_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    ),
+                    Fact(
+                        left_fact,
+                        FactStatus.OBSERVED,
+                        "linear_equation_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    ),
+                    Fact(
+                        right_fact,
+                        FactStatus.OBSERVED,
+                        "linear_equation_parser",
+                        assertion_status=AssertionStatus.EXPLICIT,
+                        evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+                    ),
                 )
             ),
             goals=(Goal(solved, label=f"{variable_name} = {format_fraction(solution)}"),),

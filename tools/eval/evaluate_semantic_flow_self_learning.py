@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -176,8 +175,8 @@ def evaluate_semantic_flow_self_learning(
             "artifact_bytes": iteration.artifact_bytes,
             "training_updates": iteration.training_updates,
         },
-        "before": asdict(iteration.baseline_metrics),
-        "after": asdict(candidate) if candidate is not None else None,
+        "before": iteration.baseline_metrics.to_dict(),
+        "after": candidate.to_dict() if candidate is not None else None,
         "ab": {
             "positive_expansions_before": (
                 iteration.baseline_metrics.positive_expansions

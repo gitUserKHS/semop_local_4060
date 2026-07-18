@@ -1,0 +1,74 @@
+name: Typed operator core
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "agent/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-free-core:
+    name: Core ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install core without runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -e . --no-deps
+      - name: Run trust and three-domain core tests
+        run: >-
+          python -m pytest
+          tests/test_typed_operator_kernel.py
+          tests/test_typed_operator_domains.py
+          tests/test_typed_operator_adapters.py
+          tests/test_typed_operator_composition.py
+          tests/test_typed_operator_dataflow.py
+          tests/test_typed_operator_composed_scene.py
+          tests/test_typed_operator_language_text.py
+          tests/test_typed_operator_language_logic.py
+          tests/test_typed_operator_linear_equation.py
+          tests/test_typed_operator_numeric_comparison.py
+          tests/test_typed_operator_raster_vision.py
+          tests/test_typed_operator_judging.py
+          tests/test_typed_operator_trust.py
+          -q
+
+  numpy-controller:
+    name: NumPy controller and typed suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install controller inference extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,controller]"
+      - name: Run every typed operator test module
+        run: >-
+          python -c "import pathlib, pytest;
+          files=[str(path) for path in sorted(pathlib.Path('tests').glob('test_typed_operator_*.py'))];
+          raise SystemExit(pytest.main(files + ['-q']))"

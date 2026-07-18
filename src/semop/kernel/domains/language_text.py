@@ -5,7 +5,17 @@ import re
 from typing import TYPE_CHECKING
 
 from ..catalog import register_all_requirements_ready
-from ..model import Atom, Fact, FactStatus, Goal, SolveResult, Symbol, WorldState
+from ..model import (
+    AssertionStatus,
+    Atom,
+    EvidenceStatus,
+    Fact,
+    FactStatus,
+    Goal,
+    SolveResult,
+    Symbol,
+    WorldState,
+)
 from .base import DomainInstance
 from .hidden_premise import create_hidden_premise_registry
 from .language_common import (
@@ -58,6 +68,12 @@ class LanguageClaim:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("language claim confidence must be between 0 and 1")
         object.__setattr__(self, "relation", relation)
+
+    @property
+    def parser_verified(self) -> bool:
+        """Whether a controlled parser rule matched, not whether reality was checked."""
+
+        return self.verified
 
 
 @dataclass(frozen=True)
@@ -480,6 +496,12 @@ class LanguageTextAdapter:
                     status,
                     source=source,
                     confidence=claim.confidence,
+                    assertion_status=(
+                        AssertionStatus.EXPLICIT
+                        if claim.source.startswith("explicit_")
+                        else AssertionStatus.INFERRED
+                    ),
+                    evidence_status=EvidenceStatus.UNVERIFIED,
                 )
             )
 
@@ -529,7 +551,19 @@ class LanguageTextAdapter:
                 "input_kind": "text",
                 "text": problem.text,
                 "source_context": problem.source_context,
-                "claims": tuple(asdict(claim) for claim in parsed.claims),
+                "claims": tuple(
+                    {
+                        **asdict(claim),
+                        "parser_verified": claim.parser_verified,
+                        "assertion_status": (
+                            AssertionStatus.EXPLICIT.value
+                            if claim.source.startswith("explicit_")
+                            else AssertionStatus.INFERRED.value
+                        ),
+                        "evidence_status": EvidenceStatus.UNVERIFIED.value,
+                    }
+                    for claim in parsed.claims
+                ),
                 "explicit_claim_count": sum(claim.verified for claim in parsed.claims),
                 "proposed_claim_count": sum(not claim.verified for claim in parsed.claims),
                 "contradictions": contradictions,
