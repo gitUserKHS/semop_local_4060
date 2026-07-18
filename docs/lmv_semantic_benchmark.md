@@ -55,6 +55,37 @@ CI나 논문 수치에서 모든 case의 사람 검토를 요구하려면 fail-c
 python tools/eval/evaluate_semantic_benchmark.py --require-all-reviewed
 ```
 
+부분 review를 사용하는 0/5/20/100-shot 실험이나 정책 승격에서는 core와 같은
+semantic promotion gate를 CLI에서 실행한다.
+
+```powershell
+python tools/eval/evaluate_semantic_benchmark.py `
+  --gate-semantic-correctness 1.0 `
+  --gate-min-gold 3 `
+  --gate-min-gold-per-domain 1 `
+  --gate-domains language,math,vision
+```
+
+현재 review가 0개이므로 이 명령은 각 도메인의 gold 부족과 의미 정확도 부재를
+모두 출력하고 종료 코드 `2`로 실패한다. `--gate-domains`에 들어간 도메인은
+`--gate-min-gold-per-domain`이 0이어도 최소 한 개의 유효한 review를 요구한다.
+
+자가 학습 API에서는 같은 규칙을 `SelfLearningBudget`에 넣는다.
+
+```python
+SelfLearningBudget(
+    required_semantic_correctness=1.0,
+    min_semantic_gold_tasks=20,
+    min_semantic_gold_tasks_per_domain=5,
+    required_semantic_domains=("language", "math", "vision"),
+)
+```
+
+후보 policy의 held-out metric이 이 조건을 만족하지 못하면
+`SelfLearningLoop`는 checkpoint 승격 전에 거절한다. 기본값은 기존 합성 실험의
+호환성을 위해 비활성이며, semantic transfer를 주장하는 실행은 명시적으로 켜야
+한다.
+
 ## 사람 리뷰
 
 대기 목록과 각 digest를 확인한다.
@@ -110,6 +141,7 @@ python tools/eval/review_semantic_benchmark.py `
 - `labeled_outcome_accuracy`: 선택된 모든 라벨과 실행 결과의 일치율
 - `curated_unreviewed_accuracy`: 독립 승인 전 회귀 라벨의 일치율
 - `semantic_correctness`: digest-bound 승인 case만의 일치율
+- `semantic_review_coverage`: 선택된 task 중 digest-bound 승인 case의 비율
 - `primitive_replay_integrity`: 성공 proof를 primitive operator로 재생한 무결성
 - `review_coverage`: 전체 case 중 유효한 승인 review가 있는 비율
 

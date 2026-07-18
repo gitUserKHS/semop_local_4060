@@ -13,9 +13,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from semop.kernel import (  # noqa: E402
+    SelfLearningBudget,
     SolveBudget,
     evaluate_semantic_benchmark,
     load_semantic_benchmark,
+    semantic_promotion_rejections,
 )
 
 
@@ -35,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--reviewed-only", action="store_true")
     parser.add_argument("--require-all-reviewed", action="store_true")
+    parser.add_argument("--gate-semantic-correctness", type=float)
+    parser.add_argument("--gate-min-gold", type=int, default=0)
+    parser.add_argument("--gate-min-gold-per-domain", type=int, default=0)
+    parser.add_argument(
+        "--gate-domains",
+        default="",
+        help="Comma-separated domains that must each contain reviewed gold.",
+    )
     parser.add_argument("--max-steps", type=int, default=32)
     parser.add_argument("--max-expansions", type=int, default=20_000)
     parser.add_argument("--max-facts", type=int, default=10_000)
@@ -57,6 +67,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
             ),
         )
+        gate_budget = _gate_budget(args)
+        gate_rejections = (
+            semantic_promotion_rejections(evaluation.metrics, gate_budget)
+            if gate_budget is not None
+            else ()
+        )
     except Exception as exc:
         if args.format == "json":
             print(
@@ -71,13 +87,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.format == "json":
-        print(json.dumps(evaluation.to_dict(), ensure_ascii=False, sort_keys=True))
+        payload = evaluation.to_dict()
+        payload["promotion_gate"] = {
+            "enabled": gate_budget is not None,
+            "passed": not gate_rejections,
+            "rejection_reasons": list(gate_rejections),
+        }
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
-        print(_render_text(evaluation))
-    return 0 if evaluation.passed else 2
+        print(_render_text(evaluation, gate_budget is not None, gate_rejections))
+    return 0 if evaluation.passed and not gate_rejections else 2
 
 
-def _render_text(evaluation) -> str:
+def _render_text(evaluation, gate_enabled: bool, gate_rejections) -> str:
     audit = evaluation.audit
     metrics = evaluation.metrics
     semantic = (
@@ -127,7 +149,36 @@ def _render_text(evaluation) -> str:
                 f"- Pending approvals: {len(audit.pending_cases)}",
             )
         )
+    if gate_enabled:
+        lines.extend(
+            (
+                "",
+                "Self-learning promotion gate",
+                f"- Passed: {str(not gate_rejections).lower()}",
+            )
+        )
+        lines.extend(f"- {reason}" for reason in gate_rejections)
     return "\n".join(lines)
+
+
+def _gate_budget(args) -> SelfLearningBudget | None:
+    domains = tuple(
+        item.strip() for item in args.gate_domains.split(",") if item.strip()
+    )
+    enabled = (
+        args.gate_semantic_correctness is not None
+        or args.gate_min_gold != 0
+        or args.gate_min_gold_per_domain != 0
+        or bool(domains)
+    )
+    if not enabled:
+        return None
+    return SelfLearningBudget(
+        required_semantic_correctness=args.gate_semantic_correctness,
+        min_semantic_gold_tasks=args.gate_min_gold,
+        min_semantic_gold_tasks_per_domain=args.gate_min_gold_per_domain,
+        required_semantic_domains=domains,
+    )
 
 
 if __name__ == "__main__":

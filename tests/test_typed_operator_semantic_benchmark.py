@@ -27,9 +27,11 @@ from semop.kernel import (  # noqa: E402
     SemanticBenchmarkCase,
     SemanticLabelAuthority,
     SemanticReviewDecision,
+    SelfLearningBudget,
     create_semantic_review,
     evaluate_semantic_benchmark,
     load_semantic_benchmark,
+    semantic_promotion_rejections,
     write_semantic_review,
 )
 
@@ -240,6 +242,82 @@ class SemanticPayloadCodecTests(unittest.TestCase):
         self.assertEqual(request.payload.image.rows[1][1], (255, 0, 0))
 
 
+class SemanticPromotionGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.seed = load_semantic_benchmark(CASES, REVIEWS)
+        self.budget = SelfLearningBudget(
+            required_semantic_correctness=1.0,
+            min_semantic_gold_tasks=3,
+            min_semantic_gold_tasks_per_domain=1,
+            required_semantic_domains=("language", "math", "vision"),
+        )
+
+    def test_unreviewed_seed_fails_global_and_each_domain_gate(self) -> None:
+        metrics = evaluate_semantic_benchmark(self.seed).metrics
+        reasons = semantic_promotion_rejections(metrics, self.budget)
+
+        self.assertEqual(metrics.semantic_review_coverage, 0.0)
+        self.assertIn("semantic_gold_tasks_below_gate: 0 < 3", reasons)
+        self.assertIn("semantic_correctness_unavailable", reasons)
+        for domain in ("language", "math", "vision"):
+            self.assertIn(
+                f"semantic_gold_tasks_below_gate[{domain}]: 0 < 1",
+                reasons,
+            )
+            self.assertIn(
+                f"semantic_correctness_unavailable[{domain}]",
+                reasons,
+            )
+
+    def test_one_digest_bound_review_per_domain_passes_gate(self) -> None:
+        benchmark = _approve_one_case_per_domain(self.seed)
+        metrics = evaluate_semantic_benchmark(benchmark).metrics
+
+        self.assertEqual(semantic_promotion_rejections(metrics, self.budget), ())
+        self.assertEqual(metrics.semantic_gold_tasks, 3)
+        self.assertEqual(metrics.semantic_correctness, 1.0)
+        self.assertEqual(metrics.semantic_review_coverage, 3 / 20)
+        self.assertEqual(
+            metrics.to_dict()["semantic_review_coverage"],
+            3 / 20,
+        )
+        for domain in metrics.by_domain:
+            self.assertEqual(domain.semantic_gold_tasks, 1)
+            self.assertEqual(domain.semantic_correctness, 1.0)
+
+    def test_reviewed_wrong_label_fails_global_and_domain_correctness(self) -> None:
+        original = self.seed.case_by_id["language-ready-two-requirements"]
+        wrong = replace(original, expected_solved=False)
+        cases = tuple(
+            wrong if case.case_id == wrong.case_id else case
+            for case in self.seed.cases
+        )
+        altered = SemanticBenchmark(cases)
+        benchmark = _approve_one_case_per_domain(altered)
+        metrics = evaluate_semantic_benchmark(benchmark).metrics
+        reasons = semantic_promotion_rejections(metrics, self.budget)
+
+        self.assertEqual(metrics.semantic_correctness, 2 / 3)
+        self.assertTrue(
+            any(
+                reason.startswith("semantic_correctness_below_gate: ")
+                for reason in reasons
+            )
+        )
+        self.assertTrue(
+            any(
+                reason.startswith("semantic_correctness_below_gate[language]: ")
+                for reason in reasons
+            )
+        )
+
+    def test_budget_rejects_invalid_semantic_gate_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "semantic correctness"):
+            SelfLearningBudget(required_semantic_correctness=1.01)
+        with self.assertRaisesRegex(ValueError, "non-empty and unique"):
+            SelfLearningBudget(required_semantic_domains=("language", "language"))
+
+
 class SemanticBenchmarkCliTests(unittest.TestCase):
     def test_evaluator_json_reports_curated_not_gold(self) -> None:
         output = StringIO()
@@ -251,6 +329,46 @@ class SemanticBenchmarkCliTests(unittest.TestCase):
         self.assertTrue(payload["passed"])
         self.assertEqual(payload["audit"]["review_coverage"], 0.0)
         self.assertIsNone(payload["metrics"]["semantic_correctness"])
+        self.assertFalse(payload["promotion_gate"]["enabled"])
+
+    def test_evaluator_promotion_gate_fails_closed_on_unreviewed_seed(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            code = evaluate_cli(
+                (
+                    "--format",
+                    "json",
+                    "--gate-semantic-correctness",
+                    "1.0",
+                    "--gate-min-gold",
+                    "3",
+                    "--gate-min-gold-per-domain",
+                    "1",
+                    "--gate-domains",
+                    "language,math,vision",
+                )
+            )
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(code, 2)
+        self.assertTrue(payload["promotion_gate"]["enabled"])
+        self.assertFalse(payload["promotion_gate"]["passed"])
+        self.assertIn(
+            "semantic_correctness_unavailable",
+            payload["promotion_gate"]["rejection_reasons"],
+        )
+
+    def test_evaluator_rejects_negative_gate_counts(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            code = evaluate_cli(
+                ("--format", "json", "--gate-min-gold", "-1")
+            )
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error_type"], "ValueError")
+        self.assertIn("must not be negative", payload["error"])
 
     def test_review_cli_requires_explicit_human_attestation(self) -> None:
         error = StringIO()
@@ -294,6 +412,23 @@ class SemanticBenchmarkCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(loaded.audit().approved_cases), 1)
         self.assertIn("digest:", output.getvalue())
+
+
+def _approve_one_case_per_domain(
+    benchmark: SemanticBenchmark,
+) -> SemanticBenchmark:
+    reviews = []
+    for domain in (DomainKind.LANGUAGE, DomainKind.MATH, DomainKind.VISION):
+        case = next(item for item in benchmark.cases if item.domain is domain)
+        reviews.append(
+            create_semantic_review(
+                case,
+                reviewer=f"human:test-{domain.value}",
+                decision="approved",
+                reviewed_at="2026-07-18T12:00:00Z",
+            )
+        )
+    return SemanticBenchmark(benchmark.cases, tuple(reviews))
 
 
 if __name__ == "__main__":

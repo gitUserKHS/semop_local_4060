@@ -199,6 +199,7 @@ from .self_learning import (
     TaskEvaluation,
     learning_expansion_reduction,
     learning_tasks_from_synthetic,
+    semantic_promotion_rejections,
     summarize_task_evaluations,
     task_evaluation_from_result,
 )
@@ -457,6 +458,7 @@ __all__ = [
     "hierarchical_learning_tasks_from_curriculum",
     "learning_tasks_from_synthetic",
     "learning_expansion_reduction",
+    "semantic_promotion_rejections",
     "generate_symbolic_curriculum",
     "generate_symbolic_negative_controls",
     "symbolic_curriculum_domains",

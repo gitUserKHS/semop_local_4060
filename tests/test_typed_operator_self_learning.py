@@ -19,6 +19,7 @@ from semop.kernel import (
     LearningTask,
     PolicyCandidate,
     PolicyDecision,
+    RawExperienceGrounder,
     SelfLearningBudget,
     SelfLearningLoop,
     SelfLearningStore,
@@ -27,6 +28,7 @@ from semop.kernel import (
     generate_symbolic_curriculum,
     generate_symbolic_negative_controls,
     learning_tasks_from_synthetic,
+    load_semantic_benchmark,
     OperatorKernel,
 )
 from semop.tiny_controller import (
@@ -268,6 +270,47 @@ class TypedSelfLearningTests(unittest.TestCase):
             item for item in iteration.candidate_tasks if not item.expected_solved
         )
         self.assertTrue(all(not item.success for item in negative_results))
+
+    def test_policy_promotion_fails_closed_without_reviewed_lmv_gold(self) -> None:
+        benchmark = load_semantic_benchmark(
+            ROOT / "data" / "semantic_benchmark" / "v1" / "cases.jsonl",
+            ROOT / "data" / "semantic_benchmark" / "v1" / "reviews.jsonl",
+        )
+        heldout = RawExperienceGrounder(
+            hard_negatives_per_example=0
+        ).ground(benchmark.raw_examples()).require_complete()
+        training = _curriculum_tasks(
+            1,
+            seed=31,
+            split=LearningSplit.TRAIN,
+            namespace="semantic-gate-train",
+        )
+        result = SelfLearningLoop(
+            budget=SelfLearningBudget(
+                min_expansion_reduction=0.0,
+                required_semantic_correctness=1.0,
+                min_semantic_gold_tasks=3,
+                min_semantic_gold_tasks_per_domain=1,
+                required_semantic_domains=("language", "math", "vision"),
+            )
+        ).run(training, heldout)
+
+        iteration = result.iterations[0]
+        self.assertFalse(iteration.accepted)
+        self.assertFalse(result.promoted)
+        self.assertIn(
+            "semantic_gold_tasks_below_gate: 0 < 3",
+            iteration.rejection_reasons,
+        )
+        self.assertIn(
+            "semantic_correctness_unavailable",
+            iteration.rejection_reasons,
+        )
+        for domain in ("language", "math", "vision"):
+            self.assertIn(
+                f"semantic_gold_tasks_below_gate[{domain}]: 0 < 1",
+                iteration.rejection_reasons,
+            )
 
     def test_training_label_conflict_blocks_learning(self) -> None:
         positive = _curriculum_tasks(

@@ -39,6 +39,7 @@ python tools/eval/evaluate_active_macro_learning.py
 python tools/eval/evaluate_hierarchical_self_learning.py
 python tools/eval/evaluate_raw_grounded_self_learning.py
 python tools/eval/evaluate_semantic_benchmark.py
+python tools/eval/evaluate_semantic_benchmark.py --gate-semantic-correctness 1.0 --gate-min-gold 3 --gate-min-gold-per-domain 1 --gate-domains language,math,vision
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -134,7 +135,7 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. The digest-bound LMV semantic benchmark milestone now
-passes 219 typed-operator tests plus 20 subtests and all 586 repository tests;
+passes 226 typed-operator tests plus 20 subtests and all 593 repository tests;
 `shadow` remains
 the default.
 

@@ -201,6 +201,10 @@ class SelfLearningBudget:
     max_false_positives: int = 0
     max_solve_rate_drop: float = 0.01
     min_expansion_reduction: float = 0.01
+    required_semantic_correctness: float | None = None
+    min_semantic_gold_tasks: int = 0
+    min_semantic_gold_tasks_per_domain: int = 0
+    required_semantic_domains: tuple[str, ...] = ()
     max_policy_parameters: int = 15_000_000
     max_artifact_bytes: int = 64 * 1024 * 1024
     max_p95_cpu_seconds: float = 10.0
@@ -220,12 +224,41 @@ class SelfLearningBudget:
             raise ValueError("required proof soundness must be between 0 and 1")
         if self.max_false_positives < 0:
             raise ValueError("max false positives must not be negative")
+        if self.min_semantic_gold_tasks < 0:
+            raise ValueError("minimum semantic gold tasks must not be negative")
+        if self.min_semantic_gold_tasks_per_domain < 0:
+            raise ValueError(
+                "minimum semantic gold tasks per domain must not be negative"
+            )
         if not 0.0 <= self.max_solve_rate_drop <= 1.0:
             raise ValueError("max solve-rate drop must be between 0 and 1")
         if not 0.0 <= self.min_expansion_reduction <= 1.0:
             raise ValueError("minimum expansion reduction must be between 0 and 1")
+        if self.required_semantic_correctness is not None and not (
+            0.0 <= self.required_semantic_correctness <= 1.0
+        ):
+            raise ValueError(
+                "required semantic correctness must be between 0 and 1"
+            )
         if self.max_p95_cpu_seconds <= 0:
             raise ValueError("p95 CPU limit must be positive")
+        if any(
+            not isinstance(domain, str)
+            for domain in self.required_semantic_domains
+        ):
+            raise TypeError("required semantic domains must be strings")
+        domains = tuple(
+            dict.fromkeys(
+                domain.strip().lower()
+                for domain in self.required_semantic_domains
+                if domain.strip()
+            )
+        )
+        if len(domains) != len(self.required_semantic_domains):
+            raise ValueError(
+                "required semantic domains must be non-empty and unique"
+            )
+        object.__setattr__(self, "required_semantic_domains", domains)
 
     @property
     def required_replay_integrity(self) -> float:
@@ -366,8 +399,13 @@ class DomainLearningMetrics:
 
         return self.primitive_replay_integrity
 
+    @property
+    def semantic_review_coverage(self) -> float:
+        return self.semantic_gold_tasks / self.tasks if self.tasks else 0.0
+
     def to_dict(self, *, legacy_aliases: bool = True) -> dict[str, object]:
         payload = asdict(self)
+        payload["semantic_review_coverage"] = self.semantic_review_coverage
         if legacy_aliases:
             payload["verified_solve_rate"] = self.verified_solve_rate
             payload["proof_soundness"] = self.proof_soundness
@@ -420,8 +458,13 @@ class LearningMetrics:
 
         return self.primitive_replay_integrity
 
+    @property
+    def semantic_review_coverage(self) -> float:
+        return self.semantic_gold_tasks / self.tasks if self.tasks else 0.0
+
     def to_dict(self, *, legacy_aliases: bool = True) -> dict[str, object]:
         payload = asdict(self)
+        payload["semantic_review_coverage"] = self.semantic_review_coverage
         payload["by_domain"] = tuple(
             item.to_dict(legacy_aliases=legacy_aliases) for item in self.by_domain
         )
@@ -939,6 +982,7 @@ class SelfLearningLoop:
                 "false_positive_gate_failed: "
                 f"{candidate.false_positives} > {self.budget.max_false_positives}"
             )
+        reasons.extend(semantic_promotion_rejections(candidate, self.budget))
         minimum_rate = (
             baseline.replay_verified_goal_completion
             - self.budget.max_solve_rate_drop
@@ -1237,6 +1281,61 @@ def learning_expansion_reduction(
     return (
         baseline.positive_expansions - candidate.positive_expansions
     ) / baseline.positive_expansions
+
+
+def semantic_promotion_rejections(
+    candidate: LearningMetrics,
+    budget: SelfLearningBudget,
+) -> tuple[str, ...]:
+    """Return fail-closed human-gold gate failures for one policy candidate."""
+
+    reasons: list[str] = []
+    required_correctness = budget.required_semantic_correctness
+    if candidate.semantic_gold_tasks < budget.min_semantic_gold_tasks:
+        reasons.append(
+            "semantic_gold_tasks_below_gate: "
+            f"{candidate.semantic_gold_tasks} < {budget.min_semantic_gold_tasks}"
+        )
+    if required_correctness is not None:
+        if candidate.semantic_correctness is None:
+            reasons.append("semantic_correctness_unavailable")
+        elif candidate.semantic_correctness < required_correctness:
+            reasons.append(
+                "semantic_correctness_below_gate: "
+                f"{candidate.semantic_correctness:.6f} < "
+                f"{required_correctness:.6f}"
+            )
+
+    by_domain = {item.domain: item for item in candidate.by_domain}
+    minimum_per_domain = budget.min_semantic_gold_tasks_per_domain
+    if budget.required_semantic_domains:
+        checked_domains = budget.required_semantic_domains
+        minimum_per_domain = max(1, minimum_per_domain)
+    elif minimum_per_domain:
+        checked_domains = tuple(sorted(by_domain))
+    else:
+        checked_domains = ()
+    for domain in checked_domains:
+        metrics = by_domain.get(domain)
+        if metrics is None:
+            reasons.append(f"semantic_domain_missing[{domain}]")
+            continue
+        if metrics.semantic_gold_tasks < minimum_per_domain:
+            reasons.append(
+                f"semantic_gold_tasks_below_gate[{domain}]: "
+                f"{metrics.semantic_gold_tasks} < {minimum_per_domain}"
+            )
+        if required_correctness is None:
+            continue
+        if metrics.semantic_correctness is None:
+            reasons.append(f"semantic_correctness_unavailable[{domain}]")
+        elif metrics.semantic_correctness < required_correctness:
+            reasons.append(
+                f"semantic_correctness_below_gate[{domain}]: "
+                f"{metrics.semantic_correctness:.6f} < "
+                f"{required_correctness:.6f}"
+            )
+    return tuple(reasons)
 
 
 def _trace_metadata(task: LearningTask) -> dict[str, str]:

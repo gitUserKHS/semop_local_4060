@@ -89,6 +89,12 @@ replay digest가 달라진다.
 증거를 전달한다. LMV benchmark는 별도 review sidecar의 digest가 현재 case와
 정확히 일치할 때만 이 evidence를 생성한다.
 
+`SelfLearningBudget`은 `required_semantic_correctness`,
+`min_semantic_gold_tasks`, `min_semantic_gold_tasks_per_domain`,
+`required_semantic_domains`를 선택적으로 받는다. 하나라도 활성화한 연구 실행은
+후보 정책의 held-out 사람 gold가 부족하거나 정확도 기준에 못 미치면 승격을
+거절한다. 필수 도메인은 각각 최소 한 개의 digest-bound review를 가져야 한다.
+
 ## 더 어려운 negative control
 
 `generate_semantic_near_miss_controls()`는 먼저 positive proof를 replay한 뒤 실제로
