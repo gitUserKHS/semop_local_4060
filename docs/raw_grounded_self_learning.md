@@ -153,9 +153,9 @@ python -m pytest -k typed_operator
 python -m pytest
 ```
 
-현재 trust/provenance 변경까지 포함한 최종 실행에서는 raw experience 9건,
-typed operator 206건과 subtest 20건, 전체 저장소 573건이 통과했다. 전체 회귀 시간은
-개발 PC에서 264.91초였다.
+현재 digest-bound LMV semantic benchmark 변경까지 포함한 최종 실행에서는
+typed operator 219건과 subtest 20건, 전체 저장소 586건이 통과했다. 전체 회귀
+시간은 개발 PC에서 265.45초였다.
 
 ## 현재 한계와 다음 단계
 

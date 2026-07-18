@@ -23,6 +23,7 @@ from semop.kernel import (
     RasterVisionAdapter,
     RasterVisionProblem,
     SemanticLabelAuthority,
+    SemanticLabelEvidence,
     TaskEvaluation,
     VisionPropertyGoal,
     VisionProblem,
@@ -173,6 +174,12 @@ class TypedTrustBoundaryTests(unittest.TestCase):
         self.assertFalse(result.dependencies.evidence_complete)
 
     def test_metrics_separate_replay_integrity_from_human_semantics(self) -> None:
+        human_evidence = SemanticLabelEvidence(
+            case_digest="a" * 64,
+            reviewer="human:test-reviewer",
+            reviewed_at="2026-07-18T12:00:00Z",
+            attestation="human_reviewed_input_and_expected_outcome",
+        )
         common = {
             "domain": "language",
             "verified": False,
@@ -191,6 +198,7 @@ class TypedTrustBoundaryTests(unittest.TestCase):
                 expected_solved=False,
                 success=False,
                 label_authority=SemanticLabelAuthority.HUMAN_REVIEWED,
+                label_evidence=human_evidence,
                 **common,
             ),
             TaskEvaluation(
@@ -198,6 +206,7 @@ class TypedTrustBoundaryTests(unittest.TestCase):
                 expected_solved=True,
                 success=False,
                 label_authority=SemanticLabelAuthority.HUMAN_REVIEWED,
+                label_evidence=human_evidence,
                 **common,
             ),
             TaskEvaluation(
@@ -214,6 +223,9 @@ class TypedTrustBoundaryTests(unittest.TestCase):
         payload = metrics.to_dict()
 
         self.assertEqual(metrics.primitive_replay_integrity, 1.0)
+        self.assertEqual(metrics.labeled_outcome_accuracy, 2 / 3)
+        self.assertEqual(metrics.programmatic_outcome_accuracy, 1.0)
+        self.assertEqual(metrics.programmatic_tasks, 1)
         self.assertEqual(metrics.semantic_correctness, 0.5)
         self.assertEqual(metrics.semantic_gold_tasks, 2)
         self.assertEqual(

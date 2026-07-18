@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from enum import Enum
 from hashlib import sha256
 import json
@@ -33,8 +34,59 @@ class SemanticLabelAuthority(str, Enum):
     """Authority behind an expected outcome used for semantic evaluation."""
 
     PROGRAMMATIC = "programmatic"
+    CURATED_UNREVIEWED = "curated_unreviewed"
     HUMAN_REVIEWED = "human_reviewed"
     UNKNOWN = "unknown"
+
+
+HUMAN_REVIEW_ATTESTATION = "human_reviewed_input_and_expected_outcome"
+
+
+@dataclass(frozen=True)
+class SemanticLabelEvidence:
+    """Digest-bound evidence required before a label counts as human gold."""
+
+    case_digest: str = ""
+    reviewer: str = ""
+    reviewed_at: str = ""
+    attestation: str = ""
+
+    def __post_init__(self) -> None:
+        values = (
+            self.case_digest.strip(),
+            self.reviewer.strip(),
+            self.reviewed_at.strip(),
+            self.attestation.strip(),
+        )
+        if not any(values):
+            return
+        if not all(values):
+            raise ValueError("semantic label evidence must be complete or empty")
+        digest, reviewer, reviewed_at, attestation = values
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest.lower()
+        ):
+            raise ValueError("semantic label evidence requires a SHA-256 case digest")
+        if attestation != HUMAN_REVIEW_ATTESTATION:
+            raise ValueError("semantic label evidence has an invalid attestation")
+        try:
+            timestamp = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "semantic label evidence reviewed_at must be ISO-8601"
+            ) from exc
+        if timestamp.tzinfo is None:
+            raise ValueError(
+                "semantic label evidence reviewed_at must include a timezone"
+            )
+        object.__setattr__(self, "case_digest", digest.lower())
+        object.__setattr__(self, "reviewer", reviewer)
+        object.__setattr__(self, "reviewed_at", reviewed_at)
+        object.__setattr__(self, "attestation", attestation)
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.case_digest)
 
 
 @dataclass(frozen=True)
@@ -56,6 +108,7 @@ class LearningTask:
     structure_key: str = ""
     difficulty: int = 1
     label_authority: SemanticLabelAuthority = SemanticLabelAuthority.UNKNOWN
+    label_evidence: SemanticLabelEvidence = SemanticLabelEvidence()
 
     def __post_init__(self) -> None:
         task_id = self.task_id.strip()
@@ -79,6 +132,17 @@ class LearningTask:
                 else SemanticLabelAuthority.PROGRAMMATIC
             )
         object.__setattr__(self, "label_authority", authority)
+        if not isinstance(self.label_evidence, SemanticLabelEvidence):
+            raise TypeError("learning task label_evidence must be SemanticLabelEvidence")
+        if authority is SemanticLabelAuthority.HUMAN_REVIEWED:
+            if not self.label_evidence.complete:
+                raise ValueError(
+                    "human-reviewed learning tasks require digest-bound label evidence"
+                )
+        elif self.label_evidence.complete:
+            raise ValueError(
+                "digest-bound label evidence requires HUMAN_REVIEWED authority"
+            )
         if not self.instance.goals:
             raise ValueError("learning tasks require at least one verifier goal")
 
@@ -235,6 +299,7 @@ class TaskEvaluation:
     policy_used: bool
     fallback_used: bool
     label_authority: SemanticLabelAuthority = SemanticLabelAuthority.PROGRAMMATIC
+    label_evidence: SemanticLabelEvidence = SemanticLabelEvidence()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -242,10 +307,32 @@ class TaskEvaluation:
             "label_authority",
             SemanticLabelAuthority(self.label_authority),
         )
+        if not isinstance(self.label_evidence, SemanticLabelEvidence):
+            raise TypeError("task evaluation label_evidence must be SemanticLabelEvidence")
+        if self.label_authority is SemanticLabelAuthority.HUMAN_REVIEWED:
+            if not self.label_evidence.complete:
+                raise ValueError(
+                    "human-reviewed task evaluations require digest-bound evidence"
+                )
+        elif self.label_evidence.complete:
+            raise ValueError(
+                "digest-bound label evidence requires HUMAN_REVIEWED authority"
+            )
 
     @property
     def has_semantic_gold(self) -> bool:
-        return self.label_authority is SemanticLabelAuthority.HUMAN_REVIEWED
+        return (
+            self.label_authority is SemanticLabelAuthority.HUMAN_REVIEWED
+            and self.label_evidence.complete
+        )
+
+    @property
+    def has_programmatic_label(self) -> bool:
+        return self.label_authority is SemanticLabelAuthority.PROGRAMMATIC
+
+    @property
+    def has_curated_unreviewed_label(self) -> bool:
+        return self.label_authority is SemanticLabelAuthority.CURATED_UNREVIEWED
 
 
 @dataclass(frozen=True)
@@ -254,8 +341,13 @@ class DomainLearningMetrics:
     tasks: int
     positive_tasks: int
     replay_verified_goal_completion: float
+    labeled_outcome_accuracy: float
+    programmatic_outcome_accuracy: float | None
+    curated_unreviewed_accuracy: float | None
     primitive_replay_integrity: float
     semantic_correctness: float | None
+    programmatic_tasks: int
+    curated_unreviewed_tasks: int
     semantic_gold_tasks: int
     false_positives: int
     positive_expansions: int
@@ -287,9 +379,13 @@ class LearningMetrics:
     tasks: int
     positive_tasks: int
     replay_verified_goal_completion: float
-    programmatic_outcome_accuracy: float
+    labeled_outcome_accuracy: float
+    programmatic_outcome_accuracy: float | None
+    curated_unreviewed_accuracy: float | None
     primitive_replay_integrity: float
     semantic_correctness: float | None
+    programmatic_tasks: int
+    curated_unreviewed_tasks: int
     semantic_gold_tasks: int
     false_positives: int
     positive_expansions: int
@@ -314,9 +410,9 @@ class LearningMetrics:
 
     @property
     def expected_outcome_accuracy(self) -> float:
-        """Deprecated alias for programmatic outcome accuracy."""
+        """Deprecated alias for accuracy across every labeled task."""
 
-        return self.programmatic_outcome_accuracy
+        return self.labeled_outcome_accuracy
 
     @property
     def proof_soundness(self) -> float:
@@ -963,6 +1059,7 @@ def task_evaluation_from_result(
         policy_used=result.policy_used,
         fallback_used=result.fallback_used,
         label_authority=task.label_authority,
+        label_evidence=task.label_evidence,
     )
 
 
@@ -971,6 +1068,12 @@ def summarize_task_evaluations(
 ) -> LearningMetrics:
     positive = tuple(item for item in evaluations if item.expected_solved)
     successes = tuple(item for item in evaluations if item.success)
+    programmatic = tuple(
+        item for item in evaluations if item.has_programmatic_label
+    )
+    curated_unreviewed = tuple(
+        item for item in evaluations if item.has_curated_unreviewed_label
+    )
     semantic_gold = tuple(item for item in evaluations if item.has_semantic_gold)
     by_domain = tuple(
         _summarize_domain(
@@ -986,9 +1089,31 @@ def summarize_task_evaluations(
             sum(item.success and item.verified for item in positive),
             len(positive),
         ),
-        programmatic_outcome_accuracy=_ratio(
+        labeled_outcome_accuracy=_ratio(
             sum(item.success == item.expected_solved for item in evaluations),
             len(evaluations),
+        ),
+        programmatic_outcome_accuracy=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved
+                    for item in programmatic
+                ),
+                len(programmatic),
+            )
+            if programmatic
+            else None
+        ),
+        curated_unreviewed_accuracy=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved
+                    for item in curated_unreviewed
+                ),
+                len(curated_unreviewed),
+            )
+            if curated_unreviewed
+            else None
         ),
         primitive_replay_integrity=_ratio(
             sum(item.verified for item in successes),
@@ -1005,6 +1130,8 @@ def summarize_task_evaluations(
             if semantic_gold
             else None
         ),
+        programmatic_tasks=len(programmatic),
+        curated_unreviewed_tasks=len(curated_unreviewed),
         semantic_gold_tasks=len(semantic_gold),
         false_positives=sum(item.false_positive for item in evaluations),
         positive_expansions=sum(item.expansions for item in positive),
@@ -1029,6 +1156,12 @@ def _summarize_domain(
 ) -> DomainLearningMetrics:
     positive = tuple(item for item in evaluations if item.expected_solved)
     successes = tuple(item for item in evaluations if item.success)
+    programmatic = tuple(
+        item for item in evaluations if item.has_programmatic_label
+    )
+    curated_unreviewed = tuple(
+        item for item in evaluations if item.has_curated_unreviewed_label
+    )
     semantic_gold = tuple(item for item in evaluations if item.has_semantic_gold)
     return DomainLearningMetrics(
         domain=domain,
@@ -1037,6 +1170,32 @@ def _summarize_domain(
         replay_verified_goal_completion=_ratio(
             sum(item.success and item.verified for item in positive),
             len(positive),
+        ),
+        labeled_outcome_accuracy=_ratio(
+            sum(item.success == item.expected_solved for item in evaluations),
+            len(evaluations),
+        ),
+        programmatic_outcome_accuracy=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved
+                    for item in programmatic
+                ),
+                len(programmatic),
+            )
+            if programmatic
+            else None
+        ),
+        curated_unreviewed_accuracy=(
+            _ratio(
+                sum(
+                    item.success == item.expected_solved
+                    for item in curated_unreviewed
+                ),
+                len(curated_unreviewed),
+            )
+            if curated_unreviewed
+            else None
         ),
         primitive_replay_integrity=_ratio(
             sum(item.verified for item in successes),
@@ -1053,6 +1212,8 @@ def _summarize_domain(
             if semantic_gold
             else None
         ),
+        programmatic_tasks=len(programmatic),
+        curated_unreviewed_tasks=len(curated_unreviewed),
         semantic_gold_tasks=len(semantic_gold),
         false_positives=sum(item.false_positive for item in evaluations),
         positive_expansions=sum(item.expansions for item in positive),
@@ -1088,6 +1249,15 @@ def _trace_metadata(task: LearningTask) -> dict[str, str]:
         metadata["capability"] = task.capability
     if task.structure_key:
         metadata["structure_key"] = task.structure_key
+    if task.label_evidence.complete:
+        metadata.update(
+            {
+                "label_case_digest": task.label_evidence.case_digest,
+                "label_reviewer": task.label_evidence.reviewer,
+                "label_reviewed_at": task.label_evidence.reviewed_at,
+                "label_attestation": task.label_evidence.attestation,
+            }
+        )
     for name, value in sorted(task.instance.metadata.items()):
         if not name.startswith(("discovery_", "experience_")):
             continue

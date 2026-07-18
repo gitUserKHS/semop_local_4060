@@ -38,6 +38,7 @@ python tools/eval/evaluate_semantic_flow_self_learning.py
 python tools/eval/evaluate_active_macro_learning.py
 python tools/eval/evaluate_hierarchical_self_learning.py
 python tools/eval/evaluate_raw_grounded_self_learning.py
+python tools/eval/evaluate_semantic_benchmark.py
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
 python examples/typed_multidomain_demo.py
 python examples/typed_compositional_v2_demo.py
@@ -84,6 +85,9 @@ portable, hash-checked brain artifact.
 learning boundary. It grounds raw requirement text, exact math strings, and RGB pixel
 problems through the production adapters, rejects failed or overlapping splits, and
 trains on language only before evaluating untouched math and vision transfer.
+`evaluate_semantic_benchmark.py` runs digest-bound language, math, and raster-vision
+near misses through the same adapters. Seed labels remain `curated_unreviewed`; only
+an exact, separately attested review can contribute to `semantic_correctness`.
 
 Optional controller training:
 
@@ -97,6 +101,7 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
+- `docs/lmv_semantic_benchmark.md`: digest-bound review workflow and authority-separated three-domain semantic evaluation
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
 - `docs/typed_compositional_extensions.md`: v2 language logic, exact equations, raster quantification, and controller scoring contract
@@ -128,8 +133,9 @@ rerun and verified human-reviewed 20/100-shot gates remain unevaluated. The same
 controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
-open-domain understanding. The trust/provenance milestone now passes 206
-typed-operator tests plus 20 subtests and all 573 repository tests; `shadow` remains
+open-domain understanding. The digest-bound LMV semantic benchmark milestone now
+passes 219 typed-operator tests plus 20 subtests and all 586 repository tests;
+`shadow` remains
 the default.
 
 - `app.py`

@@ -13,6 +13,7 @@ from .self_learning import (
     LearningSplit,
     LearningTask,
     SemanticLabelAuthority,
+    SemanticLabelEvidence,
     SelfLearningLoop,
     SelfLearningResult,
 )
@@ -32,6 +33,7 @@ class RawLearningExample:
     structure_key: str = ""
     difficulty: int = 1
     label_authority: SemanticLabelAuthority = SemanticLabelAuthority.PROGRAMMATIC
+    label_evidence: SemanticLabelEvidence = SemanticLabelEvidence()
 
     def __post_init__(self) -> None:
         example_id = self.example_id.strip()
@@ -48,6 +50,17 @@ class RawLearningExample:
             "label_authority",
             SemanticLabelAuthority(self.label_authority),
         )
+        if not isinstance(self.label_evidence, SemanticLabelEvidence):
+            raise TypeError("raw learning label_evidence must be SemanticLabelEvidence")
+        if self.label_authority is SemanticLabelAuthority.HUMAN_REVIEWED:
+            if not self.label_evidence.complete:
+                raise ValueError(
+                    "human-reviewed raw examples require digest-bound label evidence"
+                )
+        elif self.label_evidence.complete:
+            raise ValueError(
+                "digest-bound label evidence requires HUMAN_REVIEWED authority"
+            )
 
 
 @dataclass(frozen=True)
@@ -200,6 +213,7 @@ class RawExperienceGrounder:
                         structure_key=example.structure_key,
                         difficulty=example.difficulty,
                         label_authority=example.label_authority,
+                        label_evidence=example.label_evidence,
                     )
                 )
                 input_fingerprints.append((example.example_id, input_fingerprint))

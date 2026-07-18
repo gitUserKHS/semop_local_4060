@@ -69,12 +69,25 @@ replay digest가 달라진다.
 | --- | --- | --- |
 | `replay_verified_goal_completion` | positive 목표 중 replay까지 통과한 비율 | `verified_solve_rate` |
 | `primitive_replay_integrity` | 성공으로 보고된 program 중 primitive replay가 통과한 비율 | `proof_soundness` |
-| `programmatic_outcome_accuracy` | 합성 또는 프로그램 라벨과 성공 여부가 일치한 비율 | `expected_outcome_accuracy` |
+| `labeled_outcome_accuracy` | 권한과 무관하게 모든 기대 결과와 성공 여부가 일치한 비율 | `expected_outcome_accuracy` |
+| `programmatic_outcome_accuracy` | 합성 또는 프로그램 라벨만 따로 계산한 일치율. 해당 과제가 없으면 `None` | 없음 |
+| `curated_unreviewed_accuracy` | 독립 리뷰 전 curated 라벨의 일치율. 의미 gold로 해석하지 않음 | 없음 |
 | `semantic_correctness` | 사람 검토 gold label과 결과가 일치한 비율 | 없음 |
 
 `semantic_correctness`는 `SemanticLabelAuthority.HUMAN_REVIEWED` task가 있을 때만
 계산한다. 합성 task만 있는 평가에서는 `None`이며 `semantic_gold_tasks=0`이다.
 따라서 `primitive_replay_integrity=1.0`을 현실 의미 정확도 100%라고 해석하면 안 된다.
+
+라벨 권한은 `programmatic`, `curated_unreviewed`, `human_reviewed`, `unknown`으로
+분리한다. `expected_outcome_accuracy`는 호환성 별칭이며 이제 모든 라벨을 합친
+`labeled_outcome_accuracy`를 가리킨다. 권한별 연구 주장을 할 때는 이 별칭을
+사용하지 않는다.
+
+`human_reviewed` enum만 직접 지정하는 것으로는 gold task를 만들 수 없다.
+`SemanticLabelEvidence`에 case SHA-256, reviewer, timezone이 있는 timestamp와
+고정 attestation이 모두 있어야 하며, raw grounding과 trace metadata까지 이
+증거를 전달한다. LMV benchmark는 별도 review sidecar의 digest가 현재 case와
+정확히 일치할 때만 이 evidence를 생성한다.
 
 ## 더 어려운 negative control
 

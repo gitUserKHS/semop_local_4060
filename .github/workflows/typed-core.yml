@@ -49,6 +49,7 @@ jobs:
           tests/test_typed_operator_linear_equation.py
           tests/test_typed_operator_numeric_comparison.py
           tests/test_typed_operator_raster_vision.py
+          tests/test_typed_operator_semantic_benchmark.py
           tests/test_typed_operator_judging.py
           tests/test_typed_operator_trust.py
           -q
