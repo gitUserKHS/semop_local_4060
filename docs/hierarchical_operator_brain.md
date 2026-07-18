@@ -104,76 +104,21 @@ load 시 learner kind, base hash, macro hash, 실제 복원 parameter count를 �
 ```python
 from semop.kernel import (
     HierarchicalSelfLearningLoop,
-    LearningSplit,
     generate_hierarchical_brain_transfer_split,
-    learning_tasks_from_synthetic,
+    hierarchical_learning_tasks_from_curriculum,
 )
+from semop.tiny_controller import TinyControllerPolicyLearner
 
 split = generate_hierarchical_brain_transfer_split(seed=23)
-
-def tasks(problems, split_name, namespace, expected=True):
-    return learning_tasks_from_synthetic(
-        problems,
-        split=split_name,
-        namespace=namespace,
-        expected_solved=expected,
-    )
-
-controller_train = tuple(
-    task
-    for task in tasks(
-        split.controller_training, LearningSplit.TRAIN, "controller-train"
-    )
-    if task.domain == "language"
+tasks = hierarchical_learning_tasks_from_curriculum(
+    split,
+    controller_domain="language",
 )
-controller_holdout = tuple(
-    task
-    for task in (
-        tasks(
-            split.controller_heldout,
-            LearningSplit.HELDOUT,
-            "controller-heldout",
-        )
-        + tasks(
-            split.controller_negative_controls,
-            LearningSplit.HELDOUT,
-            "controller-negative",
-            False,
-        )
-    )
-    if task.domain == "language"
+learner = TinyControllerPolicyLearner(
+    epochs=10,
+    learning_rate=1e-3,
 )
-macro_train = tasks(
-    split.macro_training, LearningSplit.TRAIN, "macro-train"
-)
-macro_validation = tasks(
-    split.macro_validation, LearningSplit.HELDOUT, "macro-validation"
-)
-macro_holdout = tasks(
-    split.macro_heldout, LearningSplit.HELDOUT, "macro-heldout"
-) + tasks(
-    split.macro_negative_controls,
-    LearningSplit.HELDOUT,
-    "macro-negative",
-    False,
-)
-joint_holdout = tasks(
-    split.joint_heldout, LearningSplit.HELDOUT, "joint-heldout"
-) + tasks(
-    split.joint_negative_controls,
-    LearningSplit.HELDOUT,
-    "joint-negative",
-    False,
-)
-
-result = HierarchicalSelfLearningLoop().run(
-    controller_train,
-    controller_holdout,
-    macro_train,
-    macro_validation,
-    macro_holdout,
-    joint_holdout,
-)
+result = HierarchicalSelfLearningLoop(learner=learner).run_tasks(tasks)
 
 if result.promoted:
     result.active_brain.solve(a_domain_instance)
@@ -187,6 +132,10 @@ if result.promoted:
 
 ```powershell
 python tools/eval/evaluate_hierarchical_self_learning.py
+python tools/eval/evaluate_hierarchical_self_learning.py `
+  --controller-profile recurrent-diagnostic --controller-epochs 5
+python tools/eval/evaluate_hierarchical_self_learning.py `
+  --controller-profile recurrent-full --controller-epochs 10
 python -m pytest tests/test_typed_operator_hierarchical_brain.py -q
 ```
 
@@ -202,13 +151,24 @@ python -m pytest tests/test_typed_operator_hierarchical_brain.py -q
 - deterministic 대비 joint 감소: 54.5%
 - controller 학습: 언어 3개, 승격 holdout은 언어 양성 1개와 음성 1개
 - zero-shot controller 평가 도메인: 수학, 비전
-- shared sparse controller: 16 parameters
-- 학습된 공유 prior: `family:verify` 양수, `family:search` 음수
 - active macro: 3개, 언어·수학·비전 각각 1개
 - proof soundness: 100%
 - false positives: 0
-- combined artifact: 약 4.4 KB
-- 기본 평가 wall time: 약 0.15초
+
+같은 split을 learner만 바꿔 비교한 결과는 다음과 같다. recurrent 학습은 replay-verified
+언어 decision 3개와 terminal halt 3개만 사용한다.
+
+| controller | parameters | updates | combined artifact | 학습 포함 wall time |
+|---|---:|---:|---:|---:|
+| sparse | 16 | 1 | 4,443 B | 약 0.13초 |
+| recurrent diagnostic | 29,834 | 60 | 약 152 KiB | 약 1.6초, 첫 PyTorch import 포함 약 4.8초 |
+| recurrent full | 5,837,578 | 60 | 28,858,505 B | 약 7.0초 |
+
+세 profile 모두 위 표의 expansion `22 / 14 / 22 / 10`을 동일하게 기록한다. full profile의
+추가 peak RSS는 약 470 MiB이고 joint p95 CPU inference는 약 0.016초였다. diagnostic
+profile은 curriculum seed 19~25의 7회 반복에서 모두 같은 expansion과 전체 gate 통과를
+재현했다. 이 과정에서 서로 다른 curriculum 역할의 raster layout이 특정 seed에서 겹칠 수
+있던 누수를 발견해 source와 partition 축을 독립 인코딩하도록 수정했다.
 
 macro-only가 긴 joint task 전체를 줄이지 못하는 것도 중요한 ablation 결과다. macro는 중간
 절차를 안내하지만 마지막에 처음 보는 completion action을 고르는 일반 prior가 없다.
@@ -218,16 +178,17 @@ controller-only는 언어에서 배운 family prior로 처음 보는 math와 vis
 
 ## 현재 한계
 
-이번 결과의 controller는 16-parameter sparse CPU policy다. 5.84M recurrent controller가
-동일한 독립 split에서 충분히 반복 학습됐다는 뜻은 아니다. 또한 현재 세 도메인 task는
-controlled language inheritance, exact linear equation, deterministic raster square proof다.
+이번 결과는 sparse뿐 아니라 29K와 5.84M recurrent CPU controller의 실제 학습·NumPy
+복원·joint 승격까지 검증한다. 다만 학습 데이터는 사람이 검토한 자유 자연어가 아니라 합성
+언어 trace 3개이고, 현재 세 도메인 task는 controlled language inheritance, exact linear
+equation, deterministic raster square proof다.
 현재 정량 gate의 방향도 언어에서 controller를 학습한 뒤 수학과 비전을 zero-shot으로 보는
 경우다. 다른 출발 도메인과 서로 다른 proof 길이까지 공정하게 비교하는 대칭 전이 평가는
 별도 curriculum이 필요하다.
 
 아직 남은 핵심 범위는 다음과 같다.
 
-- recurrent controller의 0/5/20/100-shot joint 실험
+- 사람 검토 데이터의 0/5/20/100-shot recurrent joint 실험
 - 자유 자연어 predicate와 operator schema 획득
 - 자연 이미지와 영상의 learned proposal 및 독립 verifier 확장
 - 새로운 primitive operator와 typed guard 후보 발명

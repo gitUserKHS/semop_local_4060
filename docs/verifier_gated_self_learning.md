@@ -105,9 +105,10 @@ operator family와 typed precondition/effect shape를 사용한다. dependency-f
 - 추론과 복원에는 PyTorch가 필요하지 않음
 
 순환망 후보도 sparse 정책과 동일한 held-out, proof replay, false-positive, 시간, 크기,
-expansion gate를 통과해야 한다. 작은 debug 구성으로 end-to-end 학습과 안전한 롤백은
-검증했지만, 기본 5.84M 구성의 완전한 structural-transfer 재학습 결과는 아직 없다.
-따라서 현재 기본값은 sparse 정책이다.
+expansion gate를 통과해야 한다. 29K diagnostic 구성과 기본 5.84M 구성은 이제 언어 trace
+3개만 사용하는 hierarchical transfer split에서 end-to-end 학습, NumPy 복원, 수학·비전
+zero-shot 전이, macro 결합, 안전한 롤백을 통과한다. 다만 자유 입력과 human-reviewed
+분포의 반복 결과는 아직 없으므로 기본값은 dependency-free sparse 정책이다.
 
 ## 승격과 롤백 조건
 
@@ -295,7 +296,7 @@ registry, state, goals에서 프로그램을 재실행하고 replay에 성공한
 - 자연 사진과 영상에서 새 visual concept와 시간 변화를 발견하고 검증하는 학습
 - 기하·대수·증명 문제 전반의 정리 발명과 장기 proof search
 - 새 인자 구조와 효과를 가진 macro schema 자체를 발명하는 학습
-- 기본 5.84M recurrent controller의 충분한 structural-transfer 반복 실험
+- 기본 5.84M recurrent controller의 multi-seed 및 더 깊은 composition 반복 실험
 - 실제 분포의 human-reviewed 20/100-shot promotion gate
 
 따라서 현재 상태를 언어·수학·비전의 최종 달성이나 AGI라고 표현하지 않는다.

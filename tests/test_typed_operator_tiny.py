@@ -206,6 +206,13 @@ class TinyControllerTests(unittest.TestCase):
         self.assertLessEqual(count, 15_000_000)
         self.assertLessEqual(count * 4, 64 * 1024 * 1024)
 
+        diagnostic = TinyControllerConfig.diagnostic()
+        self.assertEqual(diagnostic.estimated_parameter_count(), 29_834)
+        self.assertLess(
+            diagnostic.estimated_parameter_count(),
+            count,
+        )
+
     def test_canonical_features_do_not_depend_on_point_names(self) -> None:
         first = parse_geometry_dsl(
             "point A, B, M\nassume midpoint(M, A, B)\nprove collinear(A, M, B)\n"

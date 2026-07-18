@@ -25,9 +25,121 @@ from .self_learning import (
     SelfLearningResult,
     TaskEvaluation,
     learning_expansion_reduction,
+    learning_tasks_from_synthetic,
     summarize_task_evaluations,
     task_evaluation_from_result,
 )
+from .synthesis import HierarchicalBrainCurriculumSplit, SyntheticProblem
+
+
+@dataclass(frozen=True)
+class HierarchicalLearningTaskSplit:
+    """Verifier-bound task roles used to select two components and their joint."""
+
+    controller_training: tuple[LearningTask, ...]
+    controller_heldout: tuple[LearningTask, ...]
+    macro_training: tuple[LearningTask, ...]
+    macro_validation: tuple[LearningTask, ...]
+    macro_heldout: tuple[LearningTask, ...]
+    joint_heldout: tuple[LearningTask, ...]
+
+    @property
+    def joint_positive(self) -> tuple[LearningTask, ...]:
+        return tuple(task for task in self.joint_heldout if task.expected_solved)
+
+    @property
+    def joint_negative(self) -> tuple[LearningTask, ...]:
+        return tuple(task for task in self.joint_heldout if not task.expected_solved)
+
+
+def hierarchical_learning_tasks_from_curriculum(
+    curriculum: HierarchicalBrainCurriculumSplit,
+    *,
+    controller_domain: str = "language",
+    namespace: str = "hierarchical",
+) -> HierarchicalLearningTaskSplit:
+    """Bind a synthetic curriculum to disjoint train/selection/evaluation roles."""
+
+    if controller_domain not in {"language", "math", "vision"}:
+        raise ValueError("controller_domain must be language, math, or vision")
+    resolved_namespace = namespace.strip()
+    if not resolved_namespace:
+        raise ValueError("hierarchical learning namespace must not be empty")
+
+    def convert(
+        problems: Sequence[SyntheticProblem],
+        *,
+        role: str,
+        split: LearningSplit,
+        expected_solved: bool = True,
+        selected_domain: str | None = None,
+    ) -> tuple[LearningTask, ...]:
+        tasks = learning_tasks_from_synthetic(
+            problems,
+            split=split,
+            namespace=f"{resolved_namespace}-{role}",
+            expected_solved=expected_solved,
+        )
+        if selected_domain is None:
+            return tasks
+        return tuple(task for task in tasks if task.domain == selected_domain)
+
+    controller_training = convert(
+        curriculum.controller_training,
+        role="controller-train",
+        split=LearningSplit.TRAIN,
+        selected_domain=controller_domain,
+    )
+    controller_heldout = convert(
+        curriculum.controller_heldout,
+        role="controller-heldout",
+        split=LearningSplit.HELDOUT,
+        selected_domain=controller_domain,
+    ) + convert(
+        curriculum.controller_negative_controls,
+        role="controller-negative",
+        split=LearningSplit.HELDOUT,
+        expected_solved=False,
+        selected_domain=controller_domain,
+    )
+    macro_training = convert(
+        curriculum.macro_training,
+        role="macro-train",
+        split=LearningSplit.TRAIN,
+    )
+    macro_validation = convert(
+        curriculum.macro_validation,
+        role="macro-validation",
+        split=LearningSplit.HELDOUT,
+    )
+    macro_heldout = convert(
+        curriculum.macro_heldout,
+        role="macro-heldout",
+        split=LearningSplit.HELDOUT,
+    ) + convert(
+        curriculum.macro_negative_controls,
+        role="macro-negative",
+        split=LearningSplit.HELDOUT,
+        expected_solved=False,
+    )
+    joint_heldout = convert(
+        curriculum.joint_heldout,
+        role="joint-heldout",
+        split=LearningSplit.HELDOUT,
+    ) + convert(
+        curriculum.joint_negative_controls,
+        role="joint-negative",
+        split=LearningSplit.HELDOUT,
+        expected_solved=False,
+    )
+    return HierarchicalLearningTaskSplit(
+        controller_training=controller_training,
+        controller_heldout=controller_heldout,
+        macro_training=macro_training,
+        macro_validation=macro_validation,
+        macro_heldout=macro_heldout,
+        joint_heldout=joint_heldout,
+    )
 
 
 @dataclass(frozen=True)
@@ -110,6 +222,24 @@ class HierarchicalSelfLearningLoop:
             learner = StructuralPolicyLearner()
         self.learner = learner
         self.budget = budget or HierarchicalLearningBudget()
+
+    def run_tasks(
+        self,
+        tasks: HierarchicalLearningTaskSplit,
+        *,
+        incumbent_policy: ActionPolicy | None = None,
+    ) -> HierarchicalLearningResult:
+        """Run a named split without error-prone positional role wiring."""
+
+        return self.run(
+            tasks.controller_training,
+            tasks.controller_heldout,
+            tasks.macro_training,
+            tasks.macro_validation,
+            tasks.macro_heldout,
+            tasks.joint_heldout,
+            incumbent_policy=incumbent_policy,
+        )
 
     def run(
         self,

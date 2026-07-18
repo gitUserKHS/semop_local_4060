@@ -17,12 +17,11 @@ from semop.kernel import (
     HierarchicalOperatorBrain,
     HierarchicalLearningBudget,
     HierarchicalSelfLearningLoop,
-    LearningSplit,
     OperatorKernel,
     TypedDomainRequest,
     UnifiedTypedReasoner,
     generate_hierarchical_brain_transfer_split,
-    learning_tasks_from_synthetic,
+    hierarchical_learning_tasks_from_curriculum,
 )
 from semop.tiny_controller import StructuralPolicyLearner
 
@@ -36,80 +35,18 @@ class TypedOperatorHierarchicalBrainTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.curriculum = generate_hierarchical_brain_transfer_split(seed=23)
-        cls.controller_training = tuple(
-            task
-            for task in learning_tasks_from_synthetic(
-                cls.curriculum.controller_training,
-                split=LearningSplit.TRAIN,
-                namespace="hierarchical-controller",
-            )
-            if task.domain == "language"
+        cls.tasks = hierarchical_learning_tasks_from_curriculum(
+            cls.curriculum,
+            controller_domain="language",
+            namespace="hierarchical-test",
         )
-        cls.controller_heldout = (
-            tuple(
-                task
-                for task in learning_tasks_from_synthetic(
-                    cls.curriculum.controller_heldout,
-                    split=LearningSplit.HELDOUT,
-                    namespace="hierarchical-controller-heldout",
-                )
-                if task.domain == "language"
-            )
-            + tuple(
-                task
-                for task in learning_tasks_from_synthetic(
-                    cls.curriculum.controller_negative_controls,
-                    split=LearningSplit.HELDOUT,
-                    namespace="hierarchical-controller-negative",
-                    expected_solved=False,
-                )
-                if task.domain == "language"
-            )
-        )
-        cls.macro_training = learning_tasks_from_synthetic(
-            cls.curriculum.macro_training,
-            split=LearningSplit.TRAIN,
-            namespace="hierarchical-macro-train",
-        )
-        cls.macro_validation = learning_tasks_from_synthetic(
-            cls.curriculum.macro_validation,
-            split=LearningSplit.HELDOUT,
-            namespace="hierarchical-macro-validation",
-        )
-        cls.macro_heldout = (
-            learning_tasks_from_synthetic(
-                cls.curriculum.macro_heldout,
-                split=LearningSplit.HELDOUT,
-                namespace="hierarchical-macro-heldout",
-            )
-            + learning_tasks_from_synthetic(
-                cls.curriculum.macro_negative_controls,
-                split=LearningSplit.HELDOUT,
-                namespace="hierarchical-macro-negative",
-                expected_solved=False,
-            )
-        )
-        cls.joint_heldout = (
-            learning_tasks_from_synthetic(
-                cls.curriculum.joint_heldout,
-                split=LearningSplit.HELDOUT,
-                namespace="hierarchical-joint-heldout",
-            )
-            + learning_tasks_from_synthetic(
-                cls.curriculum.joint_negative_controls,
-                split=LearningSplit.HELDOUT,
-                namespace="hierarchical-joint-negative",
-                expected_solved=False,
-            )
-        )
-        cls.result = HierarchicalSelfLearningLoop().run(
-            cls.controller_training,
-            cls.controller_heldout,
-            cls.macro_training,
-            cls.macro_validation,
-            cls.macro_heldout,
-            cls.joint_heldout,
-        )
+        cls.controller_training = cls.tasks.controller_training
+        cls.controller_heldout = cls.tasks.controller_heldout
+        cls.macro_training = cls.tasks.macro_training
+        cls.macro_validation = cls.tasks.macro_validation
+        cls.macro_heldout = cls.tasks.macro_heldout
+        cls.joint_heldout = cls.tasks.joint_heldout
+        cls.result = HierarchicalSelfLearningLoop().run_tasks(cls.tasks)
 
     def test_curriculum_separates_component_names_and_vision_inputs(self) -> None:
         self.assertEqual(len(self.curriculum.controller_training), 9)
@@ -174,6 +111,40 @@ class TypedOperatorHierarchicalBrainTests(unittest.TestCase):
         for left_index, left in enumerate(digest_sets):
             for right in digest_sets[left_index + 1 :]:
                 self.assertTrue(left.isdisjoint(right))
+
+        for seed in range(19, 26):
+            curriculum = generate_hierarchical_brain_transfer_split(seed=seed)
+            groups = (
+                curriculum.controller_training,
+                curriculum.controller_heldout,
+                curriculum.macro_training,
+                curriculum.macro_validation,
+                curriculum.macro_heldout,
+                curriculum.joint_heldout,
+            )
+            seeded_digests = tuple(
+                {
+                    problem.instance.metadata["image_digest"]
+                    for problem in group
+                    if problem.domain == "vision"
+                }
+                for group in groups
+            )
+            for left_index, left in enumerate(seeded_digests):
+                for right in seeded_digests[left_index + 1 :]:
+                    self.assertTrue(left.isdisjoint(right), seed)
+
+    def test_task_split_builder_rejects_ambiguous_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "controller_domain"):
+            hierarchical_learning_tasks_from_curriculum(
+                self.curriculum,
+                controller_domain="audio",
+            )
+        with self.assertRaisesRegex(ValueError, "namespace"):
+            hierarchical_learning_tasks_from_curriculum(
+                self.curriculum,
+                namespace="  ",
+            )
 
     def test_joint_brain_is_promoted_only_after_complementary_ablation(self) -> None:
         result = self.result
@@ -331,14 +302,7 @@ class TypedOperatorHierarchicalBrainTests(unittest.TestCase):
             budget=HierarchicalLearningBudget(
                 min_joint_expansion_reduction=1.0,
             )
-        ).run(
-            self.controller_training,
-            self.controller_heldout,
-            self.macro_training,
-            self.macro_validation,
-            self.macro_heldout,
-            self.joint_heldout,
-        )
+        ).run_tasks(self.tasks)
         self.assertFalse(rejected.promoted)
         self.assertIsNotNone(rejected.candidate_brain)
         self.assertIsNone(rejected.active_brain)

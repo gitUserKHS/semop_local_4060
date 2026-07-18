@@ -28,6 +28,45 @@ from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_hierarchical_evaluator_rejects_unknown_controller_profile(self) -> None:
+        with self.assertRaisesRegex(ValueError, "controller_profile"):
+            evaluate_hierarchical_self_learning(controller_profile="unknown")
+
+    def test_recurrent_hierarchical_controller_transfers_from_language(self) -> None:
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("PyTorch training profile is not installed")
+
+        report = evaluate_hierarchical_self_learning(
+            examples_per_domain=3,
+            validation_per_domain=1,
+            heldout_per_domain=1,
+            seed=23,
+            controller_domain="language",
+            controller_profile="recurrent-diagnostic",
+            controller_epochs=5,
+            controller_learning_rate=1e-3,
+            min_joint_expansion_reduction=0.50,
+        )
+
+        self.assertEqual(report["controller"]["profile"], "recurrent-diagnostic")
+        self.assertEqual(report["learning"]["controller_kind"], "tiny-controller-v5")
+        self.assertEqual(report["learning"]["controller_parameters"], 29_834)
+        self.assertEqual(report["learning"]["controller_training_updates"], 30)
+        self.assertEqual(
+            report["ab"]["positive_expansions"],
+            {
+                "deterministic": 22,
+                "controller_only": 14,
+                "macro_only": 22,
+                "joint": 10,
+            },
+        )
+        self.assertTrue(report["artifact"]["round_trip_verified"])
+        self.assertTrue(report["gates"]["shared_verify_family_transfers"])
+        self.assertTrue(report["gates"]["all_passed"])
+
     def test_hierarchical_self_learning_report_passes_all_gates(self) -> None:
         report = evaluate_hierarchical_self_learning(
             examples_per_domain=3,

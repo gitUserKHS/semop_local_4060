@@ -723,7 +723,9 @@ def _macro_vision_shape(
     size = 2 + rng.randrange(2)
     partition_offset = (index // 100_000) % 3
     grounding_layout = (index % 100_000) // 10_000
-    target_x = 1 + partition_offset + grounding_layout
+    # Encode source and partition as independent axes so no two curriculum
+    # roles can collapse to the same raster layout for unlucky RNG seeds.
+    target_x = 1 + grounding_layout * 3 + partition_offset
     distractor_x = target_x + size + 2
     width = distractor_x + 2
     height = size + 2

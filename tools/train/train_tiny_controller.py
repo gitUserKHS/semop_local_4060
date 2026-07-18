@@ -45,12 +45,7 @@ def train(
 
     torch.manual_seed(seed)
     config = (
-        TinyControllerConfig(
-            d_model=32,
-            token_buckets=512,
-            relation_buckets=64,
-            operator_buckets=64,
-        )
+        TinyControllerConfig.diagnostic()
         if debug_small
         else TinyControllerConfig()
     )

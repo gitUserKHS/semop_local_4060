@@ -49,6 +49,17 @@ class TinyControllerConfig:
         heads = 3 * d * d + 2 * d + 2 + ACTION_STRUCTURAL_FEATURE_COUNT
         return embeddings + blocks + heads
 
+    @classmethod
+    def diagnostic(cls) -> "TinyControllerConfig":
+        """Return the shared fast-training architecture used by CPU smoke gates."""
+
+        return cls(
+            d_model=32,
+            token_buckets=512,
+            relation_buckets=64,
+            operator_buckets=64,
+        )
+
 
 class NumpyTinyController:
     """Relation-aware recurrent policy runtime with no PyTorch dependency."""

@@ -73,10 +73,11 @@ executes and replays every primitive step; a macro cannot inject a fact or bypas
 guard.
 `evaluate_hierarchical_self_learning.py` trains and promotes a tiny shared-family
 controller on language only, verifies zero-shot family transfer to math and vision,
-and independently promotes procedural memory. It then evaluates their combination on
-a final joint holdout that neither component used for selection. Registry-specific
-macro activation and controller inference are packed into one portable, hash-checked
-brain artifact.
+and independently promotes procedural memory. The same evaluator supports sparse,
+29K diagnostic recurrent, and full 5.84M recurrent profiles. It then evaluates their
+combination on a final joint holdout that neither component used for selection.
+Registry-specific macro activation and controller inference are packed into one
+portable, hash-checked brain artifact.
 
 Optional controller training:
 
@@ -110,9 +111,11 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 
 No trained controller artifact is committed yet. An earlier full 5.84M synthetic
 leave-one-domain-out snapshot passed the expansion gate, and the v3 frontier-aware
-contract passes a fresh 29K training/export diagnostic. The frontier-aware 5.84M rerun
-and verified human-reviewed 20/100-shot gates remain unevaluated, so `shadow` remains
-the default.
+contract passes a fresh 29K training/export diagnostic. The hierarchical split now
+also trains the current 5.84M controller from three language traces and verifies its
+math/vision transfer plus macro composition. The broader frontier-aware 5.84M LODO
+rerun and verified human-reviewed 20/100-shot gates remain unevaluated, so `shadow`
+remains the default.
 
 - `app.py`
   - research-oriented structured reasoning CLI

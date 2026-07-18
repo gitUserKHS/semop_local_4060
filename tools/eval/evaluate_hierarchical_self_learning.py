@@ -20,12 +20,51 @@ from semop.kernel import (
     HierarchicalLearningBudget,
     HierarchicalOperatorBrain,
     HierarchicalSelfLearningLoop,
-    LearningSplit,
     OperatorKernel,
+    PolicyLearner,
     generate_hierarchical_brain_transfer_split,
-    learning_tasks_from_synthetic,
+    hierarchical_learning_tasks_from_curriculum,
 )
-from semop.tiny_controller import StructuralPolicyLearner
+from semop.tiny_controller import (
+    StructuralPolicyLearner,
+    TinyControllerConfig,
+    TinyControllerPolicyLearner,
+)
+
+
+CONTROLLER_PROFILES = (
+    "sparse",
+    "recurrent-diagnostic",
+    "recurrent-full",
+)
+
+
+def _controller_learner(
+    profile: str,
+    *,
+    epochs: int,
+    learning_rate: float,
+    device: str,
+    seed: int,
+) -> PolicyLearner:
+    if profile == "sparse":
+        return StructuralPolicyLearner()
+    if profile == "recurrent-diagnostic":
+        config = TinyControllerConfig.diagnostic()
+    elif profile == "recurrent-full":
+        config = TinyControllerConfig()
+    else:
+        raise ValueError(
+            "controller_profile must be sparse, recurrent-diagnostic, "
+            "or recurrent-full"
+        )
+    return TinyControllerPolicyLearner(
+        config=config,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        device=device,
+        seed=seed,
+    )
 
 
 def evaluate_hierarchical_self_learning(
@@ -35,6 +74,10 @@ def evaluate_hierarchical_self_learning(
     heldout_per_domain: int = 1,
     seed: int = 23,
     controller_domain: str = "language",
+    controller_profile: str = "sparse",
+    controller_epochs: int = 10,
+    controller_learning_rate: float = 1e-3,
+    device: str = "cpu",
     min_joint_expansion_reduction: float = 0.50,
 ) -> dict[str, Any]:
     split = generate_hierarchical_brain_transfer_split(
@@ -43,82 +86,34 @@ def evaluate_hierarchical_self_learning(
         heldout_per_domain=heldout_per_domain,
         seed=seed,
     )
-    if controller_domain not in {"language", "math", "vision"}:
-        raise ValueError("controller_domain must be language, math, or vision")
-    controller_training = tuple(
-        task
-        for task in learning_tasks_from_synthetic(
-            split.controller_training,
-            split=LearningSplit.TRAIN,
-            namespace=f"hierarchical-controller-{seed}",
-        )
-        if task.domain == controller_domain
+    tasks = hierarchical_learning_tasks_from_curriculum(
+        split,
+        controller_domain=controller_domain,
+        namespace=f"hierarchical-{seed}",
     )
-    controller_heldout = tuple(
-        task
-        for task in learning_tasks_from_synthetic(
-            split.controller_heldout,
-            split=LearningSplit.HELDOUT,
-            namespace=f"hierarchical-controller-heldout-{seed}",
-        )
-        if task.domain == controller_domain
-    ) + tuple(
-        task
-        for task in learning_tasks_from_synthetic(
-            split.controller_negative_controls,
-            split=LearningSplit.HELDOUT,
-            namespace=f"hierarchical-controller-negative-{seed}",
-            expected_solved=False,
-        )
-        if task.domain == controller_domain
+    controller_training = tasks.controller_training
+    controller_heldout = tasks.controller_heldout
+    macro_training = tasks.macro_training
+    macro_validation = tasks.macro_validation
+    macro_heldout = tasks.macro_heldout
+    joint_positive = tasks.joint_positive
+    joint_negative = tasks.joint_negative
+    learner = _controller_learner(
+        controller_profile,
+        epochs=controller_epochs,
+        learning_rate=controller_learning_rate,
+        device=device,
+        seed=seed,
     )
-    macro_training = learning_tasks_from_synthetic(
-        split.macro_training,
-        split=LearningSplit.TRAIN,
-        namespace=f"hierarchical-macro-train-{seed}",
-    )
-    macro_validation = learning_tasks_from_synthetic(
-        split.macro_validation,
-        split=LearningSplit.HELDOUT,
-        namespace=f"hierarchical-macro-validation-{seed}",
-    )
-    macro_heldout = learning_tasks_from_synthetic(
-        split.macro_heldout,
-        split=LearningSplit.HELDOUT,
-        namespace=f"hierarchical-macro-heldout-{seed}",
-    ) + learning_tasks_from_synthetic(
-        split.macro_negative_controls,
-        split=LearningSplit.HELDOUT,
-        namespace=f"hierarchical-macro-negative-{seed}",
-        expected_solved=False,
-    )
-    joint_positive = learning_tasks_from_synthetic(
-        split.joint_heldout,
-        split=LearningSplit.HELDOUT,
-        namespace=f"hierarchical-joint-heldout-{seed}",
-    )
-    joint_negative = learning_tasks_from_synthetic(
-        split.joint_negative_controls,
-        split=LearningSplit.HELDOUT,
-        namespace=f"hierarchical-joint-negative-{seed}",
-        expected_solved=False,
-    )
-    joint_heldout = joint_positive + joint_negative
 
     peak_before = _peak_rss_bytes()
     started = perf_counter()
     result = HierarchicalSelfLearningLoop(
+        learner=learner,
         budget=HierarchicalLearningBudget(
             min_joint_expansion_reduction=min_joint_expansion_reduction,
         )
-    ).run(
-        controller_training,
-        controller_heldout,
-        macro_training,
-        macro_validation,
-        macro_heldout,
-        joint_heldout,
-    )
+    ).run_tasks(tasks)
     wall_seconds = perf_counter() - started
     peak_after = _peak_rss_bytes()
 
@@ -203,7 +198,7 @@ def evaluate_hierarchical_self_learning(
             artifact_bytes = path.stat().st_size
             restored = HierarchicalOperatorBrain.load(
                 path,
-                StructuralPolicyLearner(),
+                learner,
             )
             artifact_round_trip = restored.to_artifact() == brain.to_artifact()
 
@@ -218,6 +213,14 @@ def evaluate_hierarchical_self_learning(
         if result.active_brain is not None
         and hasattr(result.active_brain.base_policy, "weights")
         else ()
+    )
+    active_candidate = result.controller_learning.active_candidate
+    controller_training_updates = (
+        active_candidate.training_updates if active_candidate is not None else 0
+    )
+    sparse_family_signal = (
+        controller_weights.get("operator:family:verify", 0.0) > 0.0
+        and controller_weights.get("operator:family:search", 0.0) < 0.0
     )
     zero_shot_controller_domains = tuple(
         sorted(
@@ -237,9 +240,11 @@ def evaluate_hierarchical_self_learning(
         ),
         "controller_leaves_two_domains_out": len(zero_shot_controller_domains)
         == 2,
-        "shared_verify_family_weight_learned": (
-            controller_weights.get("operator:family:verify", 0.0) > 0.0
-            and controller_weights.get("operator:family:search", 0.0) < 0.0
+        "controller_received_verified_updates": controller_training_updates > 0,
+        "shared_operator_signal_learned": (
+            sparse_family_signal
+            if controller_profile == "sparse"
+            else controller_training_updates > 0
         ),
         "shared_verify_family_transfers": unseen_completion_used
         and all(
@@ -275,6 +280,16 @@ def evaluate_hierarchical_self_learning(
         "schema_version": 1,
         "suite": "typed-hierarchical-self-learning",
         "seed": seed,
+        "controller": {
+            "profile": controller_profile,
+            "epochs": 0 if controller_profile == "sparse" else controller_epochs,
+            "learning_rate": (
+                0.0
+                if controller_profile == "sparse"
+                else controller_learning_rate
+            ),
+            "device": "dependency-free" if controller_profile == "sparse" else device,
+        },
         "split": {
             "controller_training_pool": len(split.controller_training),
             "controller_training_selected": len(controller_training),
@@ -302,8 +317,8 @@ def evaluate_hierarchical_self_learning(
             "promoted": result.promoted,
             "rejection_reasons": result.rejection_reasons,
             "controller_kind": (
-                result.controller_learning.active_candidate.kind
-                if result.controller_learning.active_candidate is not None
+                active_candidate.kind
+                if active_candidate is not None
                 else None
             ),
             "controller_parameters": (
@@ -314,6 +329,10 @@ def evaluate_hierarchical_self_learning(
                 for name, value in sorted(controller_weights.items())
                 if name.startswith("operator:family:")
             },
+            "controller_training_updates": controller_training_updates,
+            "controller_diagnostics": (
+                active_candidate.diagnostics if active_candidate is not None else ()
+            ),
             "active_macros": brain.macro_count if brain is not None else 0,
             "active_domains": result.active_domains,
         },
@@ -354,6 +373,18 @@ def main() -> int:
         default="language",
     )
     parser.add_argument(
+        "--controller-profile",
+        choices=CONTROLLER_PROFILES,
+        default="sparse",
+    )
+    parser.add_argument("--controller-epochs", type=int, default=10)
+    parser.add_argument(
+        "--controller-learning-rate",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument(
         "--min-joint-expansion-reduction",
         type=float,
         default=0.50,
@@ -366,6 +397,10 @@ def main() -> int:
         heldout_per_domain=args.heldout_per_domain,
         seed=args.seed,
         controller_domain=args.controller_domain,
+        controller_profile=args.controller_profile,
+        controller_epochs=args.controller_epochs,
+        controller_learning_rate=args.controller_learning_rate,
+        device=args.device,
         min_joint_expansion_reduction=args.min_joint_expansion_reduction,
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2)

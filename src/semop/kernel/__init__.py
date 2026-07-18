@@ -198,8 +198,10 @@ from .brain import HierarchicalOperatorBrain
 from .hierarchical_learning import (
     HierarchicalLearningBudget,
     HierarchicalLearningResult,
+    HierarchicalLearningTaskSplit,
     HierarchicalPolicyAblation,
     HierarchicalSelfLearningLoop,
+    hierarchical_learning_tasks_from_curriculum,
 )
 from .curriculum import (
     ActiveCurriculumConfig,
@@ -261,6 +263,7 @@ __all__ = [
     "HierarchicalBrainCurriculumSplit",
     "HierarchicalLearningBudget",
     "HierarchicalLearningResult",
+    "HierarchicalLearningTaskSplit",
     "HierarchicalOperatorBrain",
     "HierarchicalPolicyAblation",
     "HierarchicalSelfLearningLoop",
@@ -391,6 +394,7 @@ __all__ = [
     "generate_macro_reuse_transfer_split",
     "generate_semantic_flow_transfer_split",
     "hard_negative_records",
+    "hierarchical_learning_tasks_from_curriculum",
     "learning_tasks_from_synthetic",
     "learning_expansion_reduction",
     "generate_symbolic_curriculum",
