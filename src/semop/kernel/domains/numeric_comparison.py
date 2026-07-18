@@ -207,6 +207,11 @@ class NumericComparisonAdapter:
             rationale="exact comparison parser verified the requested relation",
             input_digest=input_digest,
             evidence=(f"input:{input_digest}",),
+            sensor_features=(
+                ("parser.exact", 1.0),
+                ("comparison.exact", 1.0),
+                ("expression.atom_arity", len(request.arguments) / 4.0),
+            ),
         )
         grounding_trace = composition.instance.grounding_trace.with_record(
             request_record

@@ -175,5 +175,19 @@ python -m pytest -k typed_operator
 python -m pytest
 ```
 
-현재 구현은 dependency-free typed core다. neural grounder 학습은 아직 연결하지 않았고,
-NumPy CPU inference 및 PyTorch training extra 위에서 후속 milestone로 추가한다.
+## Sparse Policy Update (2026-07-18)
+
+The previously planned grounding-policy milestone is now implemented in
+`semop.tiny_controller` without NumPy or PyTorch:
+
+- anonymized typed and domain-sensor features
+- sparse `ACCEPT/REJECT/ABSTAIN` inference
+- verified accept/reject replay only
+- raw-input and semantic-candidate split leakage checks
+- continual replay with validation-gated promotion and rollback
+- deterministic, hash-checked JSON artifacts
+- per-domain risk, coverage, false-accept, Brier, and AURC metrics
+
+An accepted model prediction still creates only a `PROPOSED` fact. The independent
+promotion rules in this document have not changed. See
+`sparse_grounding_self_learning.md` for the API, benchmark, and current limits.

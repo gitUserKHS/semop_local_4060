@@ -474,6 +474,10 @@ class SceneThresholdAdapter:
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
                 confidence=fact.confidence,
+                sensor_features=(
+                    ("parser.controlled_match", 1.0),
+                    ("composition.rule_fact", 1.0),
+                ),
             )
             grounding_trace = grounding_trace.with_record(record)
             if record.fact is not None:

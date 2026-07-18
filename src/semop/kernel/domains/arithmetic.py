@@ -180,6 +180,10 @@ class ArithmeticExpressionAdapter:
                 rationale="exact arithmetic parser verified the expression node",
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
+                sensor_features=(
+                    ("parser.exact", 1.0),
+                    ("expression.atom_arity", len(atom.arguments) / 4.0),
+                ),
             )
             grounding_records.append(record)
             if record.fact is not None:

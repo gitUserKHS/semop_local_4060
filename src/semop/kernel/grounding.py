@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from hashlib import sha256
 import json
+import math
 
 from .model import (
     AssertionStatus,
@@ -19,6 +20,18 @@ from .model import (
 
 class GroundingBoundaryError(KernelError):
     """Raised when an input producer crosses the typed grounding boundary."""
+
+
+_RESERVED_SENSOR_FEATURE_FRAGMENTS = (
+    "accepted",
+    "authority",
+    "decision",
+    "ground_truth",
+    "label",
+    "rejected",
+    "verdict",
+    "verified",
+)
 
 
 class GroundingDisposition(str, Enum):
@@ -74,6 +87,7 @@ class GroundingCandidate:
     input_digest: str = ""
     assertion_status: AssertionStatus = AssertionStatus.INFERRED
     confidence: float = 1.0
+    sensor_features: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip():
@@ -88,8 +102,27 @@ class GroundingCandidate:
             raise ValueError("grounding candidate producer id cannot be empty")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("grounding candidate confidence must be between 0 and 1")
+        features = tuple(
+            sorted((str(name).strip(), float(value)) for name, value in self.sensor_features)
+        )
+        feature_names = [name for name, _value in features]
+        if any(not name for name in feature_names):
+            raise ValueError("grounding sensor feature names cannot be empty")
+        if len(feature_names) != len(set(feature_names)):
+            raise ValueError("grounding sensor feature names must be unique")
+        if any(
+            fragment in name.lower()
+            for name in feature_names
+            for fragment in _RESERVED_SENSOR_FEATURE_FRAGMENTS
+        ):
+            raise GroundingBoundaryError(
+                "grounding sensor features must not encode labels or verifier decisions"
+            )
+        if any(not math.isfinite(value) for _name, value in features):
+            raise ValueError("grounding sensor features must be finite")
         object.__setattr__(self, "domain", self.domain.strip().lower())
         object.__setattr__(self, "evidence", tuple(self.evidence))
+        object.__setattr__(self, "sensor_features", features)
         object.__setattr__(
             self,
             "assertion_status",
@@ -112,7 +145,27 @@ class GroundingCandidate:
             "input_digest": self.input_digest,
             "assertion_status": self.assertion_status.value,
             "confidence": self.confidence,
+            "sensor_features": [list(item) for item in self.sensor_features],
         }
+
+    @property
+    def candidate_digest(self) -> str:
+        semantic_payload = {
+            "domain": self.domain,
+            "statement": self.statement,
+            "atom_key": self.atom.canonical_key(),
+            "input_digest": self.input_digest,
+            "assertion_status": self.assertion_status.value,
+            "sensor_features": self.sensor_features,
+        }
+        return grounding_payload_digest(
+            json.dumps(
+                semantic_payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -291,6 +344,14 @@ class GroundingLearningExample:
     def __post_init__(self) -> None:
         object.__setattr__(self, "label", GroundingLabel(self.label))
         object.__setattr__(self, "authority", GroundingAuthority(self.authority))
+        if self.authority not in {
+            GroundingAuthority.DETERMINISTIC_ADAPTER,
+            GroundingAuthority.EXTERNAL_VERIFIER,
+            GroundingAuthority.HUMAN_REVIEW,
+        }:
+            raise GroundingBoundaryError(
+                "grounding learning labels require an independent verifier or human review"
+            )
         _validate_digest(self.record_digest, "grounding learning record")
         if not 0.0 < self.weight <= 1.0:
             raise ValueError("grounding learning weight must be in (0, 1]")
@@ -301,6 +362,7 @@ class GroundingLearningExample:
             "label": self.label.value,
             "authority": self.authority.value,
             "record_digest": self.record_digest,
+            "candidate_digest": self.candidate.candidate_digest,
             "weight": self.weight,
         }
 
@@ -457,7 +519,11 @@ def make_grounding_candidate(
     assertion_status: AssertionStatus = AssertionStatus.INFERRED,
     confidence: float = 1.0,
     candidate_id: str = "",
+    sensor_features: Iterable[tuple[str, float]] = (),
 ) -> GroundingCandidate:
+    normalized_features = tuple(
+        sorted((str(name).strip(), float(value)) for name, value in sensor_features)
+    )
     digest = input_digest or grounding_payload_digest(statement)
     identity = {
         "domain": domain.strip().lower(),
@@ -466,6 +532,7 @@ def make_grounding_candidate(
         "input_digest": digest,
         "atom": atom.canonical_key(),
         "statement": statement,
+        "sensor_features": normalized_features,
     }
     stable_id = candidate_id or (
         "grounding:"
@@ -489,6 +556,7 @@ def make_grounding_candidate(
         digest,
         assertion_status,
         confidence,
+        normalized_features,
     )
 
 
@@ -534,6 +602,7 @@ def make_grounding_record(
     evidence_refs: Iterable[str] = (),
     confidence: float = 1.0,
     verifier_id: str = "",
+    sensor_features: Iterable[tuple[str, float]] = (),
 ) -> GroundingRecord:
     candidate = make_grounding_candidate(
         domain=domain,
@@ -545,6 +614,7 @@ def make_grounding_record(
         evidence=evidence,
         assertion_status=assertion_status,
         confidence=confidence,
+        sensor_features=sensor_features,
     )
     decision = GroundingDecision(
         disposition,

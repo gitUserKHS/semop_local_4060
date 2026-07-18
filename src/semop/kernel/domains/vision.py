@@ -221,6 +221,10 @@ class VisionWorldAdapter:
                 ),
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
+                sensor_features=(
+                    ("input.imported", 1.0),
+                    ("input.attribute_count", min(len(attributes), 8) / 8.0),
+                ),
             )
             grounding_records.append(record)
             if record.fact is not None:
@@ -273,6 +277,11 @@ class VisionWorldAdapter:
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
                 confidence=confidence,
+                sensor_features=(
+                    ("detector.confidence", confidence),
+                    ("relation.binary", 1.0),
+                    ("relation.attribute_count", min(len(attributes), 8) / 8.0),
+                ),
             )
             grounding_records.append(record)
             if record.fact is not None:

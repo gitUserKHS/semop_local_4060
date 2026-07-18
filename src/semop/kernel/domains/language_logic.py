@@ -394,6 +394,11 @@ class LanguageLogicAdapter:
                 rationale="controlled logic parser matched an explicit assertion",
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
+                sensor_features=(
+                    ("parser.controlled_match", 1.0),
+                    ("claim.arity", len(claim.arguments) / 3.0),
+                    ("claim.is_contradicted", float(status is FactStatus.CONTRADICTED)),
+                ),
             )
             grounding_records.append(record)
             if record.fact is not None:

@@ -635,6 +635,11 @@ def _extend_raster_reasoning(
             rationale="deterministic raster measurement verified the typed fact",
             input_digest=analysis.image_digest,
             evidence=(f"image:{analysis.image_digest}",),
+            sensor_features=(
+                ("sensor.deterministic", 1.0),
+                ("measurement.direct", 1.0),
+                ("measurement.atom_arity", len(atom.arguments) / 4.0),
+            ),
         )
         grounding_records.append(record)
         if record.fact is not None:

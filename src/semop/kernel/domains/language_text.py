@@ -531,6 +531,12 @@ class LanguageTextAdapter:
                 input_digest=input_digest,
                 evidence=(f"input:{input_digest}",),
                 confidence=claim.confidence,
+                sensor_features=(
+                    ("parser.controlled_match", float(claim.verified)),
+                    ("parser.heuristic_match", float(not claim.verified)),
+                    ("claim.arity", len(claim.arguments) / 3.0),
+                    ("claim.confidence", claim.confidence),
+                ),
             )
             grounding_records.append(record)
             if record.fact is not None:

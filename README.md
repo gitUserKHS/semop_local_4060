@@ -16,6 +16,7 @@ The central hypothesis is combinatorial: a small shared controller should learn 
 The resource doctrine is CPU-first and sample-efficient: the symbolic core should run offline on an ordinary PC, while small local models and RTX 4060-class GPUs remain optional parsing, perception, and training accelerators.
 A verifier-first typed operator core now runs beside the legacy runtime. It turns domain inputs into immutable typed facts, uses goal-relevant monotonic agenda chaining instead of enumerating fact subsets, slices the first supporting operator DAG, and replays every successful proof before returning it. The pipeline defaults to `shadow`: legacy output remains user-facing while typed proof, timing, allocation, and expansion measurements are written to the audit trace.
 A shared typed grounding boundary now records language, math, and vision inputs as candidate, authority decision, fact, and immutable trace. Neural and heuristic producers can only propose; deterministic verifiers and explicit human reviews create the accept/reject examples used by later grounding-policy learning.
+A dependency-free sparse grounding head now learns `ACCEPT/REJECT/ABSTAIN` from those independently verified examples. It shares typed and sensor-contract features across language, math, and vision, forces abstention on unseen sensor contracts, replays old labels during online updates, and promotes a new generation only after an untouched validation gate. Even an accepted prediction remains `PROPOSED` until a separate verifier or human promotes it.
 A dependency-free raster adapter now adds a narrow real-pixel path: it detects small color components, verifies exact bounding-box or touching relations, keeps centroid-only guesses as `proposed`, and sends the resulting facts through the same operator proof replay.
 A new hidden-premise layer now sits between surface parsing and later reasoning so the system can recover implicit goals and prerequisites before giving advice.
 The current refactor direction is premise-first: candidate retrieval, premise proposal, and premise validation now precede later answer selection, CP code generation, and cross-modal alignment.
@@ -41,6 +42,7 @@ python tools/eval/evaluate_hierarchical_self_learning.py
 python tools/eval/evaluate_raw_grounded_self_learning.py
 python tools/eval/evaluate_semantic_benchmark.py
 python tools/eval/evaluate_semantic_benchmark.py --gate-semantic-correctness 1.0 --gate-min-gold 3 --gate-min-gold-per-domain 1 --gate-domains language,math,vision
+python tools/eval/evaluate_grounding_self_learning.py --checkpoint-root artifacts/grounding_self_learning --output artifacts/grounding_self_learning/report.json
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db stats
 python tools/eval/review_typed_experience.py --db artifacts/experience/typed-experience.db list --status pending
 python tools/eval/run_lodo_controller_experiment.py --output-dir artifacts/lodo_debug
@@ -121,10 +123,12 @@ python tools/train/train_tiny_controller.py --output artifacts/tiny_debug.npz --
 - `src/semop/kernel/experience_queue.py`: append-audited LMV execution queue, digest-bound reviews, and deterministic four-way partitioning
 - `src/semop/kernel/experience_collection.py`: production failure collection, reviewed-corpus grounding, leakage audit, and joint rule-learning bridge
 - `src/semop/kernel/grounding.py`: shared LMV candidate authority, proposal promotion, hard-negative lineage, and verified learning examples
+- `src/semop/tiny_controller/grounding_*.py`: anonymized LMV features, sparse selective policy, verified replay, online promotion, and hash-checked artifacts
 - `src/semop/tiny_controller/`: 5.84M-parameter default policy architecture; NumPy inference and isolated PyTorch training
 - `docs/typed_operator_core.md`: execution contract and extension workflow
 - `docs/trust_provenance_and_metrics.md`: assertion/evidence/logical provenance, conditional proofs, honest metric names, and CI gates
 - `docs/typed_grounding_boundary.md`: shared language/math/vision grounding trace, authority rules, review promotion, and research basis
+- `docs/sparse_grounding_self_learning.md`: shared accept/reject/abstain policy, continual replay, risk-coverage gates, evaluation, and honest limits
 - `docs/lmv_semantic_benchmark.md`: digest-bound review workflow and authority-separated three-domain semantic evaluation
 - `docs/language_math_vision_typed_runtime.md`: direct three-domain API, trust boundary, and current limits
 - `docs/language_text_adapter.md`: high-precision Korean/English claims, proposed fallback, and contradiction handling
@@ -161,8 +165,9 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
-online reviewed-learning and shared grounding milestones, local validation now passes
-263 typed-operator tests plus 20 subtests and all 630 repository tests; `shadow`
+online reviewed-learning and sparse grounding self-learning milestones, local
+validation now passes 277 typed-operator tests plus 20 subtests and all 644
+repository tests; `shadow`
 remains the default.
 
 - `app.py`

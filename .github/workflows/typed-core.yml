@@ -53,6 +53,8 @@ jobs:
           tests/test_typed_operator_rule_discovery.py
           tests/test_typed_operator_judging.py
           tests/test_typed_operator_grounding.py
+          tests/test_typed_operator_grounding_learning.py
+          tests/test_typed_operator_grounding_eval.py
           tests/test_typed_operator_trust.py
           -q
 

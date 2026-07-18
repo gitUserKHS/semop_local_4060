@@ -343,6 +343,11 @@ class LinearEquationAdapter:
                     rationale="exact linear parser verified the equation structure",
                     input_digest=input_digest,
                     evidence=(f"input:{input_digest}",),
+                    sensor_features=(
+                        ("parser.exact", 1.0),
+                        ("equation.linear_form", 1.0),
+                        ("expression.atom_arity", len(atom.arguments) / 4.0),
+                    ),
                 )
                 for atom in (equation_fact, left_fact, right_fact)
             )

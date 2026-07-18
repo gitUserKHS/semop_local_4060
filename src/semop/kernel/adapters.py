@@ -245,6 +245,11 @@ class StructuredMeaningGraphAdapter:
                     input_digest=input_digest,
                     evidence=(f"input:{input_digest}",),
                     confidence=fact.confidence,
+                    sensor_features=(
+                        ("graph.explicit_relation", float(fact.status is FactStatus.OBSERVED)),
+                        ("graph.parser_proposal", float(fact.status is FactStatus.PROPOSED)),
+                        ("graph.confidence", fact.confidence),
+                    ),
                 )
                 for index, fact in enumerate(facts)
             )
