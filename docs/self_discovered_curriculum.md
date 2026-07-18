@@ -10,6 +10,11 @@ counterfactual을 **스스로 제안하고 검증해** curriculum을 확장한�
 task를 제안할 수 있지만, 채택 여부는 항상 기존 registry의 operator 실행과 proof
 replay 결과로 결정된다.
 
+이 문서의 discovery 대상은 **새 학습 task와 counterfactual**이다. 실행 가능한 새
+Horn 규칙을 귀납하는 별도 경계는 `verified_rule_discovery.md`를 참고한다. 두 기능은
+후보를 제안할 수 있을 뿐이며, 어느 쪽도 typed executor와 proof replay를 우회하지
+않는다.
+
 ```mermaid
 flowchart LR
     A["검증된 언어·수학·비전 seed"] --> B["불확실성·난이도 기반 seed 선택"]
@@ -161,9 +166,11 @@ result = SelfDiscoveringLearningLoop().run(
 
 - 자유 자연어에서 새로운 predicate schema나 문법을 발명
 - 자연 이미지·영상에서 알려지지 않은 visual concept를 자동 정의
-- 새로운 primitive operator나 수학 정리를 직접 합성해 registry에 등록
+- 새로운 predicate, guard, perception primitive 또는 비단조 상태 전이를 발명
 - 실제 사용자 실패 로그를 지속적으로 수집하는 온라인 학습
 - 여러 generation에 걸친 task mutation tree와 장기 망각 복구
 
-다음 단계의 자가 학습은 실제 입력 실패를 typed failure record로 축적하고, 검증된 macro
-operator 후보와 새로운 perception schema까지 같은 승격 경계에 넣는 것이다.
+flat single-effect Horn 규칙은 이제 별도의 사람 검토 validation과 untouched held-out
+반증을 통과하면 hash-checked library 후보가 될 수 있다. 다음 단계의 자가 학습은 실제
+입력 실패를 typed failure record로 축적하고, 이 rule library와 검증된 macro operator,
+새로운 perception schema를 장기 rollback 가능한 승격 경계에 연결하는 것이다.
