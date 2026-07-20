@@ -65,6 +65,26 @@ class LanguageTextParserTests(unittest.TestCase):
         self.assertIn(("SATISFIED", ("테스트_통과",)), claims)
         self.assertNotIn(("REQUIRES", ("배포", "테스트_통")), claims)
 
+    def test_korean_without_prohibition_extracts_only_explicit_requirements(self) -> None:
+        parsed = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다.",
+                use_legacy_heuristics=False,
+            )
+        )
+        claims = {(claim.relation, claim.arguments) for claim in parsed.claims}
+
+        self.assertFalse(parsed.unparsed_statements)
+        self.assertIn(("GOAL", ("랙_적재",)), claims)
+        self.assertIn(("REQUIRES", ("랙_적재", "관리자_승인")), claims)
+        self.assertIn(("REQUIRES", ("랙_적재", "안전_확인")), claims)
+        self.assertFalse(
+            any(
+                relation in {"SATISFIED", "BLOCKED"}
+                for relation, _arguments in claims
+            )
+        )
+
     def test_ambiguous_text_does_not_fabricate_observed_claims(self) -> None:
         parsed = LanguageTextParser().parse(
             LanguageTextProblem(
@@ -99,6 +119,33 @@ class LanguageTextReasoningTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(len(result.proof), 3)
         self.assertEqual(str(instance.goals[0].atom), "READY(배포)")
+
+    def test_korean_without_prohibition_does_not_invent_completion(self) -> None:
+        instance, result = _solve(
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다."
+        )
+
+        self.assertFalse(result.success)
+        self.assertFalse(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(랙_적재)")
+        self.assertEqual(instance.metadata["explicit_claim_count"], 3)
+        self.assertFalse(
+            any(
+                fact.atom.predicate.name in {"SATISFIED", "BLOCKED"}
+                for fact in instance.state.facts
+            )
+        )
+
+    def test_korean_without_prohibition_proves_ready_after_explicit_completion(self) -> None:
+        instance, result = _solve(
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+            "관리자 승인이 충족되었다. 안전 확인이 충족되었다."
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(랙_적재)")
+        self.assertEqual(len(result.proof), 3)
 
     def test_negated_requirement_proves_not_ready(self) -> None:
         instance, result = _solve(

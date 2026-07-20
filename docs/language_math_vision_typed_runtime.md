@@ -153,8 +153,33 @@ goal-directed baseline의 작은 문제
 p95는 약 0.006초, 큰 문제 p95는 약 0.016초였다. 이 수치는 현재 개발 PC의 회귀
 스냅샷이며 하드웨어 독립 성능 보장은 아니다.
 
+2026-07-20의 현재 전체 회귀는 `703 passed, 34 subtests passed`였고 295.69초가
+걸렸다. 이 수치는 위의 과거 단계별 스냅샷을 대체하지 않고, 현재 branch head의
+통합 상태만 기록한다.
+
 다음 실험은 실제 사람 검토 trace로 `0/5/20/100` shot 곡선과 자연 분포 이동을
 측정해야 한다.
+
+## 연구 선택 기준
+
+현재 구현은 논문 구조를 통째로 복제하지 않고, 일반 PC와 적은 데이터라는 제약에 맞는
+부분만 가져온다.
+
+- 언어: [PICARD](https://aclanthology.org/2021.emnlp-main.779/)와
+  [Grammar-Constrained Decoding](https://aclanthology.org/2023.emnlp-main.674/)처럼
+  자유 생성 뒤의 낙관적 해석보다 허용된 typed 구조를 먼저 제한한다. 현재는 작은
+  결정적 parser가 이 역할을 하며, 향후 모델 출력도 candidate 권한만 갖는다.
+- 수학·공유 제어기: [A Generalist Neural Algorithmic Learner](https://proceedings.mlr.press/v198/ibarz22a.html)는
+  여러 알고리즘이 processor를 공유할 가능성을 보여 주지만, 입력 의미와 정답 검증을
+  대신해 주지는 않는다. SemOp은 공유 controller를 action 순위에만 쓰고 exact executor를
+  신뢰 경계 안에 둔다.
+- 비전: [Slot Attention](https://proceedings.neurips.cc/paper/2020/hash/8511df98c02ab60aea1b2356c013bc0f-Abstract.html)의
+  object-centric 표현은 장기 frontend 후보지만, 자연 이미지 grounding 정확도를 아직
+  입증하지 않았으므로 v1은 deterministic raster observation만 `observed`로 승격한다.
+
+이 구분은 세 영역을 이미 정복했다는 주장이 아니다. 지금 달성한 공통 기반은
+`candidate -> typed fact -> operator program -> replay`이고, 앞으로 학습해야 할 부분은
+주로 candidate 생성과 action 순위다.
 
 학습 smoke test도 같은 세 영역을 기본으로 사용한다.
 

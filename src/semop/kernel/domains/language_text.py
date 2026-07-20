@@ -349,6 +349,20 @@ class LanguageTextParser:
             )
             return parsed, goal
 
+        korean_without = re.fullmatch(
+            r"(?P<premises>.+?)\s+없이\s+"
+            r"(?P<goal>.+?)(?:을|를)?\s+진행하지\s*않는다",
+            statement,
+        )
+        if korean_without:
+            goal = _normalize_slot(korean_without.group("goal"))
+            parsed.append(("GOAL", (goal,)))
+            parsed.extend(
+                ("REQUIRES", (goal, premise))
+                for premise in _split_items(korean_without.group("premises"))
+            )
+            return parsed, goal
+
         english_negative = re.fullmatch(
             r"(?P<premise>.+?)\s+(?:is|are)\s+"
             r"(?:not\s+satisfied|not\s+met|missing|blocked|unavailable|absent)",

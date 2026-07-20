@@ -15,6 +15,8 @@ if str(SRC) not in sys.path:
 from semop.kernel import (
     FactStatus,
     Goal,
+    GroundingAuthority,
+    GroundingDisposition,
     OperatorKernel,
     RasterImage,
     RasterVisionAdapter,
@@ -124,6 +126,19 @@ class RasterVisionReasoningTests(unittest.TestCase):
         ]
         self.assertEqual(len(left_of), 1)
         self.assertEqual(left_of[0].status, FactStatus.PROPOSED)
+        proposal = next(
+            record
+            for record in instance.grounding_trace.records
+            if record.candidate.atom == left_of[0].atom
+        )
+        self.assertEqual(
+            proposal.decision.disposition,
+            GroundingDisposition.PROPOSED,
+        )
+        self.assertEqual(
+            proposal.decision.authority,
+            GroundingAuthority.HEURISTIC_PROPOSAL,
+        )
         self.assertFalse(result.success)
 
     def test_touching_is_verified_and_symmetry_aware(self) -> None:

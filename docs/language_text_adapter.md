@@ -42,7 +42,13 @@ Can we deploy?
 배포하려면 테스트 통과와 승인이 필요하다.
 테스트 통과가 충족되었다.
 승인이 충족되었다.
+
+관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다.
 ```
+
+마지막 문형은 저장소의 실제 고객 SOP 예제에서 확인된 표현만 좁게 지원한다. 두 조건을
+`REQUIRES(랙_적재, ...)`로 읽지만, 승인이나 안전 확인이 이미 끝났다고 추측하지는
+않는다. 따라서 별도 충족 문장이 없으면 `READY(랙_적재)`는 미증명으로 남는다.
 
 문장 표면형은 소문자화하고 공백을 `_`로 정규화한다. 한국어 `와/과`는 뒤에 공백이
 있는 목록 접속 조사일 때만 분리하므로 `통과` 같은 단어 내부를 자르지 않는다.
@@ -147,3 +153,16 @@ fact 모두 `contradicted`가 되어 proof 전제에서 제외되고, 부정에�
 
 현재 회귀 테스트는 라벨, 한국어·영어 문장, 부정, 미충족 전제, 모순, 애매한 문장,
 휴리스틱 격리, 기존 graph projection을 포함한다.
+
+## 연구 연결
+
+이 MVP는 자유 형식 생성 결과를 곧바로 사실로 채택하는 대신, 제한 문법이 허용하는
+typed 출력만 만들고 나머지는 `proposed`로 격리한다. 이는 PICARD가 생성 중 허용되지
+않는 구조를 incremental parser로 거르는 접근과, grammar-constrained decoding이 적은
+데이터에서도 출력 구조를 제한하는 접근을 작은 규칙 기반 경계로 축소한 것이다.
+
+- [PICARD: Parsing Incrementally for Constrained Auto-Regressive Decoding from Language Models](https://aclanthology.org/2021.emnlp-main.779/)
+- [Grammar-Constrained Decoding for Structured NLP Tasks without Finetuning](https://aclanthology.org/2023.emnlp-main.674/)
+
+향후 작은 언어 모델을 붙이더라도 모델은 이 문법의 candidate를 제안하는 역할만 맡고,
+typed parser와 verifier가 허용하지 않은 사실은 proof 상태로 승격하지 않는다.
