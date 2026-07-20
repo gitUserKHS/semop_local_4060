@@ -14,6 +14,10 @@ python -m semop.beginner_web
 
 화면에서 `언어 조건`, `수학식`, `색상 비전` 중 하나를 고르고 예제 버튼을 누른 뒤
 `검증하기`를 누르면 된다. 외부 런타임 라이브러리나 LLM API는 필요하지 않다.
+미증명·파싱 실패는 기본적으로 로컬 검토 큐에만 저장된다. 화면에서 사용자가 정확한
+입력과 기대 결과를 직접 승인한 사례만 검증 학습에 들어가며, 새 typed 규칙은 네 분할
+회귀 gate와 proof replay를 모두 통과한 경우에만 해시 확인 가능한 파일로 활성화된다.
+`--no-experience`와 `--no-learned-rules`로 각각 수집과 규칙 승격을 끌 수 있다.
 
 현재 쉬운 화면의 범위는 통제된 목표·필요조건 문장, 정확한 계산식·일차방정식,
 작은 색상 격자다. 일반 자유 대화나 자연 사진 이해로 오해하지 않도록 각 결과에
@@ -207,7 +211,7 @@ grounding boundary and reduces untouched raw math and pixel expansions from 6 to
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
 online reviewed-learning and sparse grounding self-learning milestones, local
-`python -m pytest -q` validation now passes 705 tests plus 34 subtests;
+`python -m pytest -q` validation now passes 709 tests plus 34 subtests;
 `shadow` remains the default.
 
 - `app.py`

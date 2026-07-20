@@ -15,6 +15,7 @@ from .beginner import (
     BeginnerReasoner,
     vision_presets_for_ui,
 )
+from .beginner_learning import load_beginner_rule_library
 from .kernel import TypedExperienceStore
 
 
@@ -54,24 +55,51 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
                     "experience_collection": (
                         self.server.service.experience_enabled
                     ),
+                    "active_learned_rules": len(
+                        self.server.service.active_rule_library.records
+                    ),
                 },
             )
+            return
+        if path == "/api/experience":
+            try:
+                snapshot = self.server.service.experience_snapshot()
+            except Exception as exc:
+                self.log_error(
+                    "experience snapshot failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"ok": False, "error": "로컬 학습 후보 큐를 읽지 못했어."},
+                )
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True, **snapshot})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "페이지를 찾지 못했어."})
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path != "/api/solve":
+        if path not in {
+            "/api/solve",
+            "/api/experience/review",
+            "/api/experience/review-example",
+            "/api/experience/learn",
+        }:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "요청 주소가 달라."})
             return
 
         try:
             payload = self._read_json()
-            domain = payload.get("domain", "")
-            values = payload.get("values", {})
-            if not isinstance(values, Mapping):
-                raise BeginnerInputError("입력 형식이 올바르지 않아. 화면을 새로고침해 줘.")
-            result = self.server.service.solve(str(domain), values)
+            if path == "/api/solve":
+                response = self._solve_payload(payload)
+            elif path == "/api/experience/review-example":
+                response = self._review_example_payload(payload)
+            elif path == "/api/experience/learn":
+                response = self._learn_payload(payload)
+            else:
+                response = self._review_payload(payload)
         except BeginnerInputError as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
@@ -89,7 +117,46 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        self._send_json(HTTPStatus.OK, {"ok": True, "result": result.to_dict()})
+        self._send_json(HTTPStatus.OK, {"ok": True, **response})
+
+    def _solve_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        domain = payload.get("domain", "")
+        values = payload.get("values", {})
+        if not isinstance(values, Mapping):
+            raise BeginnerInputError("입력 형식이 올바르지 않아. 화면을 새로고침해 줘.")
+        result = self.server.service.solve(str(domain), values)
+        return {"result": result.to_dict()}
+
+    def _review_example_payload(
+        self,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        values = payload.get("values", {})
+        if not isinstance(values, Mapping):
+            raise BeginnerInputError("검토할 입력 형식이 올바르지 않아.")
+        return self.server.service.review_example(
+            str(payload.get("domain", "")),
+            values,
+            expected_solved=payload.get("expected_solved"),
+            attest_human_review=payload.get("attest_human_review"),
+            note=payload.get("note", ""),
+        )
+
+    def _review_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self.server.service.review_experience(
+            payload.get("request_digest", ""),
+            expected_solved=payload.get("expected_solved"),
+            include_for_learning=payload.get("include_for_learning", True),
+            attest_human_review=payload.get("attest_human_review"),
+            note=payload.get("note", ""),
+        )
+
+    def _learn_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if payload.get("confirm_learning") is not True:
+            raise BeginnerInputError(
+                "승인된 사례로 검증 학습을 실행한다는 확인이 필요해."
+            )
+        return {"learning": self.server.service.learn_from_reviewed_experience()}
 
     def _read_json(self) -> dict[str, Any]:
         raw_length = self.headers.get("Content-Length", "0")
@@ -149,6 +216,9 @@ def render_home_page(*, experience_enabled: bool = False) -> str:
     return _PAGE.replace("__VISION_PRESETS__", presets).replace(
         "__EXPERIENCE_NOTICE__",
         experience_notice,
+    ).replace(
+        "__EXPERIENCE_ENABLED__",
+        "true" if experience_enabled else "false",
     )
 
 
@@ -206,6 +276,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="로컬 학습 후보 수집을 끕니다.",
     )
+    parser.add_argument(
+        "--rules-artifact",
+        type=Path,
+        default=Path("artifacts/rules/beginner-active-rules.json"),
+        help=(
+            "검증을 통과한 학습 규칙 파일입니다. "
+            "(기본: artifacts/rules/beginner-active-rules.json)"
+        ),
+    )
+    parser.add_argument(
+        "--no-learned-rules",
+        action="store_true",
+        help="저장된 학습 규칙의 로드와 새 규칙 승격을 끕니다.",
+    )
     return parser
 
 
@@ -217,7 +301,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.no_experience
             else TypedExperienceStore(args.experience_db)
         )
-        service = BeginnerReasoner(experience_store=experience_store)
+        loaded_rules = (
+            None
+            if args.no_learned_rules
+            else load_beginner_rule_library(args.rules_artifact)
+        )
+        service = BeginnerReasoner(
+            experience_store=experience_store,
+            active_rule_library=(
+                loaded_rules.library if loaded_rules is not None else None
+            ),
+            rules_artifact_path=(
+                None if args.no_learned_rules else args.rules_artifact
+            ),
+        )
         server = create_server(args.port, service=service)
     except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"SemOp을 시작하지 못했어: {exc}")
@@ -232,6 +329,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("저장된 후보는 사람 검토 전에는 학습에 반영되지 않아.")
     else:
         print("로컬 학습 후보 수집: 꺼짐")
+    if loaded_rules is None:
+        print("검증된 학습 규칙: 꺼짐")
+    else:
+        print(f"활성 학습 규칙: {len(loaded_rules.library.records)}개")
     print("끝낼 때는 이 창에서 Ctrl+C를 눌러 줘.")
     if not args.no_browser:
         threading.Timer(0.35, lambda: webbrowser.open(url)).start()
@@ -360,6 +461,27 @@ _PAGE = r'''<!doctype html>
     summary { cursor: pointer; font-weight: 800; }
     pre { overflow: auto; white-space: pre-wrap; padding: 14px; border-radius: 12px; background: #242334; color: #f7f4ff; line-height: 1.62; font-size: 13px; }
     .foot { margin-top: 18px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .review-actions, .experience {
+      margin-top: 18px; padding: 18px; border: 1px solid #d9c8f1;
+      border-radius: 16px; background: #faf7ff;
+    }
+    .review-actions h3, .experience h2 { margin: 0 0 7px; }
+    .review-actions p, .experience p { color: var(--muted); line-height: 1.6; }
+    .attest { display: flex; gap: 9px; align-items: flex-start; margin: 13px 0; font-weight: 700; }
+    .attest input { width: auto; margin-top: 4px; }
+    .review-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+    .review-buttons button, .experience-refresh {
+      padding: 10px 13px; border: 1px solid #cab4e7; border-radius: 11px;
+      color: var(--accent-dark); background: white; cursor: pointer; font-weight: 800;
+    }
+    .experience-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+    .experience-stats { margin: 12px 0; color: var(--muted); font-size: 14px; }
+    .queue-list { display: grid; gap: 12px; }
+    .queue-item { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: white; }
+    .queue-item strong { display: block; margin-bottom: 6px; }
+    .queue-meta { margin-bottom: 9px; color: var(--muted); font-size: 12px; }
+    .queue-item pre { max-height: 180px; margin: 10px 0; }
+    .review-status { min-height: 1.5em; margin: 9px 0 0; color: var(--accent-dark); font-weight: 800; }
     @media (max-width: 680px) {
       .shell { width: min(100% - 20px, 980px); padding-top: 24px; }
       .scope { grid-template-columns: 1fr; }
@@ -461,6 +583,16 @@ _PAGE = r'''<!doctype html>
         <ul id="result-input"></ul>
       </div>
       <div class="trust" id="result-trust"></div>
+      <div class="review-actions" id="result-review" hidden>
+        <h3>이 입력을 학습 후보로 검토하기</h3>
+        <p>현재 결과를 그대로 믿는 버튼이 아니야. 정확한 입력을 보고 앞으로 이 문제가 풀려야 하는지 직접 표시해 줘.</p>
+        <label class="attest"><input id="current-review-attest" type="checkbox">나는 위 입력과 기대 결과를 직접 확인했어.</label>
+        <div class="review-buttons">
+          <button type="button" data-review-current="true">이 문제는 풀려야 해</button>
+          <button type="button" data-review-current="false">이 문제는 풀리지 않아야 해</button>
+        </div>
+        <p class="review-status" id="current-review-status" aria-live="polite"></p>
+      </div>
       <details>
         <summary>검증 과정 보기</summary>
         <pre id="result-proof"></pre>
@@ -471,20 +603,44 @@ _PAGE = r'''<!doctype html>
       </details>
     </section>
 
+    <section class="experience" id="experience-panel" hidden>
+      <div class="experience-head">
+        <div>
+          <h2>로컬 학습 후보 검토</h2>
+          <p>미증명·파싱 실패처럼 자동으로 모인 입력을 확인해. 사람 승인 전에는 학습에 쓰이지 않아.</p>
+        </div>
+        <div class="review-buttons">
+          <button class="experience-refresh" id="experience-refresh" type="button">새로고침</button>
+          <button class="experience-refresh" id="experience-learn" type="button">검증 학습 시도</button>
+        </div>
+      </div>
+      <div class="experience-stats" id="experience-stats"></div>
+      <label class="attest"><input id="queue-review-attest" type="checkbox">아래에서 선택할 입력과 기대 결과를 직접 확인했어.</label>
+      <div class="queue-list" id="experience-list"></div>
+      <p class="review-status" id="queue-review-status" aria-live="polite"></p>
+      <p class="review-status" id="experience-learning-status" aria-live="polite"></p>
+    </section>
+
     <p class="foot">모든 처리는 이 PC의 로컬 서버에서 이뤄져. 이 화면은 범용 챗봇이 아니라 현재 검증 가능한 MVP 범위만 보여 줘.<br>__EXPERIENCE_NOTICE__</p>
   </main>
 
   <script>
     const visionPresets = __VISION_PRESETS__;
+    const experienceEnabled = __EXPERIENCE_ENABLED__;
     const panes = [...document.querySelectorAll('.pane')];
     const tabs = [...document.querySelectorAll('.tab')];
     const resultBox = document.getElementById('result');
     const visionSelect = document.getElementById('vision-preset');
+    const resultReview = document.getElementById('result-review');
+    const experiencePanel = document.getElementById('experience-panel');
+    let lastSubmission = null;
 
     function selectDomain(domain) {
       tabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.domain === domain)));
       panes.forEach(pane => pane.classList.toggle('active', pane.dataset.domain === domain));
       resultBox.hidden = true;
+      resultReview.hidden = true;
+      lastSubmission = null;
     }
 
     tabs.forEach(tab => tab.addEventListener('click', () => selectDomain(tab.dataset.domain)));
@@ -547,6 +703,8 @@ _PAGE = r'''<!doctype html>
     }
 
     function showError(message) {
+      lastSubmission = null;
+      resultReview.hidden = true;
       resultBox.hidden = false;
       resultBox.className = 'result fail';
       document.getElementById('result-status').textContent = '입력 확인 필요';
@@ -579,7 +737,156 @@ _PAGE = r'''<!doctype html>
       document.getElementById('result-trust').textContent = result.trust_notice;
       document.getElementById('result-proof').textContent = result.proof;
       document.getElementById('result-technical').textContent = JSON.stringify(result.technical, null, 2);
+      resultReview.hidden = !experienceEnabled || !lastSubmission;
+      document.getElementById('current-review-attest').checked = false;
+      document.getElementById('current-review-status').textContent = '';
       resultBox.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || '요청을 처리하지 못했어.');
+      return data;
+    }
+
+    async function reviewCurrent(expectedSolved) {
+      const status = document.getElementById('current-review-status');
+      if (!lastSubmission) return;
+      if (!document.getElementById('current-review-attest').checked) {
+        status.textContent = '먼저 입력과 기대 결과를 직접 확인했다는 칸을 체크해 줘.';
+        return;
+      }
+      status.textContent = '검토 내용을 로컬 큐에 기록하는 중...';
+      try {
+        const data = await postJson('/api/experience/review-example', {
+          ...lastSubmission,
+          expected_solved: expectedSolved,
+          attest_human_review: true
+        });
+        status.textContent = '사람 검토가 기록됐어. 아직 규칙이나 모델에는 반영되지 않았어.';
+        renderExperience(data.queue);
+      } catch (error) {
+        status.textContent = error.message || '검토 내용을 기록하지 못했어.';
+      }
+    }
+
+    document.querySelectorAll('[data-review-current]').forEach(button => {
+      button.addEventListener('click', () => reviewCurrent(button.dataset.reviewCurrent === 'true'));
+    });
+
+    function renderExperience(snapshot) {
+      if (!experienceEnabled || !snapshot) return;
+      experiencePanel.hidden = false;
+      const stats = snapshot.stats || {};
+      const learning = snapshot.learning || {};
+      const learnButton = document.getElementById('experience-learn');
+      learnButton.disabled = !learning.artifact_configured;
+      learnButton.title = learning.artifact_configured
+        ? `현재 활성 규칙 ${learning.active_rules || 0}개`
+        : '이 실행에서는 학습 규칙 승격이 꺼져 있어.';
+      document.getElementById('experience-stats').textContent =
+        `전체 ${stats.requests || 0}개 · 검토 대기 ${stats.pending || 0}개 · ` +
+        `충돌 ${stats.conflicted || 0}개 · 승인 ${stats.approved || 0}개`;
+      const list = document.getElementById('experience-list');
+      list.replaceChildren();
+      const reviewable = (snapshot.items || []).filter(item =>
+        item.status === 'pending' || item.status === 'conflicted'
+      );
+      if (!reviewable.length) {
+        const empty = document.createElement('p');
+        empty.textContent = '지금 검토할 후보가 없어.';
+        list.appendChild(empty);
+        return;
+      }
+      reviewable.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'queue-item';
+        const title = document.createElement('strong');
+        title.textContent = item.summary;
+        const meta = document.createElement('div');
+        meta.className = 'queue-meta';
+        meta.textContent = `${item.domain} · ${item.status} · ${item.triggers.join(', ')}`;
+        const raw = document.createElement('pre');
+        raw.textContent = JSON.stringify(item.payload, null, 2);
+        const buttons = document.createElement('div');
+        buttons.className = 'review-buttons';
+        [['풀려야 해', true], ['풀리지 않아야 해', false]].forEach(([label, expected]) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = label;
+          button.addEventListener('click', () => reviewQueued(item.request_digest, expected));
+          buttons.appendChild(button);
+        });
+        card.append(title, meta, raw, buttons);
+        list.appendChild(card);
+      });
+    }
+
+    async function refreshExperience() {
+      if (!experienceEnabled) return;
+      const status = document.getElementById('queue-review-status');
+      try {
+        const response = await fetch('/api/experience');
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || '큐를 읽지 못했어.');
+        renderExperience(data);
+        status.textContent = '';
+      } catch (error) {
+        status.textContent = error.message || '큐를 읽지 못했어.';
+      }
+    }
+
+    async function reviewQueued(requestDigest, expectedSolved) {
+      const status = document.getElementById('queue-review-status');
+      if (!document.getElementById('queue-review-attest').checked) {
+        status.textContent = '먼저 입력과 기대 결과를 직접 확인했다는 칸을 체크해 줘.';
+        return;
+      }
+      status.textContent = '검토 내용을 로컬 큐에 기록하는 중...';
+      try {
+        const data = await postJson('/api/experience/review', {
+          request_digest: requestDigest,
+          expected_solved: expectedSolved,
+          include_for_learning: true,
+          attest_human_review: true
+        });
+        document.getElementById('queue-review-attest').checked = false;
+        renderExperience(data.queue);
+        status.textContent = '사람 검토가 기록됐어. 실제 학습 승격은 별도 검증 뒤에만 가능해.';
+      } catch (error) {
+        status.textContent = error.message || '검토 내용을 기록하지 못했어.';
+      }
+    }
+
+    document.getElementById('experience-refresh').addEventListener('click', refreshExperience);
+    document.getElementById('experience-learn').addEventListener('click', async () => {
+      const status = document.getElementById('experience-learning-status');
+      const confirmed = window.confirm(
+        '사람이 승인한 사례만 사용해 규칙 후보를 만들고, 별도 검증을 통과할 때만 활성화할까?'
+      );
+      if (!confirmed) return;
+      status.textContent = '승인 사례를 네 분할로 검증하는 중...';
+      try {
+        const data = await postJson('/api/experience/learn', {confirm_learning: true});
+        const learning = data.learning;
+        if (learning.promoted) {
+          status.textContent = `검증을 통과한 규칙을 활성화했어. 현재 ${learning.active_rules}개야.`;
+        } else {
+          status.textContent = '새 규칙이 최종 검증을 통과하지 못해 기존 규칙을 그대로 유지했어.';
+        }
+        renderExperience(learning.queue);
+      } catch (error) {
+        status.textContent = error.message || '검증 학습을 실행하지 못했어.';
+      }
+    });
+    if (experienceEnabled) {
+      experiencePanel.hidden = false;
+      refreshExperience();
     }
 
     panes.forEach(form => form.addEventListener('submit', async event => {
@@ -590,13 +897,9 @@ _PAGE = r'''<!doctype html>
       button.disabled = true;
       button.textContent = '연산자를 조합하는 중...';
       try {
-        const response = await fetch('/api/solve', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({domain, values: payloadFor(domain)})
-        });
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || '요청을 처리하지 못했어.');
+        const values = payloadFor(domain);
+        const data = await postJson('/api/solve', {domain, values});
+        lastSubmission = {domain, values};
         showResult(data.result);
       } catch (error) {
         showError(error.message || '로컬 서버와 연결하지 못했어.');

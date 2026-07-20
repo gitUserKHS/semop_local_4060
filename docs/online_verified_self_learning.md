@@ -222,6 +222,22 @@ python tools/eval/review_typed_experience.py `
 7. candidate가 실패하면 rejection reason을 남기고 incumbent를 유지한다.
 8. artifact와 certificate digest를 배포 설정에 함께 고정한다.
 
+## 쉬운 시작 연결
+
+`semop-easy`는 같은 신뢰 경계를 초보자용 로컬 화면에 연결한다.
+
+1. 일반 실행은 주목할 실패와 grounding 불확실성만 SQLite 큐에 남긴다.
+2. 사용자는 현재 입력 또는 대기 큐의 raw payload를 보고 expected outcome을 고른다.
+3. 명시적 사람 확인이 없는 HTTP review 요청은 거절된다.
+4. `검증 학습 시도`는 승인 corpus를 위 네 split gate에 통과시킨다.
+5. 승격된 규칙만 artifact와 checkpoint manifest에 기록하고 즉시 runtime에 활성화한다.
+6. 다음 시작에서는 외부 artifact SHA-256, library SHA-256, 규칙 수를 모두 재검사한다.
+
+기본 파일은 `artifacts/experience/beginner-experience.db`,
+`artifacts/rules/beginner-active-rules.json`,
+`artifacts/rules/beginner-active-rules.checkpoint.json`이다. 이 경로는 background
+auto-training이 아니라 사용자가 직접 시작하는 reviewed learning이다.
+
 ## 현재 한계
 
 - online collector는 raw request와 논리 실행 결과를 모으지만 현실 세계 증거의 참을
@@ -250,6 +266,7 @@ python tools/eval/review_typed_experience.py `
 python -m pytest tests/test_typed_operator_experience_queue.py -q
 python -m pytest tests/test_typed_operator_experience_collection.py -q
 python -m pytest tests/test_typed_operator_rule_discovery.py -q
+python -m pytest tests/test_beginner_experience.py tests/test_beginner_learning.py -q
 python -m pytest tests -k typed_operator -q
 python -m pytest
 ```
@@ -265,3 +282,5 @@ python -m pytest
 - deterministic 네 단계 partition과 cross-role semantic leakage 차단
 - 검토된 runtime 실패에서 rule 발견, joint promotion, 새 심볼 전이
 - 승격된 library의 명시적 runtime activation과 proof replay
+- 초보자 HTTP의 사람 확인 강제, 정상 성공의 명시적 review capture
+- 규칙 checkpoint 재로드와 한 바이트 artifact 변조 거절

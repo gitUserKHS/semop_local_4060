@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .beginner_learning import run_beginner_reviewed_learning
 from .kernel import (
+    ExperienceQueueItem,
     LanguageTextProblem,
     RasterImage,
     RasterVisionProblem,
@@ -12,6 +16,7 @@ from .kernel import (
     TypedExperienceStore,
     UnifiedTypedReasoner,
     UnifiedTypedResult,
+    VerifiedRuleLibrary,
     VisionAreaGoal,
     VisionCountGoal,
     VisionPropertyGoal,
@@ -55,6 +60,7 @@ class BeginnerSolveResult:
     trust_notice: str
     diagnostics: tuple[str, ...]
     technical: Mapping[str, Any]
+    experience_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,7 +75,20 @@ class BeginnerSolveResult:
             "trust_notice": self.trust_notice,
             "diagnostics": list(self.diagnostics),
             "technical": dict(self.technical),
+            "experience_digest": self.experience_digest,
         }
+
+
+@dataclass(frozen=True)
+class _ExperienceProposal:
+    expected_solved: bool
+    rationale: str
+
+
+@dataclass(frozen=True)
+class _BeginnerCoreRun:
+    result: UnifiedTypedResult
+    request_digest: str = ""
 
 
 WHITE = (255, 255, 255)
@@ -152,9 +171,41 @@ class BeginnerReasoner:
         reasoner: UnifiedTypedReasoner | None = None,
         *,
         experience_store: TypedExperienceStore | None = None,
+        active_rule_library: VerifiedRuleLibrary | None = None,
+        rules_artifact_path: str | Path | None = None,
     ) -> None:
-        self.reasoner = reasoner or UnifiedTypedReasoner()
+        base_reasoner = reasoner or UnifiedTypedReasoner()
+        detected_libraries = tuple(
+            augmenter
+            for augmenter in base_reasoner.augmenters
+            if isinstance(augmenter, VerifiedRuleLibrary)
+        )
+        if len(detected_libraries) > 1:
+            raise ValueError("beginner runtime accepts one active rule library")
+        if (
+            active_rule_library is not None
+            and detected_libraries
+            and active_rule_library != detected_libraries[0]
+        ):
+            raise ValueError("beginner runtime active rule libraries disagree")
+        self.active_rule_library = (
+            active_rule_library
+            if active_rule_library is not None
+            else (detected_libraries[0] if detected_libraries else VerifiedRuleLibrary())
+        )
+        if (
+            self.active_rule_library.records
+            and self.active_rule_library not in base_reasoner.augmenters
+        ):
+            base_reasoner = UnifiedTypedReasoner(
+                catalog=base_reasoner.catalog,
+                augmenters=(*base_reasoner.augmenters, self.active_rule_library),
+            )
+        self.reasoner = base_reasoner
         self.experience_store = experience_store
+        self.rules_artifact_path = (
+            Path(rules_artifact_path) if rules_artifact_path is not None else None
+        )
         self.experience_collector = (
             TypedExperienceCollector(
                 experience_store,
@@ -169,6 +220,148 @@ class BeginnerReasoner:
         return self.experience_collector is not None
 
     def solve(self, domain: str, values: Mapping[str, Any]) -> BeginnerSolveResult:
+        return self._solve(domain, values)
+
+    def experience_snapshot(self, *, limit: int = 20) -> dict[str, Any]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise BeginnerInputError("학습 후보 표시 개수는 1부터 100 사이여야 해.")
+        if self.experience_store is None:
+            return {
+                "enabled": False,
+                "stats": None,
+                "reviewed_split_counts": {},
+                "learning": {
+                    "active_rules": len(self.active_rule_library.records),
+                    "artifact_configured": self.rules_artifact_path is not None,
+                },
+                "items": [],
+            }
+        stats = self.experience_store.stats()
+        corpus = self.experience_store.export_reviewed()
+        items = self.experience_store.list_items(limit=limit)
+        return {
+            "enabled": True,
+            "stats": {
+                "requests": stats.requests,
+                "observations": stats.observations,
+                "pending": stats.pending,
+                "conflicted": stats.conflicted,
+                "approved": stats.approved,
+                "rejected": stats.rejected,
+                "by_domain": dict(stats.by_domain),
+            },
+            "reviewed_split_counts": dict(corpus.role_counts),
+            "learning": {
+                "active_rules": len(self.active_rule_library.records),
+                "artifact_configured": self.rules_artifact_path is not None,
+            },
+            "items": [_experience_item_dict(item) for item in items],
+        }
+
+    def review_experience(
+        self,
+        request_digest: Any,
+        *,
+        expected_solved: Any,
+        include_for_learning: Any = True,
+        attest_human_review: Any,
+        note: Any = "",
+    ) -> dict[str, Any]:
+        self._require_experience_store()
+        expected = _require_bool(expected_solved, "기대 결과")
+        include = _require_bool(include_for_learning, "학습 사용 여부")
+        _require_human_attestation(attest_human_review)
+        digest = _single_text(request_digest, "학습 후보 ID", maximum=64).lower()
+        note_text = _optional_text(note, "검토 메모", maximum=500)
+        assert self.experience_store is not None
+        try:
+            item = self.experience_store.get_item(digest)
+            record = self.experience_store.review(
+                digest,
+                expected_solved=expected,
+                phenomenon=_review_phenomenon(item.domain, item.triggers),
+                rationale=note_text or _default_review_rationale(expected),
+                reviewer="human:local-beginner-user",
+                decision="approved" if include else "rejected",
+                notes="explicit_local_human_attestation",
+                tags=("beginner_ui", item.domain),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BeginnerInputError(f"학습 후보를 검토하지 못했어: {exc}") from exc
+        return {
+            "review": record.to_dict(),
+            "queue": self.experience_snapshot(),
+        }
+
+    def review_example(
+        self,
+        domain: str,
+        values: Mapping[str, Any],
+        *,
+        expected_solved: Any,
+        attest_human_review: Any,
+        note: Any = "",
+    ) -> dict[str, Any]:
+        self._require_experience_store()
+        expected = _require_bool(expected_solved, "기대 결과")
+        _require_human_attestation(attest_human_review)
+        note_text = _optional_text(note, "검토 메모", maximum=500)
+        rationale = note_text or _default_review_rationale(expected)
+        result = self._solve(
+            domain,
+            values,
+            proposal=_ExperienceProposal(expected, rationale),
+        )
+        if not result.experience_digest:
+            raise BeginnerInputError("학습 후보 ID를 만들지 못했어.")
+        reviewed = self.review_experience(
+            result.experience_digest,
+            expected_solved=expected,
+            include_for_learning=True,
+            attest_human_review=True,
+            note=rationale,
+        )
+        return {"result": result.to_dict(), **reviewed}
+
+    def learn_from_reviewed_experience(self) -> dict[str, Any]:
+        self._require_experience_store()
+        if self.rules_artifact_path is None:
+            raise BeginnerInputError("검증된 규칙을 저장할 파일이 설정되지 않았어.")
+        assert self.experience_store is not None
+        try:
+            run = run_beginner_reviewed_learning(
+                self.experience_store,
+                self.reasoner,
+                self.rules_artifact_path,
+                incumbent_library=self.active_rule_library,
+            )
+        except (TypeError, ValueError) as exc:
+            raise BeginnerInputError(
+                f"아직 안전한 규칙 학습을 시작할 준비가 안 됐어: {exc}"
+            ) from exc
+        learning = run.result.learning
+        if run.promoted:
+            self._activate_rule_library(learning.active_library)
+        return {
+            "promoted": run.promoted,
+            "reviewed_records": run.reviewed_records,
+            "active_rules": len(self.active_rule_library.records),
+            "rejection_reasons": list(learning.rejection_reasons),
+            "improved_domains": list(learning.improved_domains),
+            "checkpoint": (
+                run.checkpoint.to_dict() if run.checkpoint is not None else None
+            ),
+            "evaluation": learning.to_dict(),
+            "queue": self.experience_snapshot(),
+        }
+
+    def _solve(
+        self,
+        domain: str,
+        values: Mapping[str, Any],
+        *,
+        proposal: _ExperienceProposal | None = None,
+    ) -> BeginnerSolveResult:
         normalized = str(domain).strip().lower()
         if normalized == "language":
             return self.solve_language(
@@ -176,11 +369,15 @@ class BeginnerReasoner:
                 required=values.get("required", ""),
                 satisfied=values.get("satisfied", ""),
                 blocked=values.get("blocked", ""),
+                _proposal=proposal,
             )
         if normalized == "math":
-            return self.solve_math(values.get("expression", ""))
+            return self.solve_math(values.get("expression", ""), _proposal=proposal)
         if normalized == "vision":
-            return self.solve_vision(values.get("preset", "red_square"))
+            return self.solve_vision(
+                values.get("preset", "red_square"),
+                _proposal=proposal,
+            )
         raise BeginnerInputError("언어, 수학, 비전 중 하나를 선택해 줘.")
 
     def solve_language(
@@ -190,6 +387,7 @@ class BeginnerReasoner:
         required: Any,
         satisfied: Any = "",
         blocked: Any = "",
+        _proposal: _ExperienceProposal | None = None,
     ) -> BeginnerSolveResult:
         goal_text = _single_text(goal, "목표", maximum=80)
         required_items = _items(required, "필요 조건")
@@ -219,7 +417,7 @@ class BeginnerReasoner:
         lines.extend(f"Satisfied: {item}" for item in satisfied_items)
         lines.extend(f"Blocked: {item}" for item in blocked_items)
         controlled_text = "\n".join(lines)
-        core = self._run_core(
+        core_run = self._run_core(
             TypedDomainRequest(
                 "language",
                 LanguageTextProblem(
@@ -228,8 +426,10 @@ class BeginnerReasoner:
                     use_legacy_heuristics=False,
                 ),
                 mode="shadow",
-            )
+            ),
+            proposal=_proposal,
         )
+        core = core_run.result
 
         satisfied_keys = {item.casefold() for item in satisfied_items}
         blocked_keys = {item.casefold() for item in blocked_items}
@@ -273,17 +473,25 @@ class BeginnerReasoner:
                 "입력 문장에 적힌 조건을 논리적으로 재생 검증한 결과야. "
                 "실제 승인이나 완료 여부 자체는 외부 증거로 확인하지 않았어."
             ),
+            experience_digest=core_run.request_digest,
         )
 
-    def solve_math(self, expression: Any) -> BeginnerSolveResult:
+    def solve_math(
+        self,
+        expression: Any,
+        *,
+        _proposal: _ExperienceProposal | None = None,
+    ) -> BeginnerSolveResult:
         expression_text = _single_text(expression, "수학식", maximum=240)
         try:
-            core = self._run_core(
-                TypedDomainRequest("math", expression_text, mode="shadow")
+            core_run = self._run_core(
+                TypedDomainRequest("math", expression_text, mode="shadow"),
+                proposal=_proposal,
             )
         except (TypeError, ValueError) as exc:
             raise BeginnerInputError(f"수학식을 읽지 못했어: {exc}") from exc
 
+        core = core_run.result
         verified = core.success and core.verified
         return _result(
             domain="math",
@@ -300,16 +508,22 @@ class BeginnerReasoner:
                 "지원되는 사칙연산, 비교식, 일차방정식을 정확한 수 규칙으로 계산해. "
                 "계산기 추측이나 언어 모델의 답을 그대로 믿지 않아."
             ),
+            experience_digest=core_run.request_digest,
         )
 
-    def solve_vision(self, preset_key: Any) -> BeginnerSolveResult:
+    def solve_vision(
+        self,
+        preset_key: Any,
+        *,
+        _proposal: _ExperienceProposal | None = None,
+    ) -> BeginnerSolveResult:
         key = _single_text(preset_key, "비전 예제", maximum=40)
         preset = VISION_PRESETS.get(key)
         if preset is None:
             raise BeginnerInputError("목록에 있는 비전 예제를 선택해 줘.")
 
         image = _image_from_pattern(preset.pattern, source=f"beginner:{preset.key}")
-        core = self._run_core(
+        core_run = self._run_core(
             TypedDomainRequest(
                 "vision",
                 RasterVisionProblem(
@@ -318,8 +532,10 @@ class BeginnerReasoner:
                     query=preset.question,
                 ),
                 mode="shadow",
-            )
+            ),
+            proposal=_proposal,
         )
+        core = core_run.result
         verified = core.success and core.verified
         return _result(
             domain="vision",
@@ -340,20 +556,100 @@ class BeginnerReasoner:
                 "현재 비전은 일반 사진 인식이 아니라 작은 색상 격자의 연결 요소, "
                 "경계 상자, 픽셀 수만 정확히 다루는 MVP야."
             ),
+            experience_digest=core_run.request_digest,
         )
 
-    def _run_core(self, request: TypedDomainRequest) -> UnifiedTypedResult:
+    def _run_core(
+        self,
+        request: TypedDomainRequest,
+        *,
+        proposal: _ExperienceProposal | None = None,
+    ) -> _BeginnerCoreRun:
         if self.experience_collector is None:
-            return self.reasoner.run(request)
-        observed = self.experience_collector.run(request)
+            if proposal is not None:
+                raise BeginnerInputError("로컬 학습 후보 수집이 꺼져 있어.")
+            return _BeginnerCoreRun(self.reasoner.run(request))
+        observed = self.experience_collector.run(
+            request,
+            proposed_expected_solved=(
+                proposal.expected_solved if proposal is not None else None
+            ),
+            proposal_authority=(
+                "user_proposal" if proposal is not None else "unknown"
+            ),
+            rationale=proposal.rationale if proposal is not None else "",
+            source=(
+                "semop-beginner-human-review"
+                if proposal is not None
+                else "semop-beginner-runtime"
+            ),
+        )
         if observed.result is None:
             detail = observed.error_message or "typed runtime execution failed"
             raise ValueError(f"{observed.error_type}: {detail}")
-        return observed.result
+        return _BeginnerCoreRun(observed.result, observed.request_digest)
+
+    def _require_experience_store(self) -> None:
+        if self.experience_store is None:
+            raise BeginnerInputError("로컬 학습 후보 수집이 꺼져 있어.")
+
+    def _activate_rule_library(self, library: VerifiedRuleLibrary) -> None:
+        preserved = tuple(
+            augmenter
+            for augmenter in self.reasoner.augmenters
+            if not isinstance(augmenter, VerifiedRuleLibrary)
+        )
+        self.active_rule_library = library
+        self.reasoner = UnifiedTypedReasoner(
+            catalog=self.reasoner.catalog,
+            augmenters=(*preserved, library),
+        )
+        if self.experience_store is not None:
+            self.experience_collector = TypedExperienceCollector(
+                self.experience_store,
+                reasoner=self.reasoner,
+            )
 
 
 def vision_presets_for_ui() -> tuple[dict[str, Any], ...]:
     return tuple(preset.to_dict() for preset in VISION_PRESETS.values())
+
+
+def _experience_item_dict(item: ExperienceQueueItem) -> dict[str, Any]:
+    payload = json.loads(item.payload_json)
+    return {
+        "request_digest": item.request_digest,
+        "domain": item.domain,
+        "summary": _experience_payload_summary(item.domain, payload),
+        "payload": payload,
+        "occurrences": item.occurrences,
+        "observed_failures": item.observed_failures,
+        "unverified_results": item.unverified_results,
+        "triggers": list(item.triggers),
+        "status": item.status.value,
+        "priority": item.priority,
+        "grounding_uncertainties": item.grounding_uncertainties,
+        "latest_rationale": item.latest_rationale,
+        "latest_review": (
+            item.latest_review.to_dict()
+            if item.latest_review is not None
+            else None
+        ),
+    }
+
+
+def _experience_payload_summary(domain: str, payload: Mapping[str, Any]) -> str:
+    if domain == "language":
+        return str(payload.get("text", "언어 입력"))
+    if domain == "math":
+        return str(payload.get("expression", "수학 입력"))
+    if domain == "vision":
+        query = str(payload.get("query", "비전 입력"))
+        rows = payload.get("rows", ())
+        height = len(rows) if isinstance(rows, list) else 0
+        width = len(rows[0]) if height and isinstance(rows[0], list) else 0
+        return f"{query} ({width}x{height} 격자)"
+    return f"{domain} 입력"
 
 
 def _result(
@@ -365,6 +661,7 @@ def _result(
     summary: str,
     interpreted: Sequence[str],
     trust_notice: str,
+    experience_digest: str = "",
 ) -> BeginnerSolveResult:
     return BeginnerSolveResult(
         domain=domain,
@@ -378,7 +675,42 @@ def _result(
         trust_notice=trust_notice,
         diagnostics=core.diagnostics,
         technical=core.to_dict(),
+        experience_digest=experience_digest,
     )
+
+
+def _require_bool(value: Any, label: str) -> bool:
+    if type(value) is not bool:
+        raise BeginnerInputError(f"{label}를 다시 선택해 줘.")
+    return value
+
+
+def _require_human_attestation(value: Any) -> None:
+    if value is not True:
+        raise BeginnerInputError(
+            "정확한 입력과 기대 결과를 직접 확인했다는 체크가 필요해."
+        )
+
+
+def _optional_text(value: Any, label: str, *, maximum: int) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise BeginnerInputError(f"{label}는 글자로 입력해 줘.")
+    cleaned = " ".join(value.strip().split())
+    if len(cleaned) > maximum:
+        raise BeginnerInputError(f"{label}는 {maximum}자보다 짧게 적어 줘.")
+    return cleaned
+
+
+def _review_phenomenon(domain: str, triggers: Sequence[str]) -> str:
+    suffix = "_".join(triggers[:3]) or "manual"
+    return f"beginner_{domain}_{suffix}"
+
+
+def _default_review_rationale(expected_solved: bool) -> str:
+    outcome = "풀려야 한다" if expected_solved else "풀리지 않아야 한다"
+    return f"로컬 사용자가 정확한 입력을 보고 이 문제는 {outcome}고 확인했다."
 
 
 def _single_text(value: Any, label: str, *, maximum: int) -> str:

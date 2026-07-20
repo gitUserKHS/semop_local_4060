@@ -140,6 +140,46 @@ class BeginnerReasonerTests(unittest.TestCase):
             {"runtime_exception", "unsolved"},
         )
 
+    def test_human_can_review_a_pending_item_and_capture_a_normal_success(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = TypedExperienceStore(Path(directory) / "beginner.db")
+            reasoner = BeginnerReasoner(experience_store=store)
+            reasoner.solve_language(
+                goal="출시",
+                required="검토, 승인",
+                satisfied="검토",
+            )
+            pending = reasoner.experience_snapshot()["items"][0]
+
+            with self.assertRaisesRegex(BeginnerInputError, "직접 확인"):
+                reasoner.review_experience(
+                    pending["request_digest"],
+                    expected_solved=False,
+                    attest_human_review=False,
+                )
+            reviewed = reasoner.review_experience(
+                pending["request_digest"],
+                expected_solved=False,
+                attest_human_review=True,
+            )
+            captured = reasoner.review_example(
+                "math",
+                {"expression": "3 * (4 + 1) == 15"},
+                expected_solved=True,
+                attest_human_review=True,
+            )
+            snapshot = reasoner.experience_snapshot()
+
+        self.assertEqual(reviewed["review"]["review"]["decision"], "approved")
+        self.assertTrue(captured["result"]["verified"])
+        self.assertTrue(captured["result"]["experience_digest"])
+        self.assertEqual(snapshot["stats"]["requests"], 2)
+        self.assertEqual(snapshot["stats"]["approved"], 2)
+        self.assertEqual(snapshot["stats"]["by_domain"], {"language": 1, "math": 1})
+        self.assertTrue(
+            any("3 * (4 + 1)" in item["summary"] for item in snapshot["items"])
+        )
+
 
 class BeginnerWebTests(unittest.TestCase):
     def test_server_rejects_an_empty_port_search(self) -> None:
@@ -158,8 +198,14 @@ class BeginnerWebTests(unittest.TestCase):
         self.assertIn("입력을 학습 후보로 저장하지 않아", page)
         self.assertIn("로컬 검토 큐에 저장", collecting_page)
         self.assertIn("외부 전송이나 자동 학습은 하지 않아", collecting_page)
+        self.assertIn("로컬 학습 후보 검토", collecting_page)
+        self.assertIn("나는 위 입력과 기대 결과를 직접 확인했어", collecting_page)
+        self.assertIn("/api/experience/review-example", collecting_page)
+        self.assertIn("검증 학습 시도", collecting_page)
+        self.assertIn("/api/experience/learn", collecting_page)
         self.assertNotIn("__VISION_PRESETS__", page)
         self.assertNotIn("__EXPERIENCE_NOTICE__", collecting_page)
+        self.assertNotIn("__EXPERIENCE_ENABLED__", collecting_page)
 
     def test_health_and_solve_http_endpoints(self) -> None:
         server = create_server(0)
@@ -171,6 +217,7 @@ class BeginnerWebTests(unittest.TestCase):
                 health = json.loads(response.read().decode("utf-8"))
             self.assertTrue(health["ok"])
             self.assertFalse(health["experience_collection"])
+            self.assertEqual(health["active_learned_rules"], 0)
 
             request = Request(
                 f"{base}/api/solve",
@@ -199,6 +246,92 @@ class BeginnerWebTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_local_experience_http_review_requires_human_confirmation(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = TypedExperienceStore(Path(directory) / "beginner.db")
+            service = BeginnerReasoner(experience_store=store)
+            service.solve_language(
+                goal="출시",
+                required="검토, 승인",
+                satisfied="검토",
+            )
+            server = create_server(0, service=service)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with urlopen(f"{base}/api/experience", timeout=5) as response:
+                    queue = json.loads(response.read().decode("utf-8"))
+                digest = queue["items"][0]["request_digest"]
+                self.assertTrue(queue["enabled"])
+                self.assertEqual(queue["stats"]["pending"], 1)
+
+                unconfirmed = Request(
+                    f"{base}/api/experience/review",
+                    data=json.dumps(
+                        {
+                            "request_digest": digest,
+                            "expected_solved": False,
+                            "attest_human_review": False,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(unconfirmed, timeout=5)
+                self.assertEqual(raised.exception.code, 400)
+
+                unconfirmed_learning = Request(
+                    f"{base}/api/experience/learn",
+                    data=json.dumps({"confirm_learning": False}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as raised_learning:
+                    urlopen(unconfirmed_learning, timeout=5)
+                self.assertEqual(raised_learning.exception.code, 400)
+
+                confirmed = Request(
+                    f"{base}/api/experience/review",
+                    data=json.dumps(
+                        {
+                            "request_digest": digest,
+                            "expected_solved": False,
+                            "attest_human_review": True,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(confirmed, timeout=5) as response:
+                    reviewed = json.loads(response.read().decode("utf-8"))
+
+                reviewed_example = Request(
+                    f"{base}/api/experience/review-example",
+                    data=json.dumps(
+                        {
+                            "domain": "math",
+                            "values": {"expression": "7 < 10"},
+                            "expected_solved": True,
+                            "attest_human_review": True,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(reviewed_example, timeout=5) as response:
+                    captured = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+        self.assertTrue(reviewed["ok"])
+        self.assertEqual(reviewed["queue"]["stats"]["approved"], 1)
+        self.assertTrue(captured["result"]["verified"])
+        self.assertEqual(captured["queue"]["stats"]["approved"], 2)
 
     def test_invalid_http_input_returns_beginner_message(self) -> None:
         server = create_server(0)

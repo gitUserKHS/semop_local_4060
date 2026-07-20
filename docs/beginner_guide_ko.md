@@ -58,6 +58,52 @@ start_semop.bat --no-experience
 다른 위치를 쓰려면 `--experience-db 경로`를 지정한다. 저장된 후보는
 `tools/eval/review_typed_experience.py`로 확인하고 승인해야 학습 corpus가 될 수 있다.
 
+## 학습 후보를 쉽게 검토하기
+
+쉬운 시작 화면에서는 터미널 명령 없이 두 방식으로 사람 검토를 남길 수 있다.
+
+1. 문제를 푼 직후 `이 문제는 풀려야 해` 또는 `이 문제는 풀리지 않아야 해`를 누른다.
+2. 미증명·파싱 실패로 자동 수집된 입력은 `로컬 학습 후보 검토`에서 원문을 펼쳐 본다.
+3. 두 경우 모두 정확한 입력과 기대 결과를 직접 확인했다는 체크가 있어야 기록된다.
+
+이 버튼은 현재 SemOp의 답을 정답으로 복사하는 기능이 아니다. 예를 들어 새로운 문구를
+SemOp이 읽지 못했지만 읽을 수 있어야 한다고 판단했다면 `풀려야 해`로 표시할 수 있다.
+반대로 전제가 부족한 입력이라면 `풀리지 않아야 해`로 표시한다. 승인 직후에는 실행
+규칙이나 모델이 바뀌지 않고 SQLite 검토 corpus에만 추가된다.
+
+## 검증된 자가학습 시도
+
+`검증 학습 시도`는 승인된 사례만 사용한다. 입력 digest에 따라 사례를 `train`,
+`validation`, `candidate_heldout`, `joint_heldout`으로 나누고 다음 조건을 모두 확인한다.
+
+- 언어·수학·비전 세 도메인의 필요한 사례가 모두 있는가
+- 각 역할에 grounding할 수 있는 사례가 있는가
+- 새 규칙이 이전의 참인 사례를 깨뜨리지 않는가
+- 거짓 양성을 만들지 않고 primitive proof replay를 통과하는가
+- 마지막 joint heldout에서 실제 새 해결 능력이 확인되는가
+
+처음 몇 개만 검토한 상태에서는 `아직 준비가 안 됐어`라고 거절되는 것이 정상이다.
+검증을 통과한 경우에만 다음 두 파일이 갱신된다.
+
+```text
+artifacts/rules/beginner-active-rules.json
+artifacts/rules/beginner-active-rules.checkpoint.json
+```
+
+다음 실행에서는 checkpoint의 SHA-256, 내부 library SHA-256, 규칙 수를 다시 확인한 뒤
+규칙을 활성화한다. 파일이 변조되었거나 둘 중 하나만 남아 있으면 시작을 거절한다.
+이 해시는 파일 손상과 불일치를 찾는 무결성 검사이며, 디지털 서명이나 로컬 공격자
+방어를 뜻하지는 않는다.
+저장된 규칙의 로드와 새 승격을 모두 끄려면 다음 옵션을 쓴다.
+
+```powershell
+semop-easy --no-learned-rules
+start_semop.bat --no-learned-rules
+```
+
+규칙 파일 위치는 `--rules-artifact 경로`로 바꿀 수 있다. 이 과정은 현재 작은 typed
+Horn 규칙 발견이며, 자유형 언어 모델이나 자연 이미지 모델을 자동 재학습하는 기능은 아니다.
+
 ## 언어 조건
 
 네 칸만 사용한다.
@@ -127,6 +173,8 @@ start_semop.bat --no-experience
 쉬운 시작의 로컬 경험 수집이 켜져 있으면 미증명·파싱 실패 raw 입력은 위 SQLite
 검토 큐에 남는다. 화면과 터미널이 활성 상태를 함께 표시하며 `--no-experience`로
 비활성화할 수 있다.
+백그라운드에서 몰래 학습하지 않는다. 사람이 기대 결과를 승인하고
+`검증 학습 시도`를 직접 누른 경우에만 로컬 rule gate를 실행한다.
 
 ## 화면 뒤에서 일어나는 일
 
@@ -140,19 +188,25 @@ start_semop.bat --no-experience
   -> OperatorKernel 탐색
   -> proof replay
   -> 한국어 요약과 검증 기록
+  -> 주목할 실패/불확실 사례를 로컬 큐에 저장
+  -> 사람 기대 결과 검토
+  -> 네 분할 rule gate
+  -> 통과한 규칙만 다음 실행에 활성화
 ```
 
 관련 파일은 다음처럼 나뉜다.
 
 - `src/semop/beginner.py`: 쉬운 입력 검사, typed 요청 변환, 결과 요약
+- `src/semop/beginner_learning.py`: 승인 corpus의 규칙 검증, checkpoint 저장·로드
 - `src/semop/beginner_web.py`: 로컬 HTTP 서버와 브라우저 화면
 - `start_semop.bat`: Windows 더블클릭 실행기
 - `tests/test_beginner_experience.py`: 세 도메인의 첫 사용 흐름과 HTTP 통합 테스트
+- `tests/test_beginner_learning.py`: 승인 사례에서 규칙 발견·저장·재로드·변조 거절 테스트
 
 초보자 기능만 빠르게 검증하려면 다음 명령을 사용한다.
 
 ```powershell
-python -m pytest tests/test_beginner_experience.py -q
+python -m pytest tests/test_beginner_experience.py tests/test_beginner_learning.py -q
 ```
 
 전체 저장소 회귀 검증은 다음 명령으로 실행한다.
