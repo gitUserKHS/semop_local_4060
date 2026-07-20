@@ -8,6 +8,8 @@ from .kernel import (
     RasterImage,
     RasterVisionProblem,
     TypedDomainRequest,
+    TypedExperienceCollector,
+    TypedExperienceStore,
     UnifiedTypedReasoner,
     UnifiedTypedResult,
     VisionAreaGoal,
@@ -145,8 +147,26 @@ VISION_PRESETS: dict[str, VisionPreset] = {
 class BeginnerReasoner:
     """Small facade that keeps typed internals out of the first-use workflow."""
 
-    def __init__(self, reasoner: UnifiedTypedReasoner | None = None) -> None:
+    def __init__(
+        self,
+        reasoner: UnifiedTypedReasoner | None = None,
+        *,
+        experience_store: TypedExperienceStore | None = None,
+    ) -> None:
         self.reasoner = reasoner or UnifiedTypedReasoner()
+        self.experience_store = experience_store
+        self.experience_collector = (
+            TypedExperienceCollector(
+                experience_store,
+                reasoner=self.reasoner,
+            )
+            if experience_store is not None
+            else None
+        )
+
+    @property
+    def experience_enabled(self) -> bool:
+        return self.experience_collector is not None
 
     def solve(self, domain: str, values: Mapping[str, Any]) -> BeginnerSolveResult:
         normalized = str(domain).strip().lower()
@@ -199,7 +219,7 @@ class BeginnerReasoner:
         lines.extend(f"Satisfied: {item}" for item in satisfied_items)
         lines.extend(f"Blocked: {item}" for item in blocked_items)
         controlled_text = "\n".join(lines)
-        core = self.reasoner.run(
+        core = self._run_core(
             TypedDomainRequest(
                 "language",
                 LanguageTextProblem(
@@ -258,7 +278,7 @@ class BeginnerReasoner:
     def solve_math(self, expression: Any) -> BeginnerSolveResult:
         expression_text = _single_text(expression, "수학식", maximum=240)
         try:
-            core = self.reasoner.run(
+            core = self._run_core(
                 TypedDomainRequest("math", expression_text, mode="shadow")
             )
         except (TypeError, ValueError) as exc:
@@ -289,7 +309,7 @@ class BeginnerReasoner:
             raise BeginnerInputError("목록에 있는 비전 예제를 선택해 줘.")
 
         image = _image_from_pattern(preset.pattern, source=f"beginner:{preset.key}")
-        core = self.reasoner.run(
+        core = self._run_core(
             TypedDomainRequest(
                 "vision",
                 RasterVisionProblem(
@@ -321,6 +341,15 @@ class BeginnerReasoner:
                 "경계 상자, 픽셀 수만 정확히 다루는 MVP야."
             ),
         )
+
+    def _run_core(self, request: TypedDomainRequest) -> UnifiedTypedResult:
+        if self.experience_collector is None:
+            return self.reasoner.run(request)
+        observed = self.experience_collector.run(request)
+        if observed.result is None:
+            detail = observed.error_message or "typed runtime execution failed"
+            raise ValueError(f"{observed.error_type}: {detail}")
+        return observed.result
 
 
 def vision_presets_for_ui() -> tuple[dict[str, Any], ...]:

@@ -39,6 +39,25 @@ semop-easy
 semop-easy --no-browser --port 9000
 ```
 
+쉬운 시작 실행은 미증명 문제와 파싱 실패처럼 개선에 도움이 되는 입력만 다음 로컬
+검토 큐에 저장한다.
+
+```text
+artifacts/experience/beginner-experience.db
+```
+
+검증된 정상 성공을 전부 저장하지 않으며, 큐의 후보는 사람 검토 전에는 규칙이나
+모델에 반영되지 않는다. 입력은 외부 서비스로 전송되지 않는다. 저장을 원하지 않으면
+다음처럼 끌 수 있다.
+
+```powershell
+semop-easy --no-experience
+start_semop.bat --no-experience
+```
+
+다른 위치를 쓰려면 `--experience-db 경로`를 지정한다. 저장된 후보는
+`tools/eval/review_typed_experience.py`로 확인하고 승인해야 학습 corpus가 될 수 있다.
+
 ## 언어 조건
 
 네 칸만 사용한다.
@@ -105,6 +124,9 @@ semop-easy --no-browser --port 9000
 쉬운 시작 화면은 `127.0.0.1`에만 열리는 로컬 서버다.
 입력은 기본적으로 이 PC의 SemOp 프로세스에서 처리되며 외부 LLM이나 웹 API로 보내지 않는다.
 향후 외부 judge나 데이터 수집 기능을 연결할 때는 별도 설정과 명시적 동의 경계를 유지해야 한다.
+쉬운 시작의 로컬 경험 수집이 켜져 있으면 미증명·파싱 실패 raw 입력은 위 SQLite
+검토 큐에 남는다. 화면과 터미널이 활성 상태를 함께 표시하며 `--no-experience`로
+비활성화할 수 있다.
 
 ## 화면 뒤에서 일어나는 일
 

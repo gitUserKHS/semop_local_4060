@@ -4,22 +4,29 @@ setlocal
 cd /d "%~dp0"
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
 
-where py >nul 2>nul
+py -3 -c "import sys" >nul 2>nul
 if not errorlevel 1 (
-    py -3 -m semop.beginner_web
+    py -3 -m semop.beginner_web %*
     set "SEMOP_EXIT=%ERRORLEVEL%"
     goto :done
 )
 
-where python >nul 2>nul
+python -c "import sys" >nul 2>nul
 if not errorlevel 1 (
-    python -m semop.beginner_web
+    python -m semop.beginner_web %*
     set "SEMOP_EXIT=%ERRORLEVEL%"
     goto :done
 )
 
-echo Python을 찾지 못했어.
-echo Python 3.11 이상을 설치한 뒤 이 파일을 다시 실행해 줘.
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "(Get-Command python -CommandType Application -ErrorAction SilentlyContinue).Source"`) do set "SEMOP_PYTHON=%%P"
+if defined SEMOP_PYTHON (
+    "%SEMOP_PYTHON%" -m semop.beginner_web %*
+    set "SEMOP_EXIT=%ERRORLEVEL%"
+    goto :done
+)
+
+echo Python 3.11 or newer was not found.
+echo Install Python and run this file again.
 set "SEMOP_EXIT=1"
 
 :done

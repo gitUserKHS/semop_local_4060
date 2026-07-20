@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import sqlite3
 import threading
 import webbrowser
 from http import HTTPStatus
@@ -13,6 +15,7 @@ from .beginner import (
     BeginnerReasoner,
     vision_presets_for_ui,
 )
+from .kernel import TypedExperienceStore
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -36,10 +39,23 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/":
-            self._send_html(render_home_page())
+            self._send_html(
+                render_home_page(
+                    experience_enabled=self.server.service.experience_enabled
+                )
+            )
             return
         if path == "/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "service": "semop-beginner"})
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "service": "semop-beginner",
+                    "experience_collection": (
+                        self.server.service.experience_enabled
+                    ),
+                },
+            )
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "페이지를 찾지 못했어."})
 
@@ -122,9 +138,18 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
         )
 
 
-def render_home_page() -> str:
+def render_home_page(*, experience_enabled: bool = False) -> str:
     presets = json.dumps(vision_presets_for_ui(), ensure_ascii=False).replace("</", "<\\/")
-    return _PAGE.replace("__VISION_PRESETS__", presets)
+    experience_notice = (
+        "미증명·파싱 실패 같은 개선 후보는 이 PC의 로컬 검토 큐에 저장돼. "
+        "외부 전송이나 자동 학습은 하지 않아."
+        if experience_enabled
+        else "이 실행에서는 입력을 학습 후보로 저장하지 않아."
+    )
+    return _PAGE.replace("__VISION_PRESETS__", presets).replace(
+        "__EXPERIENCE_NOTICE__",
+        experience_notice,
+    )
 
 
 def create_server(
@@ -167,14 +192,34 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="브라우저를 자동으로 열지 않습니다.",
     )
+    parser.add_argument(
+        "--experience-db",
+        type=Path,
+        default=Path("artifacts/experience/beginner-experience.db"),
+        help=(
+            "미증명·파싱 실패를 저장할 로컬 검토 큐입니다. "
+            "(기본: artifacts/experience/beginner-experience.db)"
+        ),
+    )
+    parser.add_argument(
+        "--no-experience",
+        action="store_true",
+        help="로컬 학습 후보 수집을 끕니다.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     try:
-        server = create_server(args.port)
-    except (OSError, ValueError) as exc:
+        experience_store = (
+            None
+            if args.no_experience
+            else TypedExperienceStore(args.experience_db)
+        )
+        service = BeginnerReasoner(experience_store=experience_store)
+        server = create_server(args.port, service=service)
+    except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"SemOp을 시작하지 못했어: {exc}")
         return 1
 
@@ -182,6 +227,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     url = f"http://127.0.0.1:{port}/"
     print("SemOp 쉬운 시작이 준비됐어.")
     print(f"브라우저 주소: {url}")
+    if experience_store is not None:
+        print(f"로컬 학습 후보 큐: {experience_store.path.resolve()}")
+        print("저장된 후보는 사람 검토 전에는 학습에 반영되지 않아.")
+    else:
+        print("로컬 학습 후보 수집: 꺼짐")
     print("끝낼 때는 이 창에서 Ctrl+C를 눌러 줘.")
     if not args.no_browser:
         threading.Timer(0.35, lambda: webbrowser.open(url)).start()
@@ -421,7 +471,7 @@ _PAGE = r'''<!doctype html>
       </details>
     </section>
 
-    <p class="foot">모든 처리는 이 PC의 로컬 서버에서 이뤄져. 이 화면은 범용 챗봇이 아니라 현재 검증 가능한 MVP 범위만 보여 줘.</p>
+    <p class="foot">모든 처리는 이 PC의 로컬 서버에서 이뤄져. 이 화면은 범용 챗봇이 아니라 현재 검증 가능한 MVP 범위만 보여 줘.<br>__EXPERIENCE_NOTICE__</p>
   </main>
 
   <script>

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import threading
+from tempfile import TemporaryDirectory
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -12,6 +14,7 @@ from semop.beginner import (
     VISION_PRESETS,
 )
 from semop.beginner_web import create_server, render_home_page
+from semop.kernel import TypedExperienceStore
 
 
 class BeginnerReasonerTests(unittest.TestCase):
@@ -108,6 +111,35 @@ class BeginnerReasonerTests(unittest.TestCase):
         encoded = json.dumps(result.to_dict(), ensure_ascii=False, default=str)
         self.assertIn("검증", encoded)
 
+    def test_local_experience_store_collects_only_noteworthy_runs(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = TypedExperienceStore(Path(directory) / "beginner.db")
+            reasoner = BeginnerReasoner(experience_store=store)
+            ready = reasoner.solve_language(
+                goal="배포",
+                required="테스트",
+                satisfied="테스트",
+            )
+            missing = reasoner.solve_language(
+                goal="출시",
+                required="검토, 승인",
+                satisfied="검토",
+            )
+            with self.assertRaisesRegex(BeginnerInputError, "수학식을 읽지 못했어"):
+                reasoner.solve_math("2 +")
+            stats = store.stats()
+            items = store.list_items(limit=10)
+
+        self.assertTrue(reasoner.experience_enabled)
+        self.assertTrue(ready.success)
+        self.assertFalse(missing.success)
+        self.assertEqual(stats.requests, 2)
+        self.assertEqual(dict(stats.by_domain), {"language": 1, "math": 1})
+        self.assertEqual(
+            {trigger for item in items for trigger in item.triggers},
+            {"runtime_exception", "unsolved"},
+        )
+
 
 class BeginnerWebTests(unittest.TestCase):
     def test_server_rejects_an_empty_port_search(self) -> None:
@@ -116,13 +148,18 @@ class BeginnerWebTests(unittest.TestCase):
 
     def test_home_page_contains_three_plain_language_paths(self) -> None:
         page = render_home_page()
+        collecting_page = render_home_page(experience_enabled=True)
 
         self.assertIn("SemOp 쉬운 시작", page)
         self.assertIn("언어 조건", page)
         self.assertIn("수학식", page)
         self.assertIn("색상 비전", page)
         self.assertIn("red_square", page)
+        self.assertIn("입력을 학습 후보로 저장하지 않아", page)
+        self.assertIn("로컬 검토 큐에 저장", collecting_page)
+        self.assertIn("외부 전송이나 자동 학습은 하지 않아", collecting_page)
         self.assertNotIn("__VISION_PRESETS__", page)
+        self.assertNotIn("__EXPERIENCE_NOTICE__", collecting_page)
 
     def test_health_and_solve_http_endpoints(self) -> None:
         server = create_server(0)
@@ -133,6 +170,7 @@ class BeginnerWebTests(unittest.TestCase):
             with urlopen(f"{base}/health", timeout=5) as response:
                 health = json.loads(response.read().decode("utf-8"))
             self.assertTrue(health["ok"])
+            self.assertFalse(health["experience_collection"])
 
             request = Request(
                 f"{base}/api/solve",
