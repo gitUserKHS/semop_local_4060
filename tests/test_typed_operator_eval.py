@@ -142,7 +142,7 @@ class LowResourceEvalTests(unittest.TestCase):
         self.assertEqual(report["split"]["macro_training"], 9)
         self.assertEqual(report["split"]["joint_heldout_positive"], 3)
         self.assertTrue(report["learning"]["promoted"])
-        self.assertEqual(report["learning"]["controller_parameters"], 16)
+        self.assertEqual(report["learning"]["controller_parameters"], 12)
         self.assertEqual(report["learning"]["active_macros"], 3)
         self.assertEqual(
             report["ab"]["positive_expansions"],

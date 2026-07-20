@@ -14,7 +14,18 @@ from semop.beginner import (
     VISION_PRESETS,
 )
 from semop.beginner_web import create_server, render_home_page
-from semop.kernel import TypedExperienceStore
+from semop.kernel import PolicyDecision, TypedExperienceStore
+
+
+class _CountingPolicy:
+    name = "counting-test-policy"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def score_actions(self, _state, _goals, actions):
+        self.calls += 1
+        return PolicyDecision(tuple(0.0 for _action in actions))
 
 
 class BeginnerReasonerTests(unittest.TestCase):
@@ -111,6 +122,30 @@ class BeginnerReasonerTests(unittest.TestCase):
         encoded = json.dumps(result.to_dict(), ensure_ascii=False, default=str)
         self.assertIn("검증", encoded)
 
+    def test_one_controller_guides_all_three_domains_without_owning_facts(self) -> None:
+        policy = _CountingPolicy()
+        reasoner = BeginnerReasoner(policy=policy)
+
+        language = reasoner.solve_language(
+            goal="배포",
+            required="테스트, 승인",
+            satisfied="테스트, 승인",
+        )
+        after_language = policy.calls
+        math = reasoner.solve_math("(2 + 3) * 4 == 20")
+        after_math = policy.calls
+        vision = reasoner.solve_vision("red_square")
+
+        self.assertTrue(language.verified and math.verified and vision.verified)
+        self.assertGreater(after_language, 0)
+        self.assertGreater(after_math, after_language)
+        self.assertGreater(policy.calls, after_math)
+        self.assertTrue(reasoner.controller_summary["active"])
+        self.assertEqual(
+            reasoner.controller_summary["kind"],
+            "counting-test-policy",
+        )
+
     def test_local_experience_store_collects_only_noteworthy_runs(self) -> None:
         with TemporaryDirectory() as directory:
             store = TypedExperienceStore(Path(directory) / "beginner.db")
@@ -189,6 +224,9 @@ class BeginnerWebTests(unittest.TestCase):
     def test_home_page_contains_three_plain_language_paths(self) -> None:
         page = render_home_page()
         collecting_page = render_home_page(experience_enabled=True)
+        guided_page = render_home_page(
+            controller_summary={"active": True}
+        )
 
         self.assertIn("SemOp 쉬운 시작", page)
         self.assertIn("언어 조건", page)
@@ -203,9 +241,12 @@ class BeginnerWebTests(unittest.TestCase):
         self.assertIn("/api/experience/review-example", collecting_page)
         self.assertIn("검증 학습 시도", collecting_page)
         self.assertIn("/api/experience/learn", collecting_page)
+        self.assertIn("결정론적 탐색", page)
+        self.assertIn("탐색 컨트롤러가 연산자 순서를 안내", guided_page)
         self.assertNotIn("__VISION_PRESETS__", page)
         self.assertNotIn("__EXPERIENCE_NOTICE__", collecting_page)
         self.assertNotIn("__EXPERIENCE_ENABLED__", collecting_page)
+        self.assertNotIn("__CONTROLLER_NOTICE__", guided_page)
 
     def test_health_and_solve_http_endpoints(self) -> None:
         server = create_server(0)
@@ -218,6 +259,7 @@ class BeginnerWebTests(unittest.TestCase):
             self.assertTrue(health["ok"])
             self.assertFalse(health["experience_collection"])
             self.assertEqual(health["active_learned_rules"], 0)
+            self.assertFalse(health["controller"]["active"])
 
             request = Request(
                 f"{base}/api/solve",

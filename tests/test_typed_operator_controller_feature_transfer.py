@@ -23,9 +23,17 @@ from semop.tiny_controller import (  # noqa: E402
     ControllerFeatureProfile,
     NumpyTinyController,
     StructuralLinearPolicy,
+    StructuralPolicyLearner,
     TinyControllerConfig,
     canonicalize_problem,
 )
+
+
+def test_new_sparse_learning_defaults_to_identity_free_typed_structure() -> None:
+    assert (
+        StructuralPolicyLearner().feature_profile
+        is ControllerFeatureProfile.TYPED_STRUCTURE
+    )
 
 
 def test_typed_structure_profile_removes_names_but_keeps_typed_goal_shape() -> None:

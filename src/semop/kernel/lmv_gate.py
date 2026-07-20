@@ -195,15 +195,16 @@ def _lmv_gate_fixtures() -> tuple[LMVGateFixture, ...]:
             positive=TypedDomainRequest(
                 DomainKind.LANGUAGE,
                 LanguageTextProblem(
-                    "Goal: deploy\nRequires: tests, approval\n"
-                    "Satisfied: tests\nSatisfied: approval",
+                    "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+                    "관리자 승인과 안전 확인을 완료했다.",
                     use_legacy_heuristics=False,
                 ),
             ),
             negative=TypedDomainRequest(
                 DomainKind.LANGUAGE,
                 LanguageTextProblem(
-                    "Goal: deploy\nRequires: tests, approval\nSatisfied: tests",
+                    "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+                    "관리자 승인만 완료했다.",
                     use_legacy_heuristics=False,
                 ),
             ),

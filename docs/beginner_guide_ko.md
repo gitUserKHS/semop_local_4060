@@ -104,6 +104,41 @@ start_semop.bat --no-learned-rules
 규칙 파일 위치는 `--rules-artifact 경로`로 바꿀 수 있다. 이 과정은 현재 작은 typed
 Horn 규칙 발견이며, 자유형 언어 모델이나 자연 이미지 모델을 자동 재학습하는 기능은 아니다.
 
+## 선택 사항: 작은 탐색 컨트롤러
+
+SemOp은 controller 파일이 없어도 정상 실행된다. 이때는 결정론적 탐색으로 연산자를
+고른다. 별도 연구 실행에서 held-out 문제, 거짓 양성, proof replay gate를 통과한 sparse
+controller checkpoint가 다음 기본 폴더에 있으면 시작할 때 자동으로 불러온다.
+
+```text
+artifacts/controller/beginner-controller/manifest.json
+```
+
+현재 통제된 합성 문제로 이 연결을 시험하려면 다음 연구용 예제를 실행할 수 있다.
+
+```powershell
+python examples/typed_self_learning_demo.py `
+  --output artifacts/controller/beginner-controller `
+  --examples-per-structure 3
+```
+
+이 예제의 통과는 정해진 symbolic 구조 사이의 전이를 뜻하며, 실제 자유 언어·고등수학·
+자연 사진을 이해했다는 뜻은 아니다.
+
+이 controller는 언어·수학·비전의 답이나 사실을 직접 만들지 않는다. 현재 적용 가능한
+typed operator의 실행 순서만 정하고, 점수 계산이 실패하거나 guided search가 풀지 못하면
+결정론적 탐색으로 돌아간다. 화면 아래와 시작 터미널에서 현재 활성 여부를 확인할 수 있다.
+
+controller를 명시적으로 끄거나 다른 checkpoint 폴더를 쓰려면 다음처럼 실행한다.
+
+```powershell
+semop-easy --no-controller
+semop-easy --controller-checkpoint-root artifacts/controller/my-controller
+```
+
+checkpoint의 artifact hash가 다르거나 지원하지 않는 policy 종류면 조용히 무시하지 않고
+시작을 중단한다. 잘못된 작은 모델보다 검증 가능한 탐색을 선택하기 위한 동작이다.
+
 ## 언어 조건
 
 네 칸만 사용한다.
@@ -185,7 +220,8 @@ Horn 규칙 발견이며, 자유형 언어 모델이나 자연 이미지 모델�
   -> BeginnerReasoner 입력 검사
   -> TypedDomainRequest
   -> 언어·수학·비전 adapter
-  -> OperatorKernel 탐색
+  -> 검증된 sparse controller의 연산자 순위 또는 결정론적 탐색
+  -> OperatorKernel만 사실을 도출
   -> proof replay
   -> 한국어 요약과 검증 기록
   -> 주목할 실패/불확실 사례를 로컬 큐에 저장
@@ -197,7 +233,7 @@ Horn 규칙 발견이며, 자유형 언어 모델이나 자연 이미지 모델�
 관련 파일은 다음처럼 나뉜다.
 
 - `src/semop/beginner.py`: 쉬운 입력 검사, typed 요청 변환, 결과 요약
-- `src/semop/beginner_learning.py`: 승인 corpus의 규칙 검증, checkpoint 저장·로드
+- `src/semop/beginner_learning.py`: 승인 corpus의 규칙 검증과 controller checkpoint 로드
 - `src/semop/beginner_web.py`: 로컬 HTTP 서버와 브라우저 화면
 - `start_semop.bat`: Windows 더블클릭 실행기
 - `tests/test_beginner_experience.py`: 세 도메인의 첫 사용 흐름과 HTTP 통합 테스트

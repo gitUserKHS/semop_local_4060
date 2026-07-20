@@ -155,7 +155,7 @@ class StructuralPolicyLearner:
     weight_clip: float = 16.0
     min_absolute_weight: float = 1e-9
     feature_profile: ControllerFeatureProfile | str = (
-        ControllerFeatureProfile.FULL
+        ControllerFeatureProfile.TYPED_STRUCTURE
     )
 
     name = StructuralLinearPolicy.KIND

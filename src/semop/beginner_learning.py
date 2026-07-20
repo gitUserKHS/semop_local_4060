@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import uuid4
 
 from .kernel import (
+    ActionPolicy,
     DomainKind,
     ExperienceReviewCorpusGrounder,
     RawExperienceGrounder,
     ReviewedExperienceRuleLearningLoop,
     ReviewedExperienceRuleLearningResult,
+    SelfLearningCheckpoint,
+    SelfLearningStore,
     TypedExperienceStore,
     UnifiedTypedReasoner,
     VerifiedRuleLearningLoop,
@@ -40,6 +43,23 @@ class BeginnerRuleCheckpoint:
 class LoadedBeginnerRuleLibrary:
     library: VerifiedRuleLibrary
     checkpoint: BeginnerRuleCheckpoint | None = None
+
+
+@dataclass(frozen=True)
+class LoadedBeginnerController:
+    policy: ActionPolicy | None = field(default=None, compare=False, repr=False)
+    kind: str = ""
+    parameter_count: int = 0
+    feature_profile: str = ""
+    checkpoint: SelfLearningCheckpoint | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+
+    @property
+    def active(self) -> bool:
+        return self.policy is not None
 
 
 @dataclass(frozen=True)
@@ -98,6 +118,41 @@ def load_beginner_rule_library(
         rule_count=rule_count,
     )
     return LoadedBeginnerRuleLibrary(library, checkpoint)
+
+
+def load_beginner_controller(
+    checkpoint_root: str | Path,
+) -> LoadedBeginnerController:
+    store = SelfLearningStore(checkpoint_root)
+    if not store.exists():
+        return LoadedBeginnerController()
+    checkpoint = store.load_checkpoint()
+    if checkpoint.policy_kind is None:
+        return LoadedBeginnerController(checkpoint=checkpoint)
+
+    from .tiny_controller.linear_policy import (
+        StructuralLinearPolicy,
+        StructuralPolicyLearner,
+    )
+
+    if checkpoint.policy_kind != StructuralLinearPolicy.KIND:
+        raise ValueError(
+            "beginner runtime supports structural-linear controller checkpoints"
+        )
+    candidate = store.restore_candidate(StructuralPolicyLearner(), checkpoint)
+    if candidate is None:
+        raise ValueError("beginner controller checkpoint has no active policy")
+    actual_parameters = getattr(candidate.policy, "parameter_count", 0)
+    profile = getattr(candidate.policy, "feature_profile", "")
+    return LoadedBeginnerController(
+        policy=candidate.policy,
+        kind=candidate.kind,
+        parameter_count=(
+            actual_parameters if type(actual_parameters) is int else 0
+        ),
+        feature_profile=str(getattr(profile, "value", profile)),
+        checkpoint=checkpoint,
+    )
 
 
 def run_beginner_reviewed_learning(

@@ -144,9 +144,9 @@ registry-specific `PrimitiveMacroPolicy`, while the controller parameters remain
 shared across language, math, and vision. The default leave-domain-out run trains and
 promotes that controller on language only, then tests unseen math and vision operator
 names. A final joint holdout is used only after the controller and macro components
-have passed their own holdouts. Reproducible profiles now include the 16-parameter
-sparse learner, a 29,834-parameter recurrent diagnostic learner, and the full
-5,837,578-parameter recurrent learner. All three use the same independent gates; the
+have passed their own holdouts. Reproducible profiles now include the 12-parameter
+`typed_structure` sparse learner, a 29,834-parameter recurrent diagnostic learner,
+and the full 5,837,578-parameter recurrent learner. All three use the same independent gates; the
 recurrent profiles train only on three verified language traces and transfer the
 shared action-selection signal to unseen math and vision completion schemas. This is
 low-resource structural transfer, not free-form semantic learning. See

@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from semop.beginner_learning import (
+    load_beginner_controller,
     load_beginner_rule_library,
     run_beginner_reviewed_learning,
 )
@@ -21,11 +22,18 @@ from semop.kernel import (
     Goal,
     KernelRegistry,
     LanguageTextProblem,
+    LearningSplit,
+    SelfLearningBudget,
+    SelfLearningLoop,
+    SelfLearningStore,
+    SolveBudget,
     TypedDomainRequest,
     TypedExperienceCollector,
     TypedExperienceStore,
     UnifiedTypedReasoner,
     WorldState,
+    generate_lmv_structural_transfer_split,
+    learning_tasks_from_synthetic,
     semantic_request_digest,
 )
 
@@ -113,6 +121,53 @@ def test_empty_beginner_rule_store_loads_an_empty_library() -> None:
 
     assert loaded.checkpoint is None
     assert loaded.library.records == ()
+
+
+def test_beginner_controller_loads_only_a_verified_untampered_checkpoint() -> None:
+    split = generate_lmv_structural_transfer_split(1, seed=41)
+    training = learning_tasks_from_synthetic(
+        split.training,
+        split=LearningSplit.TRAIN,
+        namespace="beginner-controller-train",
+    )
+    heldout = learning_tasks_from_synthetic(
+        split.heldout,
+        split=LearningSplit.HELDOUT,
+        namespace="beginner-controller-heldout",
+    ) + learning_tasks_from_synthetic(
+        split.negative_controls,
+        split=LearningSplit.HELDOUT,
+        namespace="beginner-controller-negative",
+        expected_solved=False,
+    )
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory) / "controller"
+        learning = SelfLearningLoop(
+            budget=SelfLearningBudget(
+                solve_budget=SolveBudget(
+                    max_expansions=2_000,
+                    timeout_seconds=5.0,
+                ),
+                min_expansion_reduction=0.0,
+            ),
+            store=SelfLearningStore(root),
+        ).run(training, heldout)
+        loaded = load_beginner_controller(root)
+
+        assert learning.promoted
+        assert loaded.active
+        assert loaded.kind == "structural-linear-v2"
+        assert loaded.parameter_count > 0
+        assert loaded.feature_profile == "typed_structure"
+        assert loaded.policy.feature_profile.value == "typed_structure"
+
+        assert loaded.checkpoint is not None
+        assert loaded.checkpoint.policy_artifact is not None
+        policy_path = root / loaded.checkpoint.policy_artifact
+        policy_path.write_bytes(policy_path.read_bytes() + b"\n")
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_beginner_controller(root)
 
 
 def _request_for_role(

@@ -17,7 +17,10 @@ python -m semop.beginner_web
 미증명·파싱 실패는 기본적으로 로컬 검토 큐에만 저장된다. 화면에서 사용자가 정확한
 입력과 기대 결과를 직접 승인한 사례만 검증 학습에 들어가며, 새 typed 규칙은 네 분할
 회귀 gate와 proof replay를 모두 통과한 경우에만 해시 확인 가능한 파일로 활성화된다.
-`--no-experience`와 `--no-learned-rules`로 각각 수집과 규칙 승격을 끌 수 있다.
+검증된 sparse controller checkpoint가 있으면 같은 작은 정책이 세 도메인의 연산자
+순서만 안내하고, 없으면 자동으로 결정론적 탐색을 사용한다. 어느 쪽이든 결론은 typed
+executor와 proof replay가 결정한다. `--no-experience`, `--no-learned-rules`,
+`--no-controller`로 각 기능을 독립적으로 끌 수 있다.
 
 현재 쉬운 화면의 범위는 통제된 목표·필요조건 문장, 정확한 계산식·일차방정식,
 작은 색상 격자다. 일반 자유 대화나 자연 사진 이해로 오해하지 않도록 각 결과에
@@ -211,7 +214,7 @@ grounding boundary and reduces untouched raw math and pixel expansions from 6 to
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
 online reviewed-learning and sparse grounding self-learning milestones, local
-`python -m pytest -q` validation now passes 709 tests plus 34 subtests;
+`python -m pytest -q` validation now passes 716 tests plus 34 subtests;
 `shadow` remains the default.
 
 - `app.py`

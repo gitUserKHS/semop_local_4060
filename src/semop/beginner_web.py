@@ -15,7 +15,10 @@ from .beginner import (
     BeginnerReasoner,
     vision_presets_for_ui,
 )
-from .beginner_learning import load_beginner_rule_library
+from .beginner_learning import (
+    load_beginner_controller,
+    load_beginner_rule_library,
+)
 from .kernel import TypedExperienceStore
 
 
@@ -42,7 +45,8 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
         if path == "/":
             self._send_html(
                 render_home_page(
-                    experience_enabled=self.server.service.experience_enabled
+                    experience_enabled=self.server.service.experience_enabled,
+                    controller_summary=self.server.service.controller_summary,
                 )
             )
             return
@@ -58,6 +62,7 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
                     "active_learned_rules": len(
                         self.server.service.active_rule_library.records
                     ),
+                    "controller": self.server.service.controller_summary,
                 },
             )
             return
@@ -205,7 +210,11 @@ class BeginnerRequestHandler(BaseHTTPRequestHandler):
         )
 
 
-def render_home_page(*, experience_enabled: bool = False) -> str:
+def render_home_page(
+    *,
+    experience_enabled: bool = False,
+    controller_summary: Mapping[str, Any] | None = None,
+) -> str:
     presets = json.dumps(vision_presets_for_ui(), ensure_ascii=False).replace("</", "<\\/")
     experience_notice = (
         "미증명·파싱 실패 같은 개선 후보는 이 PC의 로컬 검토 큐에 저장돼. "
@@ -213,9 +222,18 @@ def render_home_page(*, experience_enabled: bool = False) -> str:
         if experience_enabled
         else "이 실행에서는 입력을 학습 후보로 저장하지 않아."
     )
+    controller_notice = (
+        "검증된 작은 탐색 컨트롤러가 연산자 순서를 안내하고 있어. "
+        "결론은 여전히 typed 실행과 proof replay가 검증해."
+        if controller_summary and controller_summary.get("active") is True
+        else "저장된 탐색 컨트롤러가 없어 결정론적 탐색을 사용하고 있어."
+    )
     return _PAGE.replace("__VISION_PRESETS__", presets).replace(
         "__EXPERIENCE_NOTICE__",
         experience_notice,
+    ).replace(
+        "__CONTROLLER_NOTICE__",
+        controller_notice,
     ).replace(
         "__EXPERIENCE_ENABLED__",
         "true" if experience_enabled else "false",
@@ -290,6 +308,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="저장된 학습 규칙의 로드와 새 규칙 승격을 끕니다.",
     )
+    parser.add_argument(
+        "--controller-checkpoint-root",
+        type=Path,
+        default=Path("artifacts/controller/beginner-controller"),
+        help=(
+            "검증을 통과한 sparse controller 체크포인트 폴더입니다. "
+            "(기본: artifacts/controller/beginner-controller)"
+        ),
+    )
+    parser.add_argument(
+        "--no-controller",
+        action="store_true",
+        help="저장된 sparse controller 로드를 끕니다.",
+    )
     return parser
 
 
@@ -306,6 +338,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.no_learned_rules
             else load_beginner_rule_library(args.rules_artifact)
         )
+        loaded_controller = (
+            None
+            if args.no_controller
+            else load_beginner_controller(args.controller_checkpoint_root)
+        )
         service = BeginnerReasoner(
             experience_store=experience_store,
             active_rule_library=(
@@ -313,6 +350,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             rules_artifact_path=(
                 None if args.no_learned_rules else args.rules_artifact
+            ),
+            policy=(
+                loaded_controller.policy
+                if loaded_controller is not None
+                else None
             ),
         )
         server = create_server(args.port, service=service)
@@ -333,6 +375,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("검증된 학습 규칙: 꺼짐")
     else:
         print(f"활성 학습 규칙: {len(loaded_rules.library.records)}개")
+    if loaded_controller is None:
+        print("작은 sparse controller: 꺼짐")
+    elif loaded_controller.active:
+        print(
+            "작은 sparse controller: "
+            f"{loaded_controller.kind}, {loaded_controller.parameter_count} parameters, "
+            f"{loaded_controller.feature_profile} profile"
+        )
+    else:
+        print("작은 sparse controller: 체크포인트 없음, 결정론적 탐색 사용")
     print("끝낼 때는 이 창에서 Ctrl+C를 눌러 줘.")
     if not args.no_browser:
         threading.Timer(0.35, lambda: webbrowser.open(url)).start()
@@ -621,7 +673,7 @@ _PAGE = r'''<!doctype html>
       <p class="review-status" id="experience-learning-status" aria-live="polite"></p>
     </section>
 
-    <p class="foot">모든 처리는 이 PC의 로컬 서버에서 이뤄져. 이 화면은 범용 챗봇이 아니라 현재 검증 가능한 MVP 범위만 보여 줘.<br>__EXPERIENCE_NOTICE__</p>
+    <p class="foot">모든 처리는 이 PC의 로컬 서버에서 이뤄져. 이 화면은 범용 챗봇이 아니라 현재 검증 가능한 MVP 범위만 보여 줘.<br>__EXPERIENCE_NOTICE__<br>__CONTROLLER_NOTICE__</p>
   </main>
 
   <script>

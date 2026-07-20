@@ -7,10 +7,12 @@ from typing import Any, Mapping, Sequence
 
 from .beginner_learning import run_beginner_reviewed_learning
 from .kernel import (
+    ActionPolicy,
     ExperienceQueueItem,
     LanguageTextProblem,
     RasterImage,
     RasterVisionProblem,
+    RegistryPolicyProvider,
     TypedDomainRequest,
     TypedExperienceCollector,
     TypedExperienceStore,
@@ -173,6 +175,7 @@ class BeginnerReasoner:
         experience_store: TypedExperienceStore | None = None,
         active_rule_library: VerifiedRuleLibrary | None = None,
         rules_artifact_path: str | Path | None = None,
+        policy: ActionPolicy | RegistryPolicyProvider | None = None,
     ) -> None:
         base_reasoner = reasoner or UnifiedTypedReasoner()
         detected_libraries = tuple(
@@ -202,6 +205,7 @@ class BeginnerReasoner:
                 augmenters=(*base_reasoner.augmenters, self.active_rule_library),
             )
         self.reasoner = base_reasoner
+        self.policy = policy
         self.experience_store = experience_store
         self.rules_artifact_path = (
             Path(rules_artifact_path) if rules_artifact_path is not None else None
@@ -219,6 +223,10 @@ class BeginnerReasoner:
     def experience_enabled(self) -> bool:
         return self.experience_collector is not None
 
+    @property
+    def controller_summary(self) -> dict[str, Any]:
+        return _controller_summary(self.policy)
+
     def solve(self, domain: str, values: Mapping[str, Any]) -> BeginnerSolveResult:
         return self._solve(domain, values)
 
@@ -233,6 +241,7 @@ class BeginnerReasoner:
                 "learning": {
                     "active_rules": len(self.active_rule_library.records),
                     "artifact_configured": self.rules_artifact_path is not None,
+                    "controller": self.controller_summary,
                 },
                 "items": [],
             }
@@ -254,6 +263,7 @@ class BeginnerReasoner:
             "learning": {
                 "active_rules": len(self.active_rule_library.records),
                 "artifact_configured": self.rules_artifact_path is not None,
+                "controller": self.controller_summary,
             },
             "items": [_experience_item_dict(item) for item in items],
         }
@@ -568,7 +578,9 @@ class BeginnerReasoner:
         if self.experience_collector is None:
             if proposal is not None:
                 raise BeginnerInputError("로컬 학습 후보 수집이 꺼져 있어.")
-            return _BeginnerCoreRun(self.reasoner.run(request))
+            return _BeginnerCoreRun(
+                self.reasoner.run(request, policy=self.policy)
+            )
         observed = self.experience_collector.run(
             request,
             proposed_expected_solved=(
@@ -583,6 +595,7 @@ class BeginnerReasoner:
                 if proposal is not None
                 else "semop-beginner-runtime"
             ),
+            policy=self.policy,
         )
         if observed.result is None:
             detail = observed.error_message or "typed runtime execution failed"
@@ -650,6 +663,33 @@ def _experience_payload_summary(domain: str, payload: Mapping[str, Any]) -> str:
         width = len(rows[0]) if height and isinstance(rows[0], list) else 0
         return f"{query} ({width}x{height} 격자)"
     return f"{domain} 입력"
+
+
+def _controller_summary(
+    policy: ActionPolicy | RegistryPolicyProvider | None,
+) -> dict[str, Any]:
+    if policy is None:
+        return {
+            "active": False,
+            "kind": "",
+            "parameter_count": 0,
+            "feature_profile": "",
+        }
+    kind = str(
+        getattr(policy, "KIND", "")
+        or getattr(policy, "name", "")
+        or type(policy).__name__
+    )
+    parameter_count = getattr(policy, "parameter_count", 0)
+    profile = getattr(policy, "feature_profile", "")
+    return {
+        "active": True,
+        "kind": kind,
+        "parameter_count": (
+            parameter_count if type(parameter_count) is int else 0
+        ),
+        "feature_profile": str(getattr(profile, "value", profile)),
+    }
 
 
 def _result(

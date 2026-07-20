@@ -232,11 +232,17 @@ python tools/eval/review_typed_experience.py `
 4. `검증 학습 시도`는 승인 corpus를 위 네 split gate에 통과시킨다.
 5. 승격된 규칙만 artifact와 checkpoint manifest에 기록하고 즉시 runtime에 활성화한다.
 6. 다음 시작에서는 외부 artifact SHA-256, library SHA-256, 규칙 수를 모두 재검사한다.
+7. 별도 verifier-gated 학습에서 승격된 sparse controller checkpoint가 있으면 세 도메인의
+   action ranking에 함께 사용한다. controller는 사실을 추가하거나 성공을 선언할 수 없다.
+8. controller가 없거나 scoring이 실패하면 같은 `OperatorKernel`의 결정론적 탐색으로
+   복귀하며, 성공 결과는 두 경로 모두 primitive proof replay를 통과해야 한다.
 
 기본 파일은 `artifacts/experience/beginner-experience.db`,
 `artifacts/rules/beginner-active-rules.json`,
-`artifacts/rules/beginner-active-rules.checkpoint.json`이다. 이 경로는 background
-auto-training이 아니라 사용자가 직접 시작하는 reviewed learning이다.
+`artifacts/rules/beginner-active-rules.checkpoint.json`,
+`artifacts/controller/beginner-controller/manifest.json`이다. rule 경로는 background
+auto-training이 아니라 사용자가 직접 시작하는 reviewed learning이다. controller
+checkpoint는 별도 verifier-gated policy 학습에서 승격된 artifact를 배치하는 경로다.
 
 ## 현재 한계
 

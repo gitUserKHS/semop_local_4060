@@ -52,6 +52,13 @@ _CLAIM_ARITY = {
 }
 
 
+def _status_claims(
+    relation: str,
+    value: str,
+) -> list[tuple[str, tuple[str, ...]]]:
+    return [(relation, (item,)) for item in _split_items(value)]
+
+
 @dataclass(frozen=True)
 class LanguageClaim:
     relation: str
@@ -363,39 +370,63 @@ class LanguageTextParser:
             )
             return parsed, goal
 
+        korean_contrast = re.fullmatch(
+            r"(?P<positive>.+?)(?:이|가|은|는|을|를)?\s*"
+            r"(?:충족되었|준비되었|통과했|완료했|확보했)지만\s+"
+            r"(?P<negative>.+?)(?:이|가|은|는)?\s*"
+            r"(?:충족되지\s*않았다|준비되지\s*않았다|누락되었다|"
+            r"막혔다|불가능하다|실패했다)",
+            statement,
+        )
+        if korean_contrast:
+            return [
+                *_status_claims("SATISFIED", korean_contrast.group("positive")),
+                *_status_claims("BLOCKED", korean_contrast.group("negative")),
+            ], ""
+
         english_negative = re.fullmatch(
-            r"(?P<premise>.+?)\s+(?:is|are)\s+"
+            r"(?P<premises>.+?)\s+(?:is|are)\s+"
             r"(?:not\s+satisfied|not\s+met|missing|blocked|unavailable|absent)",
             statement,
             flags=re.IGNORECASE,
         )
         if english_negative:
-            return [("BLOCKED", (english_negative.group("premise"),))], ""
+            return _status_claims(
+                "BLOCKED", english_negative.group("premises")
+            ), ""
 
         korean_negative = re.fullmatch(
-            r"(?P<premise>.+?)(?:이|가|은|는)?\s*"
-            r"(?:충족되지\s*않았다|준비되지\s*않았다|없다|누락되었다|막혔다|불가능하다)",
+            r"(?P<premises>.+?)(?:이|가|은|는|을|를)?\s*"
+            r"(?:충족되지\s*않았다|준비되지\s*않았다|없다|누락되었다|"
+            r"막혔다|불가능하다|실패했다)",
             statement,
         )
         if korean_negative:
-            return [("BLOCKED", (korean_negative.group("premise"),))], ""
+            return _status_claims(
+                "BLOCKED", korean_negative.group("premises")
+            ), ""
 
         english_positive = re.fullmatch(
-            r"(?P<premise>.+?)\s+(?:is|are)\s+"
+            r"(?P<premises>.+?)\s+(?:is|are)\s+"
             r"(?:satisfied|met|available|ready|present)",
             statement,
             flags=re.IGNORECASE,
         )
         if english_positive:
-            return [("SATISFIED", (english_positive.group("premise"),))], ""
+            return _status_claims(
+                "SATISFIED", english_positive.group("premises")
+            ), ""
 
         korean_positive = re.fullmatch(
-            r"(?P<premise>.+?)(?:이|가|은|는|을|를)?\s*"
-            r"(?:충족되었다|준비되었다|통과했다|완료되었다|있다|확보되었다)",
+            r"(?P<premises>.+?)(?:만)?(?:이|가|은|는|을|를)?\s*"
+            r"(?:충족되었다|준비되었다|통과했다|완료되었다|있다|확보되었다|"
+            r"충족했다|준비했다|완료했다|확보했다)",
             statement,
         )
         if korean_positive:
-            return [("SATISFIED", (korean_positive.group("premise"),))], ""
+            return _status_claims(
+                "SATISFIED", korean_positive.group("premises")
+            ), ""
 
         english_question = re.fullmatch(
             r"can\s+(?:(?:we|i|the\s+system|this\s+system)\s+)?(?P<goal>.+)",

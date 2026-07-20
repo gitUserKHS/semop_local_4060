@@ -170,7 +170,7 @@ python tools/eval/evaluate_raw_grounded_self_learning.py `
 - train structure 6개, held-out structure 3개, overlap 0
 - positive expansion `51 -> 30`, 41.2% 감소
 - verified solve rate 100%, proof soundness 100%, false positive 0
-- sparse policy 27 parameters
+- `typed_structure` sparse policy 22 parameters
 
 이 수치는 현재 controlled adapter 분포의 구조 전이 증거이며, 자유로운 언어·수학·비전
 전체 능력의 완성을 뜻하지 않는다.

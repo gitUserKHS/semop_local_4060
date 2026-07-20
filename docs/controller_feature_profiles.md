@@ -59,6 +59,7 @@ Domain adapter
 
 - 새 `train_tiny_controller.py` 실행 기본값: `typed_structure`
 - 새 LODO 실험 기본값: `typed_structure`
+- 새 `StructuralPolicyLearner()` 학습 기본값: `typed_structure`
 - `TinyControllerConfig()` 기본값: `full`
 
 마지막 기본값은 기존 코드를 호출하거나 v2-v5 artifact를 읽는 경우의 의미를 보존하기

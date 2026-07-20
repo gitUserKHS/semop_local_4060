@@ -160,7 +160,7 @@ python -m pytest tests/test_typed_operator_hierarchical_brain.py -q
 
 | controller | parameters | updates | combined artifact | 학습 포함 wall time |
 |---|---:|---:|---:|---:|
-| sparse | 16 | 1 | 4,443 B | 약 0.13초 |
+| sparse `typed_structure` | 12 | 1 | 4,279 B | 약 0.12초 |
 | recurrent diagnostic | 29,834 | 60 | 약 152 KiB | 약 1.6초, 첫 PyTorch import 포함 약 4.8초 |
 | recurrent full | 5,837,578 | 60 | 28,858,505 B | 약 7.0초 |
 

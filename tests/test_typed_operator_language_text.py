@@ -85,6 +85,38 @@ class LanguageTextParserTests(unittest.TestCase):
             )
         )
 
+    def test_korean_grouped_and_contrast_statuses_split_into_exact_claims(self) -> None:
+        grouped = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "관리자 승인과 안전 확인을 완료했다.",
+                use_legacy_heuristics=False,
+            )
+        )
+        contrast = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "관리자 승인은 완료했지만 안전 확인은 실패했다.",
+                use_legacy_heuristics=False,
+            )
+        )
+
+        grouped_claims = {
+            (claim.relation, claim.arguments) for claim in grouped.claims
+        }
+        contrast_claims = {
+            (claim.relation, claim.arguments) for claim in contrast.claims
+        }
+        self.assertFalse(grouped.unparsed_statements)
+        self.assertFalse(contrast.unparsed_statements)
+        self.assertEqual(
+            grouped_claims,
+            {
+                ("SATISFIED", ("관리자_승인",)),
+                ("SATISFIED", ("안전_확인",)),
+            },
+        )
+        self.assertIn(("SATISFIED", ("관리자_승인",)), contrast_claims)
+        self.assertIn(("BLOCKED", ("안전_확인",)), contrast_claims)
+
     def test_ambiguous_text_does_not_fabricate_observed_claims(self) -> None:
         parsed = LanguageTextParser().parse(
             LanguageTextProblem(
@@ -146,6 +178,42 @@ class LanguageTextReasoningTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(str(instance.goals[0].atom), "READY(랙_적재)")
         self.assertEqual(len(result.proof), 3)
+
+    def test_grouped_completion_proves_ready(self) -> None:
+        instance, result = _solve(
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+            "관리자 승인과 안전 확인을 완료했다."
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(랙_적재)")
+
+    def test_only_marker_leaves_the_other_requirement_unproved(self) -> None:
+        instance, result = _solve(
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+            "관리자 승인만 완료했다."
+        )
+
+        self.assertFalse(result.success)
+        self.assertFalse(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(랙_적재)")
+        satisfied = {
+            fact.atom.arguments[0].name
+            for fact in instance.state.facts
+            if fact.atom.predicate.name == "SATISFIED"
+        }
+        self.assertEqual(satisfied, {"관리자_승인"})
+
+    def test_contrast_status_proves_not_ready(self) -> None:
+        instance, result = _solve(
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+            "관리자 승인은 완료했지만 안전 확인은 실패했다."
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "NOT_READY(랙_적재)")
 
     def test_negated_requirement_proves_not_ready(self) -> None:
         instance, result = _solve(
