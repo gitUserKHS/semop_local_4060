@@ -119,7 +119,10 @@ class TypedExperienceReviewCliTests(unittest.TestCase):
         self.assertEqual(stats_code, 0, stats_err)
         self.assertEqual(json.loads(stats_out)["requests"], 1)
         self.assertEqual(list_code, 0)
-        self.assertEqual(json.loads(list_out)[0]["status"], "pending")
+        listed = json.loads(list_out)[0]
+        self.assertEqual(listed["status"], "pending")
+        self.assertEqual(listed["grounding_uncertainties"], 0)
+        self.assertIn("missing tests", listed["latest_rationale"])
         self.assertEqual(rejected_code, 1)
         self.assertIn("--attest-human-review is required", rejected_err)
         self.assertEqual(review_code, 0, review_err)

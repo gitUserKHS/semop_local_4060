@@ -157,6 +157,7 @@ def _print_items(
         print(
             f"{item.request_digest}\t{item.domain}\t{item.status.value}\t"
             f"priority={item.priority}\toccurrences={item.occurrences}\t"
+            f"grounding_uncertainties={item.grounding_uncertainties}\t"
             f"triggers={','.join(item.triggers)}"
         )
 
@@ -174,6 +175,8 @@ def _item_dict(item: ExperienceQueueItem) -> dict[str, Any]:
         "triggers": list(item.triggers),
         "status": item.status.value,
         "priority": item.priority,
+        "grounding_uncertainties": item.grounding_uncertainties,
+        "latest_rationale": item.latest_rationale,
         "latest_review": (
             item.latest_review.to_dict()
             if item.latest_review is not None

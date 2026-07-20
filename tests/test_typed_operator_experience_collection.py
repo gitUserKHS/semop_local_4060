@@ -103,6 +103,63 @@ class TypedExperienceCollectorTests(unittest.TestCase):
             {"language": 1, "math": 1, "vision": 1},
         )
 
+    def test_success_with_partial_grounding_is_collected_for_review(self) -> None:
+        language = LanguageTextProblem(
+            "막힌 통로에서는 지게차 이동을 즉시 중단한다. "
+            "관리자 승인과 안전 확인 없이 랙 적재를 진행하지 않는다. "
+            "관리자 승인이 충족되었다. 안전 확인이 충족되었다.",
+            use_legacy_heuristics=False,
+        )
+        white = (255, 255, 255)
+        blue = (0, 0, 255)
+        vision = RasterVisionProblem(
+            RasterImage.from_rows(
+                (
+                    [white] * 6,
+                    [white, RED, RED, RED, white, white],
+                    [white] * 6,
+                    [white, white, blue, blue, blue, white],
+                    [white] * 6,
+                )
+            ),
+            (VisionCountGoal("all", 2),),
+        )
+
+        with TemporaryDirectory() as directory:
+            store = TypedExperienceStore(Path(directory) / "experience.db")
+            collector = TypedExperienceCollector(store)
+            language_run = collector.run(
+                TypedDomainRequest("language", language),
+                event_id="partial-language",
+            )
+            vision_run = collector.run(
+                TypedDomainRequest("vision", vision),
+                event_id="partial-vision",
+            )
+            exact_math = collector.run(
+                TypedDomainRequest("math", "2 + 3 == 5"),
+                event_id="exact-math",
+            )
+            language_item = store.get_item(language_run.request_digest)
+            vision_item = store.get_item(vision_run.request_digest)
+
+        self.assertTrue(language_run.succeeded and language_run.captured)
+        self.assertEqual(
+            language_run.trigger,
+            ExperienceTrigger.GROUNDING_UNCERTAINTY,
+        )
+        self.assertEqual(language_item.grounding_uncertainties, 1)
+        self.assertIn("unparsed_statements=1", language_item.latest_rationale)
+        self.assertTrue(vision_run.succeeded and vision_run.captured)
+        self.assertEqual(
+            vision_run.trigger,
+            ExperienceTrigger.GROUNDING_UNCERTAINTY,
+        )
+        self.assertEqual(vision_item.grounding_uncertainties, 1)
+        self.assertIn("proposed_groundings=1", vision_item.latest_rationale)
+        self.assertTrue(exact_math.succeeded)
+        self.assertFalse(exact_math.captured)
+
     def test_matching_proposals_can_be_ignored_without_losing_mismatches(
         self,
     ) -> None:

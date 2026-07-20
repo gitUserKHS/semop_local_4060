@@ -2,9 +2,10 @@
 
 ## 목적
 
-이 경로는 언어, 수학, 비전의 실제 typed runtime 실행에서 실패와 외부 제안을
-지속적으로 모으고, 독립 검토된 사례만 새 operator rule의 근거로 사용하는 작은
-자가 학습 루프다. 학습기가 사실을 직접 추가하거나 성공을 선언할 권한은 없다.
+이 경로는 언어, 수학, 비전의 실제 typed runtime 실행에서 실패, 외부 제안, 성공한
+proof 안에 남은 grounding 불확실성을 지속적으로 모으고, 독립 검토된 사례만 새
+operator rule의 근거로 사용하는 작은 자가 학습 루프다. 학습기가 사실을 직접
+추가하거나 성공을 선언할 권한은 없다.
 
 현재 구현이 학습하는 것은 두 종류다.
 
@@ -46,6 +47,9 @@ flowchart LR
 - `experience_collection.py`
   - production `UnifiedTypedReasoner.run` 결과를 관찰한다.
   - 미해결, runtime 예외, replay 실패, 예상 결과 불일치를 기본 수집한다.
+  - proof가 성공해도 언어의 `unparsed_statements`나 공통 grounding trace의
+    `PROPOSED` fact가 남으면 `grounding_uncertainty`로 검토 큐에 넣는다.
+  - 완전히 파싱되고 proposal도 없는 정상 성공은 기본적으로 저장하지 않는다.
   - 승인된 review를 네 split으로 grounding하고 cross-split 누수를 검사한다.
 - `rule_discovery.py`, `rule_learning.py`
   - training에서 rule 후보를 만들고 validation과 candidate heldout에서 개별 반증한다.
@@ -67,6 +71,12 @@ flowchart LR
 identity가 들어오는 것을 막기 위해 `human:` reviewer id를 요구한다. 이 prefix는
 암호학적 인증이 아니므로, 실제 서비스에서는 호출 계층이 reviewer 로그인을 인증해야
 한다.
+
+성공한 proof와 grounding 완전성도 서로 다른 축이다. 예를 들어 명시된 조건만으로
+목표는 증명됐어도 같은 입력의 다른 문장이 파싱되지 않았거나, 비전 장면에 검증되지
+않은 관계가 남을 수 있다. 이 경우 기존 proof는 그대로 유효하지만 해당 raw request를
+검토 후보로 보존한다. 검토 CLI의 `grounding_uncertainties`와 `latest_rationale`에서
+원인을 확인할 수 있다.
 
 ## 네 단계 split
 
@@ -225,6 +235,15 @@ python tools/eval/review_typed_experience.py `
 따라서 현재 기능의 정확한 이름은 `review-gated online typed rule learning`이다.
 완전 자율 의미 학습이라고 부르지 않는다.
 
+## 연구 연결
+
+[SelectiveNet](https://proceedings.mlr.press/v97/geifman19a.html)은 예측을 무조건
+수용하는 대신 reject option과 risk-coverage 균형을 함께 학습한다. 또한
+[Post-hoc Estimators for Learning to Defer to an Expert](https://proceedings.neurips.cc/paper_files/paper/2022/hash/bc8f76d9caadd48f77025b1c889d2e2d-Abstract-Conference.html)는
+모델 오류 위험과 전문가 비용을 기준으로 사후 deferral을 학습한다. SemOp v1은 이
+아이디어를 신경 confidence로 흉내 내지 않고, typed parser가 직접 관측한 `unparsed`와
+`PROPOSED` 신호만 저비용 review acquisition 기준으로 사용한다.
+
 ## 검증
 
 ```powershell
@@ -238,6 +257,8 @@ python -m pytest
 통합 테스트는 다음을 확인한다.
 
 - 언어 미해결, 수학 parsing 실패, 비전 judge 제안의 자동 수집
+- 성공한 언어의 미파싱 문장과 성공한 비전의 proposal 자동 수집
+- proposal이 없는 exact 수학 성공의 비수집 대조군
 - 보통의 replay-verified 성공을 기본적으로 저장하지 않는 sampling 정책
 - proposal과 human-reviewed label의 권한 분리
 - SQLite idempotency, digest 변조 탐지, resource limit

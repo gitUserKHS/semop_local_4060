@@ -47,6 +47,7 @@ class ExperienceProposalAuthority(str, Enum):
 
 class ExperienceTrigger(str, Enum):
     GROUNDING_FAILURE = "grounding_failure"
+    GROUNDING_UNCERTAINTY = "grounding_uncertainty"
     RUNTIME_EXCEPTION = "runtime_exception"
     UNSOLVED = "unsolved"
     REPLAY_FAILURE = "replay_failure"
@@ -405,6 +406,8 @@ class ExperienceQueueItem:
     triggers: tuple[str, ...]
     status: ExperienceQueueStatus
     priority: int
+    grounding_uncertainties: int = 0
+    latest_rationale: str = ""
     latest_review: ExperienceReviewRecord | None = None
 
     @property
@@ -993,12 +996,17 @@ def _summarize_item(
         and item.proposed_expected_solved != item.observed_success
         for item in observations
     )
+    grounding_uncertainties = sum(
+        item.trigger is ExperienceTrigger.GROUNDING_UNCERTAINTY
+        for item in observations
+    )
     priority = (
         5 * sum(item.observed_success is None for item in observations)
         + 4 * int(conflicted)
         + 3 * unverified
         + 3 * mismatches
         + 2 * observed_failures
+        + 2 * grounding_uncertainties
         + min(len(observations), 10)
     )
     return ExperienceQueueItem(
@@ -1013,6 +1021,8 @@ def _summarize_item(
         triggers=tuple(sorted({item.trigger.value for item in observations})),
         status=status,
         priority=priority,
+        grounding_uncertainties=grounding_uncertainties,
+        latest_rationale=observations[-1].rationale,
         latest_review=review,
     )
 

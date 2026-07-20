@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from itertools import combinations
 from uuid import uuid4
 
+from .contracts import DomainInstance
 from .engine import ActionPolicy, RegistryPolicyProvider
 from .experience import (
     GroundedLearningBatch,
@@ -20,7 +21,7 @@ from .experience_queue import (
     TypedExperienceStore,
     observation_from_request,
 )
-from .model import SolveBudget
+from .model import FactStatus, SolveBudget
 from .rule_discovery import VerifiedRuleLibrary
 from .rule_learning import RuleLearningResult, VerifiedRuleLearningLoop
 from .runtime import (
@@ -170,15 +171,20 @@ class TypedExperienceCollector:
                 error_message="; ".join(result.diagnostics),
             )
 
+        if result.instance is None:
+            raise ValueError("typed experience result lacks its grounded instance")
+        grounding_concerns = _grounding_concerns(result.instance)
         resolved_trigger = explicit_trigger or _infer_trigger(
             typed.success,
             typed.verified,
             proposed_expected_solved,
+            grounding_uncertainty=bool(grounding_concerns),
         )
         should_capture = (
             explicit_trigger is not None
             or not typed.success
             or not typed.verified
+            or bool(grounding_concerns)
             or (
                 proposed_expected_solved is not None
                 and (
@@ -195,8 +201,6 @@ class TypedExperienceCollector:
                 capture=None,
                 trigger=None,
             )
-        if result.instance is None:
-            raise ValueError("typed experience result lacks its grounded instance")
         observation = observation_from_request(
             request,
             event_id=resolved_event_id,
@@ -205,7 +209,7 @@ class TypedExperienceCollector:
             proposed_expected_solved=proposed_expected_solved,
             proposal_authority=authority,
             trigger=resolved_trigger,
-            rationale=rationale,
+            rationale=_append_grounding_concerns(rationale, grounding_concerns),
             source=source,
             grounded_fingerprint=grounded_instance_fingerprint(result.instance),
             proof_program=tuple(
@@ -411,6 +415,8 @@ def _infer_trigger(
     success: bool,
     verified: bool,
     proposed_expected_solved: bool | None,
+    *,
+    grounding_uncertainty: bool = False,
 ) -> ExperienceTrigger:
     if proposed_expected_solved is not None and proposed_expected_solved != success:
         return ExperienceTrigger.EXPECTATION_MISMATCH
@@ -418,7 +424,34 @@ def _infer_trigger(
         return ExperienceTrigger.REPLAY_FAILURE
     if not success:
         return ExperienceTrigger.UNSOLVED
+    if grounding_uncertainty:
+        return ExperienceTrigger.GROUNDING_UNCERTAINTY
     return ExperienceTrigger.SUCCESS_SAMPLE
+
+
+def _grounding_concerns(instance: DomainInstance) -> tuple[str, ...]:
+    concerns: list[str] = []
+    unparsed_count = len(instance.metadata.get("unparsed_statements", ()))
+    if unparsed_count:
+        concerns.append(f"unparsed_statements={unparsed_count}")
+    proposed_count = sum(
+        record.fact is not None and record.fact.status is FactStatus.PROPOSED
+        for record in instance.grounding_trace.records
+    )
+    if proposed_count:
+        concerns.append(f"proposed_groundings={proposed_count}")
+    return tuple(concerns)
+
+
+def _append_grounding_concerns(
+    rationale: str,
+    concerns: Sequence[str],
+) -> str:
+    normalized = rationale.strip()
+    if not concerns:
+        return normalized
+    grounding_note = "runtime grounding uncertainty: " + ", ".join(concerns)
+    return f"{normalized} | {grounding_note}" if normalized else grounding_note
 
 
 def _cross_role_overlap(
