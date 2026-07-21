@@ -55,8 +55,19 @@ _CLAIM_ARITY = {
 def _status_claims(
     relation: str,
     value: str,
+    *,
+    known_requirements: frozenset[str] = frozenset(),
+    semantic_suffix: str = "",
 ) -> list[tuple[str, tuple[str, ...]]]:
-    return [(relation, (item,)) for item in _split_items(value)]
+    claims: list[tuple[str, tuple[str, ...]]] = []
+    for item in _split_items(value):
+        resolved = item
+        if semantic_suffix and item not in known_requirements:
+            candidate = f"{item}_{semantic_suffix}"
+            if candidate in known_requirements:
+                resolved = candidate
+        claims.append((relation, (resolved,)))
+    return claims
 
 
 @dataclass(frozen=True)
@@ -217,7 +228,15 @@ class LanguageTextParser:
                         )
                 continue
 
-            parsed, parsed_goal = self._parse_sentence(clean)
+            known_requirements = frozenset(
+                claim.arguments[1]
+                for claim in claims.values()
+                if claim.verified and claim.relation == "REQUIRES"
+            )
+            parsed, parsed_goal = self._parse_sentence(
+                clean,
+                known_requirements=known_requirements,
+            )
             if parsed:
                 if parsed_goal:
                     current_goal = parsed_goal
@@ -311,6 +330,8 @@ class LanguageTextParser:
     @staticmethod
     def _parse_sentence(
         statement: str,
+        *,
+        known_requirements: frozenset[str] = frozenset(),
     ) -> tuple[list[tuple[str, tuple[str, ...]]], str]:
         parsed: list[tuple[str, tuple[str, ...]]] = []
 
@@ -372,16 +393,29 @@ class LanguageTextParser:
 
         korean_contrast = re.fullmatch(
             r"(?P<positive>.+?)(?:이|가|은|는|을|를)?\s*"
-            r"(?:충족되었|준비되었|통과했|완료했|확보했)지만\s+"
+            r"(?P<positive_status>충족되었|준비되었|통과했|완료했|확보했)지만\s+"
             r"(?P<negative>.+?)(?:이|가|은|는)?\s*"
             r"(?:충족되지\s*않았다|준비되지\s*않았다|누락되었다|"
-            r"막혔다|불가능하다|실패했다)",
+            r"완료되지\s*않았다|막혔다|불가능하다|실패했다|"
+            r"아직(?:이다|이야|입니다|이에요))",
             statement,
         )
         if korean_contrast:
+            positive_status = korean_contrast.group("positive_status")
             return [
-                *_status_claims("SATISFIED", korean_contrast.group("positive")),
-                *_status_claims("BLOCKED", korean_contrast.group("negative")),
+                *_status_claims(
+                    "SATISFIED",
+                    korean_contrast.group("positive"),
+                    known_requirements=known_requirements,
+                    semantic_suffix=(
+                        "통과" if positive_status.startswith("통과") else ""
+                    ),
+                ),
+                *_status_claims(
+                    "BLOCKED",
+                    korean_contrast.group("negative"),
+                    known_requirements=known_requirements,
+                ),
             ], ""
 
         english_negative = re.fullmatch(
@@ -398,7 +432,9 @@ class LanguageTextParser:
         korean_negative = re.fullmatch(
             r"(?P<premises>.+?)(?:이|가|은|는|을|를)?\s*"
             r"(?:충족되지\s*않았다|준비되지\s*않았다|없다|누락되었다|"
-            r"막혔다|불가능하다|실패했다)",
+            r"완료되지\s*않았다|충족되지\s*않았어|준비되지\s*않았어|"
+            r"완료되지\s*않았어|없어|막혔어|불가능해|실패했어|"
+            r"막혔다|불가능하다|실패했다|아직(?:이다|이야|입니다|이에요))",
             statement,
         )
         if korean_negative:
@@ -419,13 +455,20 @@ class LanguageTextParser:
 
         korean_positive = re.fullmatch(
             r"(?P<premises>.+?)(?:만)?(?:이|가|은|는|을|를)?\s*"
-            r"(?:충족되었다|준비되었다|통과했다|완료되었다|있다|확보되었다|"
-            r"충족했다|준비했다|완료했다|확보했다)",
+            r"(?P<positive_status>충족되었다|준비되었다|통과했다|완료되었다|"
+            r"있다|확보되었다|충족했다|준비했다|완료했다|확보했다|"
+            r"충족됐어|준비됐어|통과했어|완료됐어|완료했어|있어|확보했어)",
             statement,
         )
         if korean_positive:
+            positive_status = korean_positive.group("positive_status")
             return _status_claims(
-                "SATISFIED", korean_positive.group("premises")
+                "SATISFIED",
+                korean_positive.group("premises"),
+                known_requirements=known_requirements,
+                semantic_suffix=(
+                    "통과" if positive_status.startswith("통과") else ""
+                ),
             ), ""
 
         english_question = re.fullmatch(
@@ -452,6 +495,15 @@ class LanguageTextParser:
         )
         if korean_question:
             goal = _normalize_slot(korean_question.group("goal"))
+            return [("GOAL", (goal,))], goal
+
+        korean_permission_question = re.fullmatch(
+            r"(?:이제\s+)?(?P<goal>.+?)(?:해도|하여도)\s*"
+            r"(?:돼|되나|되나요|됩니까|될까|괜찮아|괜찮을까)",
+            statement,
+        )
+        if korean_permission_question:
+            goal = _normalize_slot(korean_permission_question.group("goal"))
             return [("GOAL", (goal,))], goal
 
         korean_how = re.fullmatch(

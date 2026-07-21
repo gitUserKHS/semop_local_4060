@@ -215,8 +215,8 @@ controller now also trains from three raw language examples through the public
 grounding boundary and reduces untouched raw math and pixel expansions from 6 to 2
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
-online reviewed-learning and sparse grounding self-learning milestones, local
-`python -m pytest -q` validation now passes 722 tests plus 35 subtests;
+online reviewed-learning and sparse grounding self-learning milestones, the local
+2026-07-21 `python -m pytest -q` validation passes 727 tests plus 35 subtests;
 `shadow` remains the default.
 
 - `app.py`

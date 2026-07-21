@@ -117,6 +117,47 @@ class LanguageTextParserTests(unittest.TestCase):
         self.assertIn(("SATISFIED", ("관리자_승인",)), contrast_claims)
         self.assertIn(("BLOCKED", ("안전_확인",)), contrast_claims)
 
+    def test_colloquial_korean_status_and_permission_question_are_explicit(self) -> None:
+        parsed = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "배포하려면 테스트 통과와 관리자 승인이 필요해. "
+                "테스트 통과와 관리자 승인을 완료했어. 이제 배포해도 돼?",
+                use_legacy_heuristics=False,
+            )
+        )
+        claims = {(claim.relation, claim.arguments) for claim in parsed.claims}
+
+        self.assertFalse(parsed.unparsed_statements)
+        self.assertIn(("GOAL", ("배포",)), claims)
+        self.assertIn(("SATISFIED", ("테스트_통과",)), claims)
+        self.assertIn(("SATISFIED", ("관리자_승인",)), claims)
+
+    def test_passed_verb_resolves_only_to_declared_requirement(self) -> None:
+        parsed = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "배포하려면 테스트 통과와 관리자 승인이 필요해. "
+                "테스트는 통과했지만 관리자 승인은 아직이야.",
+                use_legacy_heuristics=False,
+            )
+        )
+        claims = {(claim.relation, claim.arguments) for claim in parsed.claims}
+
+        self.assertFalse(parsed.unparsed_statements)
+        self.assertIn(("SATISFIED", ("테스트_통과",)), claims)
+        self.assertNotIn(("SATISFIED", ("테스트",)), claims)
+        self.assertIn(("BLOCKED", ("관리자_승인",)), claims)
+
+    def test_uncertain_colloquial_status_remains_unparsed(self) -> None:
+        parsed = LanguageTextParser().parse(
+            LanguageTextProblem(
+                "관리자 승인은 아마 곧 날 거야.",
+                use_legacy_heuristics=False,
+            )
+        )
+
+        self.assertEqual(parsed.claims, ())
+        self.assertEqual(parsed.unparsed_statements, ("관리자 승인은 아마 곧 날 거야.",))
+
     def test_ambiguous_text_does_not_fabricate_observed_claims(self) -> None:
         parsed = LanguageTextParser().parse(
             LanguageTextProblem(
@@ -151,6 +192,26 @@ class LanguageTextReasoningTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(len(result.proof), 3)
         self.assertEqual(str(instance.goals[0].atom), "READY(배포)")
+
+    def test_colloquial_completion_reaches_verified_ready_goal(self) -> None:
+        instance, result = _solve(
+            "배포하려면 테스트 통과와 관리자 승인이 필요해. "
+            "테스트 통과와 관리자 승인을 완료했어. 이제 배포해도 돼?"
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(배포)")
+
+    def test_colloquial_missing_approval_reaches_verified_not_ready_goal(self) -> None:
+        instance, result = _solve(
+            "배포하려면 테스트 통과와 관리자 승인이 필요해. "
+            "테스트는 통과했지만 관리자 승인은 아직이야. 배포할 수 있어?"
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "NOT_READY(배포)")
 
     def test_korean_without_prohibition_does_not_invent_completion(self) -> None:
         instance, result = _solve(
