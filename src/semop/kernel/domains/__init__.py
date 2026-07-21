@@ -1,4 +1,5 @@
 from .base import DomainInstance, TypedDomainAdapter
+from .coding import CodingInputAdapter, CodingProblem
 from .composed_scene import (
     SceneCountCondition,
     SceneThresholdAdapter,
@@ -70,6 +71,8 @@ from .vision import VisionProblem, VisionRelationGoal, VisionWorldAdapter
 
 __all__ = [
     "DomainInstance",
+    "CodingInputAdapter",
+    "CodingProblem",
     "ArithmeticDslError",
     "ArithmeticExpressionAdapter",
     "GeometryDslError",

@@ -443,7 +443,7 @@ _PAGE = r'''<!doctype html>
     h1 { margin: 14px 0 8px; font-size: clamp(32px, 6vw, 50px); letter-spacing: -0.04em; }
     .hero p { margin: 0 auto; max-width: 650px; color: var(--muted); line-height: 1.7; }
     .scope {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
       margin: 24px 0; padding: 12px; background: rgba(255,255,255,.72);
       border: 1px solid var(--line); border-radius: 20px;
     }
@@ -453,7 +453,7 @@ _PAGE = r'''<!doctype html>
       overflow: hidden; background: rgba(255,255,255,.93); border: 1px solid var(--line);
       border-radius: 26px; box-shadow: 0 22px 70px rgba(57, 39, 78, .10);
     }
-    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 10px; gap: 8px; border-bottom: 1px solid var(--line); }
+    .tabs { display: grid; grid-template-columns: repeat(4, 1fr); padding: 10px; gap: 8px; border-bottom: 1px solid var(--line); }
     .tab {
       padding: 13px 8px; border: 0; border-radius: 14px; color: var(--muted);
       background: transparent; cursor: pointer; font-weight: 800;
@@ -552,6 +552,7 @@ _PAGE = r'''<!doctype html>
     </header>
 
     <section class="scope" aria-label="현재 지원 범위">
+      <div><strong>코딩</strong>C++ 생성·컴파일·실행 검증</div>
       <div><strong>언어</strong>목표와 필요 조건 확인</div>
       <div><strong>수학</strong>정확한 계산식과 일차방정식</div>
       <div><strong>비전</strong>작은 색상 격자 측정</div>
@@ -559,12 +560,28 @@ _PAGE = r'''<!doctype html>
 
     <section class="workspace">
       <nav class="tabs" aria-label="문제 종류">
-        <button class="tab" type="button" data-domain="language" aria-selected="true">1. 언어 조건</button>
-        <button class="tab" type="button" data-domain="math" aria-selected="false">2. 수학식</button>
-        <button class="tab" type="button" data-domain="vision" aria-selected="false">3. 색상 비전</button>
+        <button class="tab" type="button" data-domain="coding" aria-selected="true">1. 코딩</button>
+        <button class="tab" type="button" data-domain="language" aria-selected="false">2. 언어 조건</button>
+        <button class="tab" type="button" data-domain="math" aria-selected="false">3. 수학식</button>
+        <button class="tab" type="button" data-domain="vision" aria-selected="false">4. 색상 비전</button>
       </nav>
 
-      <form class="pane active" id="pane-language" data-domain="language">
+      <form class="pane active" id="pane-coding" data-domain="coding">
+        <h2>알고리즘 문제를 C++로 풀고 검증하기</h2>
+        <p class="lead">문제 한 문장을 넣으면 후보 알고리즘을 고르고, 코드를 컴파일한 뒤 등록된 표본·무작위 테스트를 실행해.</p>
+        <div class="examples">
+          <button class="example" type="button" data-coding-example="dijkstra">예제: 최단 거리</button>
+          <button class="example" type="button" data-coding-example="prefix">예제: 구간 합</button>
+        </div>
+        <div class="field">
+          <label for="coding-statement">풀고 싶은 문제</label>
+          <textarea id="coding-statement" maxlength="4000" required>Given a weighted graph with N nodes and M nonnegative edges, print the shortest distance from node 1 to every node.</textarea>
+          <span class="hint">현재는 검증기가 등록된 대표 알고리즘 문제에서 가장 신뢰할 수 있어.</span>
+        </div>
+        <button class="solve" type="submit">C++ 풀이 만들고 검증하기</button>
+      </form>
+
+      <form class="pane" id="pane-language" data-domain="language">
         <h2>조건이 모두 갖춰졌는지 확인하기</h2>
         <p class="lead">목표 하나와 그 목표에 필요한 조건을 적어 줘. 쉼표로 여러 개를 나눌 수 있어.</p>
         <div class="examples">
@@ -635,6 +652,10 @@ _PAGE = r'''<!doctype html>
         <ul id="result-input"></ul>
       </div>
       <div class="trust" id="result-trust"></div>
+      <details id="result-artifact-wrap" hidden open>
+        <summary>생성된 코드 보기</summary>
+        <pre id="result-artifact"></pre>
+      </details>
       <div class="review-actions" id="result-review" hidden>
         <h3>이 입력을 학습 후보로 검토하기</h3>
         <p>현재 결과를 그대로 믿는 버튼이 아니야. 정확한 입력을 보고 앞으로 이 문제가 풀려야 하는지 직접 표시해 줘.</p>
@@ -702,6 +723,15 @@ _PAGE = r'''<!doctype html>
       blocked: ['배포', '테스트 통과, 관리자 승인', '테스트 통과', '관리자 승인'],
       missing: ['배포', '테스트 통과, 관리자 승인', '테스트 통과', '']
     };
+    const codingExamples = {
+      dijkstra: 'Given a weighted graph with N nodes and M nonnegative edges, print the shortest distance from node 1 to every node.',
+      prefix: 'Given an array and many range sum queries, print the sum from left to right for every query.'
+    };
+    document.querySelectorAll('[data-coding-example]').forEach(button => {
+      button.addEventListener('click', () => {
+        document.getElementById('coding-statement').value = codingExamples[button.dataset.codingExample];
+      });
+    });
     document.querySelectorAll('[data-language-example]').forEach(button => {
       button.addEventListener('click', () => {
         const values = languageExamples[button.dataset.languageExample];
@@ -740,6 +770,9 @@ _PAGE = r'''<!doctype html>
     renderVision();
 
     function payloadFor(domain) {
+      if (domain === 'coding') {
+        return {statement: document.getElementById('coding-statement').value};
+      }
       if (domain === 'language') {
         return {
           goal: document.getElementById('lang-goal').value,
@@ -766,6 +799,8 @@ _PAGE = r'''<!doctype html>
       document.getElementById('result-trust').textContent = '입력을 고치면 같은 자리에서 다시 검증할 수 있어.';
       document.getElementById('result-proof').textContent = '아직 실행된 증명이 없어.';
       document.getElementById('result-technical').textContent = '';
+      document.getElementById('result-artifact').textContent = '';
+      document.getElementById('result-artifact-wrap').hidden = true;
       resultBox.scrollIntoView({behavior: 'smooth', block: 'start'});
     }
 
@@ -789,6 +824,10 @@ _PAGE = r'''<!doctype html>
       document.getElementById('result-trust').textContent = result.trust_notice;
       document.getElementById('result-proof').textContent = result.proof;
       document.getElementById('result-technical').textContent = JSON.stringify(result.technical, null, 2);
+      const artifactWrap = document.getElementById('result-artifact-wrap');
+      const artifact = result.artifact || '';
+      artifactWrap.hidden = !artifact;
+      document.getElementById('result-artifact').textContent = artifact;
       resultReview.hidden = !experienceEnabled || !lastSubmission;
       document.getElementById('current-review-attest').checked = false;
       document.getElementById('current-review-status').textContent = '';

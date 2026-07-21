@@ -7,7 +7,7 @@ This folder contains the active documentation for SemOp Local 4060.
 - `../README.md`
   - top-level overview, quick start, and validation status
 - `beginner_guide_ko.md`
-  - 코드나 DSL 없이 언어·수학·색상 비전을 실행하는 한국어 첫걸음
+  - 코드나 DSL 없이 코딩·언어·수학·색상 비전을 실행하는 한국어 첫걸음
 - `usage_manual.md`
   - practical guide for the larger legacy and research studio
 - `project_structure.md`
@@ -30,6 +30,8 @@ This folder contains the active documentation for SemOp Local 4060.
 
 - `operator_intelligence_system.md`
   - high-level definition of the logic-operator intelligence architecture
+- `executable_operator_reasoning.md`
+  - Operator-CoT 조언의 채택 범위, 신뢰 경계, 저자원 학습 단계와 조합 일반화 gate
 - `low_resource_operator_intelligence.md`
   - mandatory sample-efficiency and ordinary-PC resource doctrine and evaluation gates
 - `compositional_operator_intelligence.md`

@@ -12,18 +12,19 @@ $env:PYTHONPATH = "src"
 python -m semop.beginner_web
 ```
 
-화면에서 `언어 조건`, `수학식`, `색상 비전` 중 하나를 고르고 예제 버튼을 누른 뒤
-`검증하기`를 누르면 된다. 외부 런타임 라이브러리나 LLM API는 필요하지 않다.
+화면에서 `코딩`, `언어 조건`, `수학식`, `색상 비전` 중 하나를 고르고 예제 버튼을 누른 뒤
+`검증하기`를 누르면 된다. LLM API는 필요하지 않으며, 코딩 탭만 로컬 `g++`가 필요하다.
 미증명·파싱 실패는 기본적으로 로컬 검토 큐에만 저장된다. 화면에서 사용자가 정확한
 입력과 기대 결과를 직접 승인한 사례만 검증 학습에 들어가며, 새 typed 규칙은 네 분할
 회귀 gate와 proof replay를 모두 통과한 경우에만 해시 확인 가능한 파일로 활성화된다.
-검증된 sparse controller checkpoint가 있으면 같은 작은 정책이 세 도메인의 연산자
+검증된 sparse controller checkpoint가 있으면 같은 작은 정책 인터페이스가 네 도메인의 연산자
 순서만 안내하고, 없으면 자동으로 결정론적 탐색을 사용한다. 어느 쪽이든 결론은 typed
 executor와 proof replay가 결정한다. `--no-experience`, `--no-learned-rules`,
 `--no-controller`로 각 기능을 독립적으로 끌 수 있다.
 
-현재 쉬운 화면의 범위는 통제된 목표·필요조건 문장, 정확한 계산식·일차방정식,
-작은 색상 격자다. 일반 자유 대화나 자연 사진 이해로 오해하지 않도록 각 결과에
+현재 쉬운 화면의 범위는 검증기가 등록된 C++ 알고리즘 문제, 통제된 목표·필요조건 문장,
+정확한 계산식·일차방정식, 작은 색상 격자다. 일반 자유 대화, 임의 코딩 문제의 정답 보장,
+자연 사진 이해로 오해하지 않도록 각 결과에
 검증 범위와 현실 증거 여부를 함께 표시한다. 자세한 그림 설명은
 [한국어 첫걸음 가이드](docs/beginner_guide_ko.md)에 있다.
 
@@ -65,6 +66,7 @@ python tools/eval/evaluate_low_resource_transfer.py
 python tools/eval/evaluate_low_resource_transfer.py --suite language-math-vision
 python tools/eval/evaluate_low_resource_transfer.py --suite composed-v4
 python tools/eval/evaluate_lmv_core_gate.py --require-pass
+python tools/eval/evaluate_operator_core_gate.py --require-pass
 python tools/eval/evaluate_controller_feature_transfer.py --require-pass
 python tools/eval/evaluate_typed_self_learning.py
 python tools/eval/evaluate_semantic_flow_self_learning.py
@@ -214,7 +216,7 @@ grounding boundary and reduces untouched raw math and pixel expansions from 6 to
 in each domain. This is a controlled structural-transfer result, not evidence of
 open-domain understanding. With the digest-bound LMV benchmark and verified typed
 online reviewed-learning and sparse grounding self-learning milestones, local
-`python -m pytest -q` validation now passes 716 tests plus 34 subtests;
+`python -m pytest -q` validation now passes 722 tests plus 35 subtests;
 `shadow` remains the default.
 
 - `app.py`
@@ -795,6 +797,7 @@ If you do not have customer data yet, start from:
 Latest verified commands:
 - `python -m pytest -q`
 - `python tools/eval/evaluate_lmv_core_gate.py --require-pass`
+- `python tools/eval/evaluate_operator_core_gate.py --require-pass`
 - `python tools/eval/evaluate_controller_feature_transfer.py --require-pass`
 - `python -m unittest discover -s tests -v`
 - `.\.venv312\Scripts\python.exe -m unittest discover -s tests -v`

@@ -24,6 +24,7 @@ class DomainCatalogTests(unittest.TestCase):
         self.assertEqual(
             catalog.kinds,
             (
+                DomainKind.CODING,
                 DomainKind.COMPOSED,
                 DomainKind.LANGUAGE,
                 DomainKind.MATH,
@@ -32,7 +33,12 @@ class DomainCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             set(catalog.semantic_kinds),
-            {DomainKind.LANGUAGE, DomainKind.MATH, DomainKind.VISION},
+            {
+                DomainKind.CODING,
+                DomainKind.LANGUAGE,
+                DomainKind.MATH,
+                DomainKind.VISION,
+            },
         )
         for domain in catalog.semantic_kinds:
             with self.subTest(domain=domain.value):

@@ -116,6 +116,7 @@ from .domains.arithmetic import (
     ArithmeticExpressionAdapter,
     parse_arithmetic_expression,
 )
+from .domains.coding import CodingInputAdapter, CodingProblem
 from .domains.language_text import (
     LanguageClaim,
     LanguageInputAdapter,
@@ -274,7 +275,11 @@ from .lmv_gate import (
     LMVCoreGateReport,
     LMVDomainGateResult,
     LMVGateFixture,
+    OPERATOR_CORE_DOMAINS,
+    OPERATOR_CORE_GATE_SCHEMA_VERSION,
+    OperatorCoreGateReport,
     evaluate_lmv_core_gate,
+    evaluate_operator_core_gate,
 )
 from .experience import (
     GroundedLearningBatch,
@@ -456,6 +461,8 @@ __all__ = [
     "GroundingTrace",
     "HUMAN_REVIEW_ATTESTATION",
     "GraphAdapterResult",
+    "CodingInputAdapter",
+    "CodingProblem",
     "HierarchicalBrainCurriculumSplit",
     "HierarchicalLearningBudget",
     "HierarchicalLearningResult",
@@ -476,6 +483,9 @@ __all__ = [
     "LMVCoreGateReport",
     "LMVDomainGateResult",
     "LMVGateFixture",
+    "OPERATOR_CORE_DOMAINS",
+    "OPERATOR_CORE_GATE_SCHEMA_VERSION",
+    "OperatorCoreGateReport",
     "LanguageClaim",
     "LanguageInputAdapter",
     "LanguageParse",
@@ -644,6 +654,7 @@ __all__ = [
     "decode_semantic_request",
     "encode_semantic_request",
     "evaluate_lmv_core_gate",
+    "evaluate_operator_core_gate",
     "collect_proof_dependencies",
     "audit_structural_split",
     "generate_lmv_structural_transfer_split",

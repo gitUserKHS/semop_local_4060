@@ -9,7 +9,7 @@ Windows에서 저장소 폴더의 `start_semop.bat`를 더블클릭한다.
 
 1. 검은 터미널 창이 열린다.
 2. 잠시 뒤 기본 브라우저에 `SemOp 쉬운 시작` 화면이 열린다.
-3. `언어 조건`, `수학식`, `색상 비전` 중 하나를 누른다.
+3. `코딩`, `언어 조건`, `수학식`, `색상 비전` 중 하나를 누른다.
 4. 예제 버튼을 누르거나 빈칸을 채운다.
 5. 아래쪽의 `검증하기` 버튼을 누른다.
 6. 사용을 마치면 터미널 창에서 `Ctrl+C`를 누른다.
@@ -20,6 +20,8 @@ Windows에서 저장소 폴더의 `start_semop.bat`를 더블클릭한다.
 ## 명령어로 실행하기
 
 Python 3.11 이상이 설치되어 있어야 한다. 프로젝트 루트에서 다음을 실행한다.
+코딩 탭에서 실제 컴파일·실행 검증을 하려면 `g++`도 PATH에 있어야 한다. 나머지 세
+탭은 Python 표준 라이브러리만으로 실행된다.
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -125,9 +127,11 @@ python examples/typed_self_learning_demo.py `
 이 예제의 통과는 정해진 symbolic 구조 사이의 전이를 뜻하며, 실제 자유 언어·고등수학·
 자연 사진을 이해했다는 뜻은 아니다.
 
-이 controller는 언어·수학·비전의 답이나 사실을 직접 만들지 않는다. 현재 적용 가능한
+이 controller는 코딩·언어·수학·비전의 답이나 사실을 직접 만들지 않는다. 현재 적용 가능한
 typed operator의 실행 순서만 정하고, 점수 계산이 실패하거나 guided search가 풀지 못하면
 결정론적 탐색으로 돌아간다. 화면 아래와 시작 터미널에서 현재 활성 여부를 확인할 수 있다.
+현재 학습된 controller의 정량 전이 근거는 주로 언어·수학·비전 fixture에서 나온 것이며,
+코딩까지의 학습 전이는 별도 구조 holdout 평가가 더 필요하다.
 
 controller를 명시적으로 끄거나 다른 checkpoint 폴더를 쓰려면 다음처럼 실행한다.
 
@@ -138,6 +142,31 @@ semop-easy --controller-checkpoint-root artifacts/controller/my-controller
 
 checkpoint의 artifact hash가 다르거나 지원하지 않는 policy 종류면 조용히 무시하지 않고
 시작을 중단한다. 잘못된 작은 모델보다 검증 가능한 탐색을 선택하기 위한 동작이다.
+
+## 코딩
+
+알고리즘 문제를 한 문장으로 적고 `C++ 풀이 만들고 검증하기`를 누른다. SemOp은 후보
+알고리즘 세 개까지 생성한 뒤 구조 적합도, 컴파일 결과, 등록된 표본·무작위 테스트를 함께
+사용해 하나를 고른다.
+
+성공 결과에는 다음 네 단계의 typed 증거가 남는다.
+
+```text
+CANDIDATE_PROGRAM
+  -> COMPILES
+  -> TESTS_PASSED
+  -> VERIFIED_SOLUTION
+```
+
+여기서 `VERIFIED_SOLUTION`은 이 PC의 컴파일러와 해당 알고리즘 계열용 검증기를 통과했다는
+좁은 뜻이다. 아직 보지 못한 온라인 저지 테스트의 정답까지 보장하지 않는다. 검증기가 없는
+알고리즘 계열은 코드를 보여 주더라도 `미증명`으로 닫힌다.
+
+빠른 네 도메인 계약 검사는 다음 명령으로 실행한다.
+
+```powershell
+python tools/eval/evaluate_operator_core_gate.py --require-pass
+```
 
 ## 언어 조건
 

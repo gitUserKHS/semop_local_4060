@@ -11,6 +11,7 @@ from .contracts import TypedDomainAdapter
 
 
 class DomainKind(str, Enum):
+    CODING = "coding"
     LANGUAGE = "language"
     MATH = "math"
     VISION = "vision"

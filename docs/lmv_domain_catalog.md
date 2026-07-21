@@ -1,8 +1,8 @@
-# Language, Math, Vision Domain Catalog
+# Coding, Language, Math, Vision Domain Catalog
 
 ## 목적
 
-SemOp의 장기 목표는 언어, 수학, 비전마다 별도 추론기를 키우는 것이 아니다.
+SemOp의 장기 목표는 코딩, 언어, 수학, 비전마다 별도 추론기를 키우는 것이 아니다.
 각 입력 adapter는 다른 감각 신호를 typed world로 바꾸되, 이후의 operator 선택, 실행,
 proof replay는 하나의 공통 커널과 작은 controller가 담당해야 한다.
 
@@ -34,7 +34,7 @@ experience / benchmark artifact
 
 주요 타입은 다음과 같다.
 
-- `DomainKind`: `language`, `math`, `vision`, `composed`
+- `DomainKind`: `coding`, `language`, `math`, `vision`, `composed`
 - `DomainSpec`: adapter, semantic codec, 입력 계약, 한국어 설명, capability 집합
 - `DomainCatalog`: 중복을 거절하는 불변 domain registry
 - `FunctionSemanticCodec`: 도메인 payload의 canonical encode/decode 경계
@@ -46,7 +46,7 @@ experience / benchmark artifact
 
 ## 공통 불변식
 
-언어, 수학, 비전의 기본 `DomainSpec`은 모두 다음 capability를 선언한다.
+코딩, 언어, 수학, 비전의 기본 `DomainSpec`은 모두 다음 capability를 선언한다.
 
 - `typed_grounding`: raw 입력이 typed fact와 명시적 goal로 변환됨
 - `semantic_codec`: 학습·평가 artifact가 canonical JSON으로 왕복됨
@@ -59,6 +59,7 @@ domain별 추가 capability는 현재 다음과 같다.
 
 | 도메인 | 추가 capability | 현재 입력 범위 |
 |---|---|---|
+| 코딩 | `code_generation`, `compiler_feedback`, `execution_validation` | C++17 템플릿과 등록된 알고리즘 계열 검증기 |
 | 언어 | `controlled_language`, `symbolic_logic` | 명시적 필요조건 문장과 제한된 Horn 논리 |
 | 수학 | `exact_arithmetic`, `linear_equation` | 정확한 사칙연산·비교·일변수 일차방정식 |
 | 비전 | `deterministic_raster`, `object_centric` | 검증된 symbolic scene과 작은 RGB 연결 요소 |
@@ -83,6 +84,16 @@ python tools/eval/evaluate_lmv_core_gate.py --require-pass
 
 이 게이트는 빠른 구조 회귀 검사다. 자유 자연어 이해, 일반 사진 인식, 고등수학 전반의
 semantic correctness를 입증하지 않는다. 보고서의 `claim_scope`에도 이 한계를 기록한다.
+
+초보자 화면의 네 도메인을 한 번에 검사하려면 다음 게이트를 사용한다.
+
+```powershell
+python tools/eval/evaluate_operator_core_gate.py --require-pass
+```
+
+코딩 positive는 다익스트라 후보를 실제 컴파일하고 표본·무작위 테스트를 실행한다. 검증기가
+없는 계산기하 후보는 컴파일되더라도 negative로 닫혀야 한다. 이 게이트의 성공은 온라인
+저지 정답률이나 자유형 코드 이해가 아니라 compiler/category-test replay 계약만 보장한다.
 
 ## 연구 근거
 
@@ -138,7 +149,7 @@ proof는 오직 typed executor의 실제 action trace에서 생성한다.
 5. positive, near-miss negative, codec roundtrip, proof replay fixture를 추가한다.
 6. controller에는 domain 이름 대신 capability, type, predicate, goal 구조를 제공한다.
 
-`DomainKind` 자체는 현재 LMV와 composed MVP에 고정되어 있다. 임의 plugin domain 지원은
+`DomainKind` 자체는 현재 coding, LMV와 composed MVP에 고정되어 있다. 임의 plugin domain 지원은
 catalog의 신뢰 계약과 평가 fixture가 충분히 안정된 뒤 별도 변경으로 진행한다.
 
 ## 다음 리팩터링 순서

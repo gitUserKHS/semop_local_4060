@@ -30,7 +30,7 @@ InputT = TypeVar("InputT", contravariant=True)
 
 @runtime_checkable
 class TypedDomainAdapter(Protocol[InputT]):
-    """Boundary contract for language, math, vision, or composed adapters."""
+    """Boundary contract for coding, language, math, vision, or composed adapters."""
 
     def adapt(self, value: InputT) -> DomainInstance: ...
 

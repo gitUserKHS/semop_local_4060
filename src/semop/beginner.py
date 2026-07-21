@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 from .beginner_learning import run_beginner_reviewed_learning
 from .kernel import (
     ActionPolicy,
+    CodingProblem,
     ExperienceQueueItem,
     LanguageTextProblem,
     RasterImage,
@@ -63,6 +64,7 @@ class BeginnerSolveResult:
     diagnostics: tuple[str, ...]
     technical: Mapping[str, Any]
     experience_digest: str = ""
+    artifact: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +80,7 @@ class BeginnerSolveResult:
             "diagnostics": list(self.diagnostics),
             "technical": dict(self.technical),
             "experience_digest": self.experience_digest,
+            "artifact": self.artifact,
         }
 
 
@@ -373,6 +376,11 @@ class BeginnerReasoner:
         proposal: _ExperienceProposal | None = None,
     ) -> BeginnerSolveResult:
         normalized = str(domain).strip().lower()
+        if normalized == "coding":
+            return self.solve_coding(
+                values.get("statement", ""),
+                _proposal=proposal,
+            )
         if normalized == "language":
             return self.solve_language(
                 goal=values.get("goal", ""),
@@ -388,7 +396,74 @@ class BeginnerReasoner:
                 values.get("preset", "red_square"),
                 _proposal=proposal,
             )
-        raise BeginnerInputError("언어, 수학, 비전 중 하나를 선택해 줘.")
+        raise BeginnerInputError("코딩, 언어, 수학, 비전 중 하나를 선택해 줘.")
+
+    def solve_coding(
+        self,
+        statement: Any,
+        *,
+        _proposal: _ExperienceProposal | None = None,
+    ) -> BeginnerSolveResult:
+        statement_text = _single_text(statement, "코딩 문제", maximum=4000)
+        try:
+            core_run = self._run_core(
+                TypedDomainRequest(
+                    "coding",
+                    CodingProblem(statement_text),
+                    mode="shadow",
+                ),
+                proposal=_proposal,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise BeginnerInputError(
+                f"코딩 문제를 실행하지 못했어: {exc}"
+            ) from exc
+
+        core = core_run.result
+        metadata = dict(core.instance.metadata) if core.instance is not None else {}
+        code = str(metadata.get("code", ""))
+        category = str(metadata.get("category", "알고리즘 미분류"))
+        time_complexity = str(metadata.get("time_complexity", "확인 필요"))
+        verified = core.success and core.verified
+        validation = metadata.get("validation", {})
+        validator_checked = (
+            isinstance(validation, Mapping) and validation.get("checked") is True
+        )
+        if verified:
+            summary = (
+                f"{category} 풀이를 생성하고 C++ 컴파일과 등록된 실행 테스트를 통과했어."
+            )
+        elif validator_checked:
+            summary = (
+                f"{category} 후보 코드는 만들었지만 컴파일 또는 실행 테스트를 통과하지 못했어."
+            )
+        else:
+            summary = (
+                f"{category} 후보 코드는 만들었지만 이 계열의 실행 검증기가 아직 없어 "
+                "정답으로 확정하지 않았어."
+            )
+        return _result(
+            domain="coding",
+            core=core,
+            conclusion="proven" if verified else "not_proven",
+            title=(
+                "컴파일과 실행 테스트로 코드를 검증했어"
+                if verified
+                else "후보 코드는 만들었지만 아직 검증되지 않았어"
+            ),
+            summary=summary,
+            interpreted=(
+                f"알고리즘 계열: {category}",
+                f"예상 시간 복잡도: {time_complexity}",
+                "출력 언어: C++17",
+            ),
+            trust_notice=(
+                "검증 성공은 이 PC의 컴파일러와 등록된 알고리즘 계열 테스트를 통과했다는 "
+                "뜻이야. 보이지 않은 온라인 저지 테스트의 정답까지 보장하지는 않아."
+            ),
+            experience_digest=core_run.request_digest,
+            artifact=code,
+        )
 
     def solve_language(
         self,
@@ -652,6 +727,8 @@ def _experience_item_dict(item: ExperienceQueueItem) -> dict[str, Any]:
 
 
 def _experience_payload_summary(domain: str, payload: Mapping[str, Any]) -> str:
+    if domain == "coding":
+        return str(payload.get("statement", "코딩 입력"))
     if domain == "language":
         return str(payload.get("text", "언어 입력"))
     if domain == "math":
@@ -702,6 +779,7 @@ def _result(
     interpreted: Sequence[str],
     trust_notice: str,
     experience_digest: str = "",
+    artifact: str = "",
 ) -> BeginnerSolveResult:
     return BeginnerSolveResult(
         domain=domain,
@@ -716,6 +794,7 @@ def _result(
         diagnostics=core.diagnostics,
         technical=core.to_dict(),
         experience_digest=experience_digest,
+        artifact=artifact,
     )
 
 

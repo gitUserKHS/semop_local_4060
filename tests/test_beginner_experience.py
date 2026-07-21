@@ -122,7 +122,7 @@ class BeginnerReasonerTests(unittest.TestCase):
         encoded = json.dumps(result.to_dict(), ensure_ascii=False, default=str)
         self.assertIn("검증", encoded)
 
-    def test_one_controller_guides_all_three_domains_without_owning_facts(self) -> None:
+    def test_one_controller_guides_all_four_domains_without_owning_facts(self) -> None:
         policy = _CountingPolicy()
         reasoner = BeginnerReasoner(policy=policy)
 
@@ -135,11 +135,21 @@ class BeginnerReasonerTests(unittest.TestCase):
         math = reasoner.solve_math("(2 + 3) * 4 == 20")
         after_math = policy.calls
         vision = reasoner.solve_vision("red_square")
+        after_vision = policy.calls
+        coding = reasoner.solve_coding(
+            "Given a weighted graph with N nodes and M nonnegative edges, print "
+            "the shortest distance from node 1 to every node."
+        )
 
-        self.assertTrue(language.verified and math.verified and vision.verified)
+        self.assertTrue(
+            language.verified and math.verified and vision.verified and coding.verified
+        )
+        self.assertIn("priority_queue", coding.artifact)
+        self.assertIn("온라인 저지", coding.trust_notice)
         self.assertGreater(after_language, 0)
         self.assertGreater(after_math, after_language)
-        self.assertGreater(policy.calls, after_math)
+        self.assertGreater(after_vision, after_math)
+        self.assertGreater(policy.calls, after_vision)
         self.assertTrue(reasoner.controller_summary["active"])
         self.assertEqual(
             reasoner.controller_summary["kind"],
@@ -221,7 +231,7 @@ class BeginnerWebTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "attempts"):
             create_server(8765, attempts=0)
 
-    def test_home_page_contains_three_plain_language_paths(self) -> None:
+    def test_home_page_contains_four_plain_language_paths(self) -> None:
         page = render_home_page()
         collecting_page = render_home_page(experience_enabled=True)
         guided_page = render_home_page(
@@ -229,9 +239,11 @@ class BeginnerWebTests(unittest.TestCase):
         )
 
         self.assertIn("SemOp 쉬운 시작", page)
+        self.assertIn("C++ 풀이", page)
         self.assertIn("언어 조건", page)
         self.assertIn("수학식", page)
         self.assertIn("색상 비전", page)
+        self.assertIn("result-artifact", page)
         self.assertIn("red_square", page)
         self.assertIn("입력을 학습 후보로 저장하지 않아", page)
         self.assertIn("로컬 검토 큐에 저장", collecting_page)

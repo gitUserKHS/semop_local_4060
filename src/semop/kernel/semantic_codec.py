@@ -13,6 +13,7 @@ from .domain_catalog import (
     FunctionSemanticCodec,
     TypedDomainRequest,
 )
+from .domains.coding import CodingProblem
 from .domains.language_text import LanguageTextProblem
 from .domains.linear_equation import LinearEquationProblem
 from .domains.numeric_comparison import NumericComparisonProblem
@@ -139,6 +140,21 @@ def _decode_language(payload: Mapping[str, Any]) -> LanguageTextProblem:
     if type(heuristics) is not bool:
         raise TypeError("language semantic heuristics flag must be boolean")
     return LanguageTextProblem(text, source_context, heuristics)
+
+
+def _encode_coding(value: str | CodingProblem) -> dict[str, Any]:
+    problem = value if isinstance(value, CodingProblem) else CodingProblem(value)
+    return {"statement": problem.statement, "language": problem.language}
+
+
+def _decode_coding(payload: Mapping[str, Any]) -> CodingProblem:
+    statement = payload.get("statement")
+    language = payload.get("language", "cpp")
+    if not isinstance(statement, str) or not statement.strip():
+        raise ValueError("coding semantic payload requires a non-empty statement")
+    if not isinstance(language, str):
+        raise TypeError("coding semantic language must be a string")
+    return CodingProblem(statement, language)
 
 
 def _encode_math(
@@ -351,6 +367,11 @@ LANGUAGE_SEMANTIC_CODEC = FunctionSemanticCodec(
     "language-v1",
     _encode_language,
     _decode_language,
+)
+CODING_SEMANTIC_CODEC = FunctionSemanticCodec(
+    "coding-cpp-v1",
+    _encode_coding,
+    _decode_coding,
 )
 MATH_SEMANTIC_CODEC = FunctionSemanticCodec(
     "math-v1",

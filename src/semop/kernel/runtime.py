@@ -56,7 +56,7 @@ class UnifiedTypedResult:
 
 
 class UnifiedTypedReasoner:
-    """One verifier-first execution path for language, math, and vision."""
+    """One verifier-first execution path for coding, language, math, and vision."""
 
     def __init__(
         self,

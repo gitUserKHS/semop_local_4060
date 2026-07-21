@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Any
 
 from .domain_catalog import DomainCatalog, DomainKind, TypedDomainRequest
+from .domains.coding import CodingProblem
 from .domains.language_text import LanguageTextProblem
 from .domains.raster_vision import (
     RasterImage,
@@ -28,6 +29,13 @@ LMV_DOMAINS = (
     DomainKind.VISION,
 )
 LMV_COMMON_CAPABILITIES = frozenset({"typed_grounding", "proof_replay", "semantic_codec"})
+OPERATOR_CORE_GATE_SCHEMA_VERSION = 1
+OPERATOR_CORE_DOMAINS = (
+    DomainKind.CODING,
+    DomainKind.LANGUAGE,
+    DomainKind.MATH,
+    DomainKind.VISION,
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,34 @@ class LMVCoreGateReport:
         }
 
 
+@dataclass(frozen=True)
+class OperatorCoreGateReport:
+    """One narrow executable contract across coding, language, math, and vision."""
+
+    results: tuple[LMVDomainGateResult, ...]
+    schema_version: int = OPERATOR_CORE_GATE_SCHEMA_VERSION
+
+    @property
+    def passed(self) -> bool:
+        return (
+            tuple(result.domain for result in self.results) == OPERATOR_CORE_DOMAINS
+            and all(result.passed for result in self.results)
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "gate": "operator_core_contract",
+            "passed": self.passed,
+            "claim_scope": (
+                "registered C++ algorithm validators, controlled language, exact math, "
+                "and deterministic raster fixtures; not online-judge acceptance or "
+                "open-domain understanding"
+            ),
+            "results": [result.to_dict() for result in self.results],
+        }
+
+
 def evaluate_lmv_core_gate(
     reasoner: UnifiedTypedReasoner | None = None,
     *,
@@ -119,6 +155,21 @@ def evaluate_lmv_core_gate(
     fixtures = _lmv_gate_fixtures()
     results = tuple(_evaluate_fixture(active, fixture) for fixture in fixtures)
     return LMVCoreGateReport(results)
+
+
+def evaluate_operator_core_gate(
+    reasoner: UnifiedTypedReasoner | None = None,
+    *,
+    catalog: DomainCatalog | None = None,
+) -> OperatorCoreGateReport:
+    """Run the shared fail-closed contract across all four user-facing domains."""
+
+    if reasoner is not None and catalog is not None:
+        raise ValueError("pass either reasoner or catalog, not both")
+    active = reasoner or UnifiedTypedReasoner(catalog=catalog)
+    fixtures = (_coding_gate_fixture(), *_lmv_gate_fixtures())
+    results = tuple(_evaluate_fixture(active, fixture) for fixture in fixtures)
+    return OperatorCoreGateReport(results)
 
 
 def _evaluate_fixture(
@@ -223,6 +274,26 @@ def _lmv_gate_fixtures() -> tuple[LMVGateFixture, ...]:
             negative=TypedDomainRequest(
                 DomainKind.VISION,
                 _shape_problem(square=False),
+            ),
+        ),
+    )
+
+
+def _coding_gate_fixture() -> LMVGateFixture:
+    return LMVGateFixture(
+        domain=DomainKind.CODING,
+        positive=TypedDomainRequest(
+            DomainKind.CODING,
+            CodingProblem(
+                "Given a weighted graph with N nodes and M nonnegative edges, "
+                "print the shortest distance from node 1 to every node."
+            ),
+        ),
+        negative=TypedDomainRequest(
+            DomainKind.CODING,
+            CodingProblem(
+                "Given line segments in the plane, determine whether any two "
+                "segments intersect and print their Euclidean distance."
             ),
         ),
     )
