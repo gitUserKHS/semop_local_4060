@@ -1,0 +1,293 @@
+# Tiny Controller v1
+
+## Contract
+
+The controller is a search policy, not an answer generator. It ranks operator schemas
+and typed arguments, estimates halt/value, and returns scores. The typed executor is
+the only component allowed to derive facts.
+
+CPU inference lives in `semop.tiny_controller` and requires NumPy only. PyTorch is
+isolated in `semop.tiny_controller.training` and is needed only to train or export a
+model.
+
+## Operating Profiles
+
+The production incumbent remains the dependency-free sparse/goal-directed policy.
+`TinyControllerConfig.compact()` is the neural promotion candidate for ordinary PCs:
+
+| Component | Compact challenger |
+| --- | ---: |
+| Hidden dimension | 128 |
+| Shared relation message blocks | 2 |
+| Internal recurrent passes | 4 |
+| Hashed token buckets | 8,192 |
+| Relation buckets | 1,024 |
+| Operator buckets | 1,024 |
+| Parameter count | 1,458,698 |
+| Float32 uncompressed size | about 5.6 MiB |
+
+It becomes active only after the same sealed solve-rate, expansion, replay, and
+resource gates as every other controller. The larger constructor defaults below are
+kept for artifact compatibility and research ablation, not as the deployed default.
+
+## Full Ablation Architecture
+
+| Component | Full ablation |
+| --- | ---: |
+| Hidden dimension | 192 |
+| Shared relation message blocks | 2 |
+| Internal recurrent passes | 4 |
+| Confident greedy margin | 0.1 logit |
+| Hashed token buckets | 24,576 |
+| Relation buckets | 2,048 |
+| Operator buckets | 2,048 |
+| Parameter count | 5,837,578 |
+| Float32 uncompressed size | about 22.3 MiB |
+| Hard cap | 15,000,000 parameters / 64 MiB artifact |
+
+Symbols are anonymized by type and relational role. `ControllerFeatureProfile.FULL`
+retains predicate, function, schema, and semantic tag identities for artifact
+compatibility. New training defaults to `TYPED_STRUCTURE`, which removes those
+identities while retaining nominal types, arity, verification/symmetry shape,
+domain-neutral operator family, fact/goal roles, cost, and goal compatibility.
+Symmetric predicate/function arguments are re-sorted by anonymous node index so
+their prior symbol-name ordering cannot leak into the graph. The profile also drops
+ordinal anonymous-node tokens and represents function arguments as typed relation
+edges instead of hashed node-id strings.
+Training-only `hard_negative` and `synthetic` tags are hidden in both profiles.
+The current NumPy artifact format version is `6`; v2-v5 arrays remain loadable and
+missing profile metadata migrates to `full`. See `controller_feature_profiles.md`.
+
+Each recurrent pass performs relation-aware message aggregation over term nodes.
+The final state vector feeds:
+
+- an operator schema score
+- a typed argument pointer score
+- an action/state compatibility score
+- an eight-value domain-neutral action/goal structure score
+- a halt head
+- a state-value head
+
+Action CE and NumPy inference use the same joint score. Latent action compatibility
+and the argument pointer are bounded with `tanh` before the learned structural score
+is added. This prevents an out-of-domain hash/message logit from growing without
+bound and drowning out the separately learned typed goal-overlap head; no fixed
+feature value is declared correct.
+
+When the top action exceeds the runner-up by the configured score margin, the policy
+requests a one-action beam for that round. Smaller gaps keep the kernel's default
+beam of four. This is a confidence-based compute decision, not a success decision;
+the selected action still needs typed execution and proof replay, and monotonic search
+can continue after a wrong ranking.
+
+## Inference
+
+```python
+from semop.kernel import OperatorKernel
+from semop.tiny_controller import NumpyTinyController
+
+policy = NumpyTinyController.load("artifacts/tiny_controller.npz")
+result = OperatorKernel(problem.registry).solve(
+    problem.state,
+    problem.goals,
+    policy=policy,
+)
+```
+
+If scoring raises an exception or guided search does not solve within its reserved
+budget, the kernel continues with deterministic search. A controller's halt score is
+never accepted as proof.
+
+## Training Objective
+
+`controller_loss` uses the fixed v1 weights:
+
+```text
+action CE
++ argument CE
++ 0.5 * halt BCE
++ 0.5 * value MSE
++ 0.2 * recursive consistency MSE
+```
+
+Training examples are built from replay-verified traces. A later action in the same
+verified proof is treated as an alternative valid ordering, never as a negative.
+`build_decision_training_cases` calls `OperatorKernel.policy_goals`, so training and
+NumPy inference see the same bounded grounded frontier relations. A frontier is only
+an action-ranking hint; it is never a proof fact or halt condition.
+The final decision case also carries the replay-verified terminal state and original
+verifier goals. `TinyControllerPolicyLearner` uses that state as the positive halt
+example, so a search-policy guess cannot manufacture a terminal training label.
+For each positive action, `build_decision_training_cases` retains at most four
+explicitly certified `hard_negative` actions. The built-in synthetic curriculum adds
+four wrong ground bindings with the same goal predicate and argument types per trace.
+The label tags are hidden, so the controller must use effect/goal structure rather
+than provenance to rank them.
+
+The `TraceCorpus` enforces:
+
+- reviewed splits of `0/5/20/100` examples per domain
+- at most 5,000 synthetic traces per domain
+- synthetic operator depth at most 6
+- at most four hard negatives per positive
+- rejection of failed or non-replayed traces
+
+A frontier LLM may propose a typed program, but its output cannot enter this corpus
+directly. `verify_judged_program` must execute and replay it first, and
+`teacher_review_to_solve_result` independently repeats that verification before
+conversion. See `frontier_llm_judge.md`.
+
+## Verifier-Gated Active Retraining
+
+The recurrent controller implements the same learner contract as the dependency-free
+sparse baseline:
+
+```python
+from semop.kernel import ActiveSelfLearningLoop
+from semop.tiny_controller import TinyControllerPolicyLearner
+
+result = ActiveSelfLearningLoop(
+    learner=TinyControllerPolicyLearner(epochs=1),
+).run(training_pool, heldout_tasks)
+```
+
+PyTorch is imported lazily when `train` is called. The candidate is immediately
+exported to in-memory NumPy `.npz` bytes, evaluated by the typed kernel on structurally
+held-out positive and negative tasks, and promoted only if every proof, solve-rate,
+expansion, latency, parameter, and artifact-size gate passes. A rejected candidate is
+discarded and the incumbent remains active. See `verifier_gated_self_learning.md` for
+the structural split and checkpoint workflow.
+
+The promoted controller can now be combined with independently promoted procedural
+memory through `HierarchicalSelfLearningLoop`. The combined brain resolves a
+registry-specific `PrimitiveMacroPolicy`, while the controller parameters remain
+shared across language, math, and vision. The default leave-domain-out run trains and
+promotes that controller on language only, then tests unseen math and vision operator
+names. A final joint holdout is used only after the controller and macro components
+have passed their own holdouts. Reproducible profiles now include the 12-parameter
+`typed_structure` sparse learner, a 29,834-parameter recurrent diagnostic learner,
+the 1,458,698-parameter recurrent compact challenger, and the full
+5,837,578-parameter recurrent ablation. All four use the same independent gates; the
+recurrent profiles train only on three verified language traces and transfer the
+shared action-selection signal to unseen math and vision completion schemas. This is
+low-resource structural transfer, not free-form semantic learning. See
+`hierarchical_operator_brain.md`.
+
+Evaluate the ordinary-PC compact challenger on raw language training and untouched
+math/pixel transfer with:
+
+```powershell
+python tools/eval/evaluate_raw_grounded_self_learning.py `
+  --controller-profile recurrent-compact `
+  --controller-epochs 5 --device cuda `
+  --output artifacts/eval/raw_compact_controller.json `
+  --artifact-output artifacts/controller/raw_compact_controller.npz
+```
+
+Run an end-to-end verifier-generated training smoke test with a deliberately small
+debug architecture:
+
+```powershell
+python -m pip install -r requirements-train.txt
+python tools/train/train_tiny_controller.py `
+  --output artifacts/tiny_debug.npz `
+  --examples-per-domain 1 `
+  --epochs 1 `
+  --debug-small `
+  --feature-profile typed_structure
+```
+
+Remove `--debug-small` to train the default 5.84M architecture. The command writes
+the NumPy artifact, a JSONL verified-trace corpus, and a JSON training summary. The
+default `language-math-vision` curriculum contributes an equal number of hidden-
+premise language, exact arithmetic, and verified spatial-relation traces. Use
+`--curriculum operator-v1` for the compatibility geometry/hidden-premise/grid set.
+Use `--curriculum language-math-vision-composed` to add replayable 4/5-step
+vision-count -> exact-comparison -> conjunctive-language traces as a fourth domain.
+These curricula are synthetic and record `reviewed_examples: 0`; none may be
+reported as a 5/20/100-shot human-reviewed run. The summary records the curriculum,
+trained domain list, feature profile, and verified trace count per domain.
+
+```powershell
+python tools/train/train_tiny_controller.py `
+  --output artifacts/tiny_composed_debug.npz `
+  --curriculum language-math-vision-composed `
+  --examples-per-domain 1 --epochs 1 --debug-small
+```
+
+Use repeated `--domain` flags for a real holdout artifact:
+
+```powershell
+python tools/train/train_tiny_controller.py `
+  --output artifacts/without_vision.npz `
+  --domain language --domain math `
+  --examples-per-domain 20 --epochs 5
+```
+
+`tools/eval/run_lodo_controller_experiment.py` automates all three holdouts and checks
+the adjacent metadata before reporting a domain as unseen.
+
+## Macro Library
+
+`MdlMacroLibrary.induce` examines verified sub-programs of length 2 through 6. It
+anonymizes ground terms into typed slots and retains a macro only when all conditions
+hold:
+
+1. support from at least three distinct traces
+2. valid typed bindings and a continuous proof-state chain
+3. at least 10% description-length reduction
+4. a caller-supplied held-out no-regression validator passes
+
+Macros remain abbreviations over primitive verified programs. They do not bypass the
+executor or replay verifier.
+
+## Current Status
+
+The architecture, NumPy artifact format, PyTorch mirror, loss, trace extraction, and
+fallback path are implemented. A dependency-free identity ablation now removes 224
+identity tokens and reduces the LMV operator vocabulary from 105 to 41 while keeping
+100% action top-1 and primitive replay on all three symbolic domain holdouts. This is
+a small fixed-seed structural gate, not open-domain evidence.
+
+A leakage-controlled full-model smoke trained on two
+synthetic traces per holdout and transferred goal-binding selection to all three
+unseen domains. Language and math passed the 30% held-out median reduction gate;
+vision's dedicated distractor fell from 13 to 1 while its median remained 1 because
+most vision positives already require zero or one action. No production artifact is
+committed, and human-reviewed 20/100-shot transfer remains unevaluated.
+
+The current compact `typed_structure` challenger has now run end to end on RTX 4060.
+Five epochs over three verified raw-language traces produced a 5.42 MB NumPy artifact
+and reduced untouched math and pixel positive expansions from 6 to 2 in each domain.
+A fresh CPU-only process used about 20.5 MB additional peak RSS with p95 below 16 ms.
+On the independent hierarchical split, controller plus three verified macros reduced
+22 deterministic expansions to 10 and replayed all language, math, and vision proofs.
+Both are fixed-seed synthetic experiments; the artifacts remain explicit candidates.
+
+A 29,834-parameter composed-only diagnostic trained on 20 synthetic traces for five
+epochs reduced `composed-v4` expansion from 47 to 40 with soundness 100% and zero
+false positives. The non-learned goal-directed policy reaches 34, so this is a
+training/export compatibility result, not evidence that the neural controller has
+surpassed symbolic guidance.
+
+## Research Lineage
+
+- [DreamCoder](https://arxiv.org/abs/2006.08381) motivates typed program induction,
+  wake/sleep data generation, and library compression; v1 keeps only bounded verified
+  trace synthesis and MDL macro retention.
+- [Tiny Recursive Model](https://arxiv.org/abs/2510.04871) and
+  [HRM](https://arxiv.org/abs/2506.21734) motivate repeated computation with shared
+  small networks. They are puzzle-focused preprints, so recursion count, consistency,
+  and halt behavior remain ablation targets rather than assumed truths.
+- [Generalist Neural Algorithmic Learner](https://arxiv.org/abs/2209.11142) motivates
+  sharing a graph processor across algorithms and domains.
+- [GOAL](https://proceedings.iclr.cc/paper_files/paper/2025/hash/826aea2253363fe04e8c4991b2a8869e-Abstract-Conference.html)
+  supports a shared backbone with light domain adapters for heterogeneous typed
+  combinatorial problems.
+- [Shortcut Learning](https://www.nature.com/articles/s42256-020-00257-z) motivates
+  the explicit full-vs-typed-structure identity ablation and domain holdouts.
+- [Faithful Compositional Networks](https://arxiv.org/abs/2005.00724) supports keeping
+  explanation fidelity separate from neural intermediate activations; SemOp uses
+  executable proof replay instead.
+- V-JEPA-style latent prediction remains a later perception/planning direction. Its
+  large video pretraining regime is intentionally outside this ordinary-PC v1.

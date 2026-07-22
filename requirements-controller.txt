@@ -1,0 +1,2 @@
+-r requirements-core.txt
+numpy>=1.26,<3

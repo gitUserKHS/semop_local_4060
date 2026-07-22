@@ -4,8 +4,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import snapshot_download
-
 from ..hardware_profiles import detect_local_hardware
 from .frontier_vlm import FRONTIER_VISION_SPECS, FrontierVisionSpec
 from .vision_backbones import DEFAULT_VISION_MODEL_ROOT
@@ -104,6 +102,17 @@ class FrontierVisionInstaller:
 
     def install_recommended_bundle(self, include_optional: bool = False, force: bool = False) -> FrontierInstallSummary:
         plan = self.recommended_bundle()
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            return FrontierInstallSummary(
+                target_root=str(self.target_root),
+                failed=[
+                    "huggingface_hub is required only for checkpoint installation; "
+                    "install the full or vision dependency profile"
+                ],
+                notes=["No checkpoint download was attempted."],
+            )
         completed: list[FrontierBundleItem] = []
         skipped: list[FrontierBundleItem] = []
         failed: list[str] = []

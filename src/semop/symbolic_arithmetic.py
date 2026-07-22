@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import math
 import re
 
+from .kernel.domains.linear_equation import LinearEquationAdapter, LinearEquationError
+from .kernel.engine import OperatorKernel
 from .structures import SymbolicResult
 
 
@@ -297,21 +300,32 @@ class ArithmeticReasoner:
         equation = self._extract_equation_candidate(query)
         if equation is None:
             return None
-        left_text, right_text = [part.strip() for part in equation.split("=", 1)]
-        left = self.parser.parse_linear(left_text)
-        right = self.parser.parse_linear(right_text)
-        variable = left.variable if abs(left.coefficient) > 1e-12 else right.variable
-        coefficient = left.coefficient - right.coefficient
-        constant = right.constant - left.constant
-        if abs(coefficient) < 1e-12:
+        try:
+            instance = LinearEquationAdapter().adapt(equation)
+        except LinearEquationError:
             return None
-        value = constant / coefficient
+        proof = OperatorKernel(instance.registry).solve(
+            instance.state,
+            instance.goals,
+        )
+        if not proof.success or not proof.verified:
+            return None
+        variable = str(instance.metadata["variable"])
+        answer = str(instance.metadata["answer"])
+        coefficient, constant = instance.metadata["normalized_form"]
+        value = Fraction(answer)
         return ArithmeticMatch(
-            total=value,
-            answer=f"Symbolic math answer: {variable} = {_fmt(value)}.",
-            evidence=["single-variable linear equation"],
-            equations=[f"{_fmt(coefficient)}{variable} = {_fmt(constant)}", f"{variable} = {_fmt(constant)} / {_fmt(coefficient)}"],
-            confidence=0.89,
+            total=float(value),
+            answer=f"Symbolic math answer: {variable} = {answer}.",
+            evidence=[
+                "single-variable exact linear equation",
+                "typed proof replay verified",
+            ],
+            equations=[
+                f"{coefficient}{variable} = {constant}",
+                f"{variable} = {constant} / {coefficient}",
+            ],
+            confidence=0.92,
         )
 
     def _solve_line_item_division(self, query: str) -> ArithmeticMatch | None:

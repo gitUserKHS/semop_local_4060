@@ -2014,6 +2014,18 @@ class StructuredMeaningPipelineTests(unittest.TestCase):
         self.assertIn("dijkstra_shortest_path", result.approach)
         self.assertTrue(result.compile_ok)
 
+    def test_competitive_programming_prefers_verified_nonnegative_graph_solution(self) -> None:
+        result = CompetitiveProgrammingReasoner().solve(
+            "Given a weighted graph with N nodes and M nonnegative edges, "
+            "print the shortest distance from node 1 to every node."
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.category, "dijkstra_shortest_path")
+        self.assertNotIn("geometry", result.domain_tags)
+        self.assertTrue(result.compile_ok)
+        self.assertTrue(result.validation_report.get("overall_ok"))
+
     def test_competitive_programming_reasoner_generates_prefix_sum_cpp(self) -> None:
         result = CompetitiveProgrammingReasoner().solve(
             "Given an array and many range sum queries, output the sum from l to r for each query."

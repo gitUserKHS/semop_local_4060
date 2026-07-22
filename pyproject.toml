@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semop-local-4060"
+version = "0.1.0"
+description = "Verifier-first typed operator reasoning experiments for ordinary PCs"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+semop-easy = "semop.beginner_web:main"
+semop-chat = "semop.chat_cli:main"
+semop-models = "semop.model_manager:main"
+semop-promote = "semop.promotion_cli:main"
+semop-learn = "semop.semantic_experience:main"
+semop-student-eval = "semop.semantic_student_evaluation:main"
+semop-student-cycle = "semop.semantic_learning_cycle:main"
+
+[project.optional-dependencies]
+controller = ["numpy>=1.26,<3"]
+train = ["numpy>=1.26,<3", "torch>=2.2"]
+vision = ["Pillow>=10"]
+semantic = [
+    "numpy>=1.26,<3",
+    "torchvision==0.25.0",
+    "transformers==5.3.0",
+    "accelerate>=1.10,<2",
+    "sentence-transformers==5.2.3",
+    "huggingface-hub>=0.36,<2",
+    "Pillow>=10",
+    "timm>=1.0,<2",
+    "einops>=0.8,<1",
+    "safetensors>=0.4,<1",
+]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

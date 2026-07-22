@@ -339,7 +339,14 @@ class CompetitiveProgrammingReasoner:
             'area', 'rectangle', 'circle', 'angle', 'coordinate', 'coordinates', 'vector', 'quadrilateral', 'parallelogram',
             'convex', 'intersect', 'intersection', 'bounding rectangle',
         ]
-        if any(self._contains_trigger(normalized, term) for term in strong_terms):
+        graph_context = any(
+            self._contains_trigger(normalized, term)
+            for term in ('graph', 'node', 'nodes', 'edge', 'edges', 'road', 'roads', 'path')
+        )
+        geometry_terms = [term for term in strong_terms if term != 'distance']
+        if any(self._contains_trigger(normalized, term) for term in geometry_terms):
+            return True
+        if self._contains_trigger(normalized, 'distance') and not graph_context:
             return True
         if any(term in normalized for term in ['point update', 'point updates']):
             return False
@@ -474,7 +481,10 @@ class CompetitiveProgrammingReasoner:
                 for token in re.findall(r"[a-z_]+", frame_text):
                     if len(token) > 3 and token in haystack:
                         score += 0.12
-            if item.id == "dijkstra_shortest_path" and "negative" in normalized:
+            if (
+                item.id == "dijkstra_shortest_path"
+                and self._contains_trigger(normalized, "negative")
+            ):
                 score -= 1.0
             if item.id == "prefix_sum_range_query" and any(term in normalized for term in ["update", "modify"]):
                 score -= 0.8
@@ -628,6 +638,11 @@ class CompetitiveProgrammingReasoner:
             score += 0.2
         if isinstance(solution.validation_report, dict) and solution.validation_report.get('overall_ok'):
             score += 0.35
+        elif (
+            isinstance(solution.validation_report, dict)
+            and solution.validation_report.get('checked') is True
+        ):
+            score -= 0.35
         elif item.family in structure.domain_tags:
             score += 0.1
         failure = str(solution.validation_report.get('failure_type', '')) if isinstance(solution.validation_report, dict) else ''

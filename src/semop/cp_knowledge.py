@@ -48,11 +48,18 @@ class CpKnowledgeBase:
 
 
 class CpKnowledgeLoader:
+    DEFAULT_PATH = Path("data/knowledge/cp_knowledge.json")
+
     def __init__(self, path: str | Path = "data/knowledge/cp_knowledge.json") -> None:
         self.path = Path(path)
 
     def load(self) -> CpKnowledgeBase:
-        payload = json.loads(self.path.read_text(encoding="utf-8-sig"))
+        path = self.path
+        if path == self.DEFAULT_PATH and not path.exists():
+            project_copy = Path(__file__).resolve().parents[2] / self.DEFAULT_PATH
+            if project_copy.exists():
+                path = project_copy
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
         sources = {item["id"]: item for item in payload.get("sources", [])}
         algorithms = [CpAlgorithmKnowledge(**item) for item in payload.get("algorithms", [])]
         logical_frames = [CpLogicalFrame(**item) for item in payload.get("logical_frames", [])]

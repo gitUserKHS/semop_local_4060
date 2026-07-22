@@ -6,8 +6,12 @@ This folder contains the active documentation for SemOp Local 4060.
 
 - `../README.md`
   - top-level overview, quick start, and validation status
+- `beginner_guide_ko.md`
+  - 코드나 DSL 없이 코딩·언어·수학·색상 비전을 실행하는 한국어 첫걸음
+- `local_semantic_models.md`
+  - Python 3.12 RTX 4060 환경, 검토된 모델 다운로드, 오프라인 실행, 실제 0.8B LoRA 개발 A/B
 - `usage_manual.md`
-  - practical guide, including the easiest starter GUI
+  - practical guide for the larger legacy and research studio
 - `project_structure.md`
   - generated code layout; refresh with `tools/maintenance/update_code_structure_docs.py`
 - `architecture_and_features.md`
@@ -26,8 +30,68 @@ This folder contains the active documentation for SemOp Local 4060.
 
 ## Reasoning Core And Research
 
+- `prompt_first_operator_intelligence.md`
+  - 통합 prompt API, 장기 작업 revision, memory continuity A/B, bounded replay, reviewed semantic prototype, episodic·procedural 기억 계층과 네 도메인 실행 흐름
+- `self_learning_activation.md`
+  - synthetic development, reviewed semantic episodic memory, sealed evaluation, 사람 승인과 atomic rollback
 - `operator_intelligence_system.md`
   - high-level definition of the logic-operator intelligence architecture
+- `executable_operator_reasoning.md`
+  - Operator-CoT 조언의 채택 범위, 신뢰 경계, 저자원 학습 단계와 조합 일반화 gate
+- `low_resource_operator_intelligence.md`
+  - mandatory sample-efficiency and ordinary-PC resource doctrine and evaluation gates
+- `compositional_operator_intelligence.md`
+  - 작은 공유 뇌가 언어·수학·비전의 typed operator program을 조합하는 장기 구조와 코드 정리 원칙
+- `typed_operator_core.md`
+  - immutable typed IR, verifier-first search, three domain adapters, and migration modes
+- `trust_provenance_and_metrics.md`
+  - assertion/evidence/logical 신뢰 축, 가정 의존 proof, replay integrity와 semantic correctness 분리, CI 계약
+- `typed_grounding_boundary.md`
+  - 언어·수학·비전 공통 candidate/decision/trace, 모델 제안 권한, 검증·사람 리뷰 hard negative 학습 계약
+- `sparse_grounding_self_learning.md`
+  - 세 도메인 공통 accept/reject/abstain head, 검증 replay, online rollback, risk-coverage 평가와 현재 한계
+- `semantic_grounding_self_learning.md`
+  - 실제 raw LMV adapter 후보, candidate digest 사람 review, 공통 operator margin, 0/5/20/100 저자원 곡선
+- `lmv_semantic_benchmark.md`
+  - digest-bound 사람 리뷰, 언어·수학·비전 near-miss seed, 권한별 의미 정확도 평가 절차
+- `language_math_vision_typed_runtime.md`
+  - direct language/math/vision adapters, trust boundaries, unified runtime, and benchmark workflow
+- `lmv_domain_catalog.md`
+  - 언어·수학·비전 adapter/codec/capability 공통 catalog, 빠른 게이트, 연구 근거와 확장 절차
+- `controller_feature_profiles.md`
+  - domain identity shortcut을 숨기는 typed-structure 입력, sparse LODO replay 게이트, artifact migration
+- `language_text_adapter.md`
+  - 명시적 한국어·영어 문장을 typed 전제로 바꾸고 애매한 후보를 격리하는 계약
+- `typed_compositional_extensions.md`
+  - 언어 Horn 추론, exact 일차방정식, raster 도형·개수·면적, controller v6 점수 계약
+- `composed_operator_runtime.md`
+  - 공통 registry 조합, goal-independent 관측, operator frontier, 비전→수학→언어 proof program
+- `typed_dataflow.md`
+  - verified 숫자 측정을 조건과 결론 operator로 컴파일하고 실제 의미 흐름을 held-out 평가하는 계약
+- `frontier_llm_judge.md`
+  - 프론티어 LLM teacher/judge의 proposed 경계, replay 검증, 안전한 controller 학습 유입
+- `verifier_gated_self_learning.md`
+  - 실제 adapter capability를 구조적으로 분리하고 능동 선택한 뒤 작은 정책을 승격·rollback하는 닫힌 루프
+- `raw_grounded_self_learning.md`
+  - raw 언어·수학·pixel 입력을 typed 경험으로 감사하고 verifier trace만 학습하는 공개 자가 학습 경계
+- `hierarchical_operator_brain.md`
+  - 언어-only controller 학습, 수학·비전 zero-shot 전이, 검증된 macro memory 결합, sparse·29K·5.84M 비교
+- `active_macro_learning.md`
+  - primitive-expanded procedural memory의 독립 validation, schema pinning, replay, 승격·rollback 계약
+- `self_discovered_curriculum.md`
+  - 검증된 seed에서 새 다중도메인 조합과 counterfactual을 발견하고 계보·중복·깊이를 통제하는 curriculum
+- `verified_rule_discovery.md`
+  - flat Horn 규칙 귀납, 개별 반증, final joint library 승격, promotion certificate와 atomic rollback 경계
+- `online_verified_self_learning.md`
+  - 실제 언어·수학·비전 실행 수집, SQLite 검토 큐, 고정 4분할, 누수 감사, joint rule 승격과 runtime 활성화
+- `raster_vision.md`
+  - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
+- `tiny_controller.md`
+  - sparse incumbent, 1.46M challenger, 5.84M ablation, NumPy inference, trace data, and MDL macros
+- `low_resource_transfer_evaluation.md`
+  - three-domain structural splits, A/B metrics, resource limits, and promotion gates
+- `lodo_controller_experiment.md`
+  - leakage-controlled leave-one-domain-out controller training and current evidence
 - `operator_intelligence_roadmap.md`
   - roadmap grouped by operator learning, world model, memory, and verifier quality
 - `operator_intelligence_execution_steps.md`

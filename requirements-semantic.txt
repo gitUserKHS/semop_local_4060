@@ -1,0 +1,14 @@
+# Install the CUDA wheel explicitly on the RTX 4060 Windows environment.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
+
+-r requirements-controller.txt
+transformers==5.3.0
+accelerate>=1.10,<2
+sentence-transformers==5.2.3
+huggingface-hub>=0.36,<2
+Pillow>=10
+timm>=1.0,<2
+einops>=0.8,<1
+safetensors>=0.4,<1

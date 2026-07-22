@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+from hashlib import sha256
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pytest
+
+from semop.beginner_learning import (
+    load_evaluated_controller,
+    load_beginner_controller,
+    load_beginner_rule_library,
+    run_beginner_reviewed_learning,
+)
+from semop.kernel import (
+    AssertionStatus,
+    DomainInstance,
+    DomainKind,
+    EvidenceStatus,
+    ExperiencePartitionConfig,
+    ExperienceSplitRole,
+    Fact,
+    FactStatus,
+    Goal,
+    KernelRegistry,
+    LanguageTextProblem,
+    LearningSplit,
+    SelfLearningBudget,
+    SelfLearningLoop,
+    SelfLearningStore,
+    SolveBudget,
+    TypedDomainRequest,
+    TypedExperienceCollector,
+    TypedExperienceStore,
+    UnifiedTypedReasoner,
+    WorldState,
+    generate_lmv_structural_transfer_split,
+    learning_tasks_from_synthetic,
+    semantic_request_digest,
+)
+from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
+
+
+def test_reviewed_examples_promote_persist_and_reload_a_rule() -> None:
+    partition = ExperiencePartitionConfig(seed="beginner-end-to-end-learning")
+    reasoner = UnifiedTypedReasoner({DomainKind.LANGUAGE: _ChainLanguageAdapter()})
+    specifications = [
+        (ExperienceSplitRole.TRAIN, True, f"train-{index}")
+        for index in range(3)
+    ]
+    specifications.extend(
+        (role, expected, f"{role.value}-{'positive' if expected else 'negative'}")
+        for role in (
+            ExperienceSplitRole.VALIDATION,
+            ExperienceSplitRole.CANDIDATE_HELDOUT,
+            ExperienceSplitRole.JOINT_HELDOUT,
+        )
+        for expected in (True, False)
+    )
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        store = TypedExperienceStore(root / "experience.db", partition=partition)
+        collector = TypedExperienceCollector(store, reasoner=reasoner)
+        for role, expected, token in specifications:
+            request = _request_for_role(
+                partition,
+                role,
+                expected_solved=expected,
+                seed=token,
+            )
+            run = collector.run(
+                request,
+                proposed_expected_solved=expected,
+                proposal_authority="programmatic",
+                rationale="The reviewed curriculum expects this exact chain outcome.",
+                event_id=f"beginner-{token}",
+            )
+            store.review(
+                run.request_digest,
+                expected_solved=expected,
+                phenomenon="start_implies_middle",
+                rationale="A person verified the exact premise and target symbols.",
+                reviewer="human:beginner-learning-test",
+                decision="approved",
+                reviewed_at="2026-07-20T12:00:00Z",
+            )
+
+        artifact = root / "active-rules.json"
+        learning = run_beginner_reviewed_learning(
+            store,
+            reasoner,
+            artifact,
+            required_domains=(DomainKind.LANGUAGE,),
+        )
+        loaded = load_beginner_rule_library(artifact)
+
+        assert learning.promoted
+        assert learning.checkpoint is not None
+        assert learning.checkpoint.rule_count == 1
+        assert artifact.is_file()
+        assert artifact.with_suffix(".checkpoint.json").is_file()
+        assert loaded.checkpoint is not None
+        assert loaded.library.artifact_sha256 == learning.checkpoint.library_sha256
+
+        unseen = _chain_request(source="unseen", target="unseen")
+        baseline = reasoner.run(unseen)
+        transferred = UnifiedTypedReasoner(
+            {DomainKind.LANGUAGE: _ChainLanguageAdapter()},
+            augmenters=(loaded.library,),
+        ).run(unseen)
+
+        assert not baseline.success
+        assert transferred.success and transferred.verified
+
+        artifact.write_bytes(artifact.read_bytes() + b"\n")
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_beginner_rule_library(artifact)
+
+
+def test_empty_beginner_rule_store_loads_an_empty_library() -> None:
+    with TemporaryDirectory() as directory:
+        loaded = load_beginner_rule_library(Path(directory) / "missing.json")
+
+    assert loaded.checkpoint is None
+    assert loaded.library.records == ()
+
+
+def test_beginner_controller_loads_only_a_verified_untampered_checkpoint() -> None:
+    split = generate_lmv_structural_transfer_split(1, seed=41)
+    training = learning_tasks_from_synthetic(
+        split.training,
+        split=LearningSplit.TRAIN,
+        namespace="beginner-controller-train",
+    )
+    heldout = learning_tasks_from_synthetic(
+        split.heldout,
+        split=LearningSplit.HELDOUT,
+        namespace="beginner-controller-heldout",
+    ) + learning_tasks_from_synthetic(
+        split.negative_controls,
+        split=LearningSplit.HELDOUT,
+        namespace="beginner-controller-negative",
+        expected_solved=False,
+    )
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory) / "controller"
+        learning = SelfLearningLoop(
+            budget=SelfLearningBudget(
+                solve_budget=SolveBudget(
+                    max_expansions=2_000,
+                    timeout_seconds=5.0,
+                ),
+                min_expansion_reduction=0.0,
+            ),
+            store=SelfLearningStore(root),
+        ).run(training, heldout)
+        loaded = load_beginner_controller(root)
+
+        assert learning.promoted
+        assert loaded.active
+        assert loaded.kind == "structural-linear-v2"
+        assert loaded.parameter_count > 0
+        assert loaded.feature_profile == "typed_structure"
+        assert loaded.policy.feature_profile.value == "typed_structure"
+
+        assert loaded.checkpoint is not None
+        assert loaded.checkpoint.policy_artifact is not None
+        policy_path = root / loaded.checkpoint.policy_artifact
+        policy_path.write_bytes(policy_path.read_bytes() + b"\n")
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_beginner_controller(root)
+
+
+def test_beginner_can_explicitly_load_an_all_pass_compact_candidate() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        artifact = root / "compact.npz"
+        policy = NumpyTinyController.random(TinyControllerConfig.compact(), seed=7)
+        policy.save(artifact)
+        report = root / "evaluation.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "suite": "raw-grounded-self-learning",
+                    "controller": {
+                        "kind": "tiny-controller-v6",
+                        "parameters": policy.parameter_count,
+                    },
+                    "artifact": {
+                        "persisted_path": str(artifact.resolve()),
+                        "sha256": sha256(artifact.read_bytes()).hexdigest(),
+                    },
+                    "gates": {"all_passed": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_evaluated_controller(report)
+
+        assert loaded.active
+        assert loaded.kind == "tiny-controller-v6"
+        assert loaded.parameter_count == 1_458_698
+        assert loaded.feature_profile == "typed_structure"
+
+        artifact.write_bytes(artifact.read_bytes() + b"changed")
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_evaluated_controller(report)
+
+
+def _request_for_role(
+    partition: ExperiencePartitionConfig,
+    role: ExperienceSplitRole,
+    *,
+    expected_solved: bool,
+    seed: str,
+) -> TypedDomainRequest:
+    for index in range(10_000):
+        source = f"{seed}-source-{index}"
+        target = source if expected_solved else f"{seed}-other-{index}"
+        request = _chain_request(source=source, target=target)
+        if partition.role_for(semantic_request_digest(request)) is role:
+            return request
+    raise AssertionError(f"could not generate a request for {role.value}")
+
+
+def _chain_request(*, source: str, target: str) -> TypedDomainRequest:
+    return TypedDomainRequest(
+        DomainKind.LANGUAGE,
+        f"premise=START;goal=MIDDLE;source={source};target={target}",
+    )
+
+
+class _ChainLanguageAdapter:
+    def adapt(self, payload: str | LanguageTextProblem) -> DomainInstance:
+        text = payload.text if isinstance(payload, LanguageTextProblem) else payload
+        fields = dict(field.split("=", 1) for field in text.split(";"))
+        registry = KernelRegistry()
+        entity = registry.types.register("Entity")
+        for predicate in ("START", "MIDDLE"):
+            registry.register_predicate(predicate, (entity,))
+        source = registry.symbol(fields["source"], entity)
+        target = registry.symbol(fields["target"], entity)
+        fact = Fact(
+            registry.atom(fields["premise"], source),
+            FactStatus.OBSERVED,
+            source="beginner-chain-adapter",
+            assertion_status=AssertionStatus.EXPLICIT,
+            evidence_status=EvidenceStatus.ADAPTER_VERIFIED,
+        )
+        return DomainInstance(
+            registry=registry,
+            state=WorldState((fact,)),
+            goals=(Goal(registry.atom(fields["goal"], target)),),
+            domain="language",
+            metadata={"adapter": "beginner-chain-test"},
+        )
