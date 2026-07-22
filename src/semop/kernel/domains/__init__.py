@@ -54,6 +54,12 @@ from .numeric_comparison import (
     NumericComparisonProblem,
     parse_numeric_comparison,
 )
+from .quadratic_equation import (
+    QuadraticEquationAdapter,
+    QuadraticEquationError,
+    QuadraticEquationProblem,
+    parse_quadratic_equation,
+)
 from .raster_vision import (
     RasterAnalysis,
     RasterImage,
@@ -96,6 +102,9 @@ __all__ = [
     "NumericComparisonError",
     "NumericComparisonParse",
     "NumericComparisonProblem",
+    "QuadraticEquationAdapter",
+    "QuadraticEquationError",
+    "QuadraticEquationProblem",
     "RasterAnalysis",
     "RasterImage",
     "RasterObject",
@@ -127,4 +136,5 @@ __all__ = [
     "parse_grid_problem",
     "parse_linear_equation",
     "parse_numeric_comparison",
+    "parse_quadratic_equation",
 ]

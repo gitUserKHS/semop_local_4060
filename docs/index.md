@@ -8,6 +8,8 @@ This folder contains the active documentation for SemOp Local 4060.
   - top-level overview, quick start, and validation status
 - `beginner_guide_ko.md`
   - 코드나 DSL 없이 코딩·언어·수학·색상 비전을 실행하는 한국어 첫걸음
+- `local_semantic_models.md`
+  - Python 3.12 RTX 4060 환경, 검토된 모델 다운로드, 오프라인 실행, 실제 0.8B LoRA 개발 A/B
 - `usage_manual.md`
   - practical guide for the larger legacy and research studio
 - `project_structure.md`
@@ -28,6 +30,10 @@ This folder contains the active documentation for SemOp Local 4060.
 
 ## Reasoning Core And Research
 
+- `prompt_first_operator_intelligence.md`
+  - 통합 prompt API, 장기 작업 revision, memory continuity A/B, bounded replay, reviewed semantic prototype, episodic·procedural 기억 계층과 네 도메인 실행 흐름
+- `self_learning_activation.md`
+  - synthetic development, reviewed semantic episodic memory, sealed evaluation, 사람 승인과 atomic rollback
 - `operator_intelligence_system.md`
   - high-level definition of the logic-operator intelligence architecture
 - `executable_operator_reasoning.md`
@@ -81,7 +87,7 @@ This folder contains the active documentation for SemOp Local 4060.
 - `raster_vision.md`
   - dependency-free RGB component detection, verified pixel geometry, and neural detector boundary
 - `tiny_controller.md`
-  - 5.84M relation-aware policy, NumPy inference, PyTorch training, trace data, and MDL macros
+  - sparse incumbent, 1.46M challenger, 5.84M ablation, NumPy inference, trace data, and MDL macros
 - `low_resource_transfer_evaluation.md`
   - three-domain structural splits, A/B metrics, resource limits, and promotion gates
 - `lodo_controller_experiment.md`

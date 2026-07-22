@@ -14,9 +14,10 @@ for path in (SRC, EVAL):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from evaluate_low_resource_transfer import evaluate
+from evaluate_low_resource_transfer import FAST_CORE_TEST_FILES, evaluate
 from evaluate_active_macro_learning import evaluate_active_macro_learning
 from evaluate_hierarchical_self_learning import (
+    _controller_learner as _hierarchical_controller_learner,
     evaluate_hierarchical_self_learning,
 )
 from evaluate_raw_grounded_self_learning import (
@@ -31,6 +32,32 @@ from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 class LowResourceEvalTests(unittest.TestCase):
+    def test_fast_core_evaluator_matches_dependency_free_ci_files(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "typed-core.yml").read_text(
+            encoding="utf-8"
+        )
+        workflow_files = tuple(
+            line.strip()
+            for line in workflow.splitlines()
+            if line.strip().startswith("tests/")
+        )
+
+        self.assertEqual(FAST_CORE_TEST_FILES, workflow_files)
+
+    def test_compact_controller_profile_selects_1_46m_challenger(self) -> None:
+        learner = _hierarchical_controller_learner(
+            "recurrent-compact",
+            epochs=1,
+            learning_rate=1e-3,
+            device="cpu",
+            seed=0,
+        )
+
+        self.assertEqual(
+            learner.config.estimated_parameter_count(),
+            1_458_698,
+        )
+
     def test_raw_grounded_evaluator_rejects_unknown_controller_profile(self) -> None:
         with self.assertRaisesRegex(ValueError, "controller_profile"):
             evaluate_raw_grounded_self_learning(controller_profile="unknown")

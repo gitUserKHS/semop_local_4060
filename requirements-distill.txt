@@ -1,0 +1,2 @@
+-r requirements-semantic.txt
+peft>=0.18,<1

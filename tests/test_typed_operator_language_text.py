@@ -203,6 +203,16 @@ class LanguageTextReasoningTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(str(instance.goals[0].atom), "READY(배포)")
 
+    def test_current_status_resolves_to_declared_requirement(self) -> None:
+        instance, result = _solve(
+            "창고에서 출고하려면 관리자 승인이 필요해. "
+            "지금 관리자 승인이 있어. 출고할 수 있니?"
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.verified)
+        self.assertEqual(str(instance.goals[0].atom), "READY(창고에서_출고)")
+
     def test_colloquial_missing_approval_reaches_verified_not_ready_goal(self) -> None:
         instance, result = _solve(
             "배포하려면 테스트 통과와 관리자 승인이 필요해. "

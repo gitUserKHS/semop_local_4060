@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from hashlib import sha256
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
 
 from semop.beginner_learning import (
+    load_evaluated_controller,
     load_beginner_controller,
     load_beginner_rule_library,
     run_beginner_reviewed_learning,
@@ -36,6 +39,7 @@ from semop.kernel import (
     learning_tasks_from_synthetic,
     semantic_request_digest,
 )
+from semop.tiny_controller import NumpyTinyController, TinyControllerConfig
 
 
 def test_reviewed_examples_promote_persist_and_reload_a_rule() -> None:
@@ -168,6 +172,43 @@ def test_beginner_controller_loads_only_a_verified_untampered_checkpoint() -> No
         policy_path.write_bytes(policy_path.read_bytes() + b"\n")
         with pytest.raises(ValueError, match="hash mismatch"):
             load_beginner_controller(root)
+
+
+def test_beginner_can_explicitly_load_an_all_pass_compact_candidate() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        artifact = root / "compact.npz"
+        policy = NumpyTinyController.random(TinyControllerConfig.compact(), seed=7)
+        policy.save(artifact)
+        report = root / "evaluation.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "suite": "raw-grounded-self-learning",
+                    "controller": {
+                        "kind": "tiny-controller-v6",
+                        "parameters": policy.parameter_count,
+                    },
+                    "artifact": {
+                        "persisted_path": str(artifact.resolve()),
+                        "sha256": sha256(artifact.read_bytes()).hexdigest(),
+                    },
+                    "gates": {"all_passed": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_evaluated_controller(report)
+
+        assert loaded.active
+        assert loaded.kind == "tiny-controller-v6"
+        assert loaded.parameter_count == 1_458_698
+        assert loaded.feature_profile == "typed_structure"
+
+        artifact.write_bytes(artifact.read_bytes() + b"changed")
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_evaluated_controller(report)
 
 
 def _request_for_role(

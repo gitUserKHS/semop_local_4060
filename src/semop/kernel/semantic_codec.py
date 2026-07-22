@@ -16,6 +16,7 @@ from .domain_catalog import (
 from .domains.coding import CodingProblem
 from .domains.language_text import LanguageTextProblem
 from .domains.linear_equation import LinearEquationProblem
+from .domains.quadratic_equation import QuadraticEquationProblem
 from .domains.numeric_comparison import NumericComparisonProblem
 from .domains.raster_vision import (
     RasterImage,
@@ -158,9 +159,14 @@ def _decode_coding(payload: Mapping[str, Any]) -> CodingProblem:
 
 
 def _encode_math(
-    value: str | LinearEquationProblem | NumericComparisonProblem,
+    value: str
+    | LinearEquationProblem
+    | QuadraticEquationProblem
+    | NumericComparisonProblem,
 ) -> dict[str, Any]:
     if isinstance(value, LinearEquationProblem):
+        expression = value.equation
+    elif isinstance(value, QuadraticEquationProblem):
         expression = value.equation
     elif isinstance(value, NumericComparisonProblem):
         expression = value.expression
@@ -168,7 +174,7 @@ def _encode_math(
         expression = value
     else:
         raise TypeError(
-            "math semantic payload must be a string, linear equation, or comparison"
+            "math semantic payload must be a string, equation, or comparison"
         )
     if not expression.strip():
         raise ValueError("math semantic payload requires a non-empty expression")

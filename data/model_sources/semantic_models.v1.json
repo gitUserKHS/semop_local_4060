@@ -1,0 +1,43 @@
+{
+  "schema_version": "semop.model-sources.v1",
+  "policy": {
+    "weights_in_git": false,
+    "network_loading_at_runtime": false,
+    "resolved_revision_in_download_receipt": true,
+    "neural_outputs_are_proposals": true
+  },
+  "models": [
+    {
+      "model_id": "Qwen/Qwen3.5-2B",
+      "role": "multimodal_semantic_proposer",
+      "profile": "balanced",
+      "license_spdx": "Apache-2.0",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "homepage_url": "https://huggingface.co/Qwen/Qwen3.5-2B"
+    },
+    {
+      "model_id": "Qwen/Qwen3.5-0.8B",
+      "role": "distilled_multimodal_semantic_proposer",
+      "profile": "economy",
+      "license_spdx": "Apache-2.0",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "homepage_url": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+    },
+    {
+      "model_id": "intfloat/multilingual-e5-small",
+      "role": "operator_and_memory_retriever",
+      "profile": "economy,balanced",
+      "license_spdx": "MIT",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "homepage_url": "https://huggingface.co/intfloat/multilingual-e5-small"
+    },
+    {
+      "model_id": "microsoft/Florence-2-base-ft",
+      "role": "vision_region_and_ocr_proposer",
+      "profile": "balanced_optional_sidecar",
+      "license_spdx": "MIT",
+      "revision": "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+      "homepage_url": "https://huggingface.co/microsoft/Florence-2-base-ft"
+    }
+  ]
+}

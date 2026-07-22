@@ -24,6 +24,7 @@ from .arithmetic import ArithmeticExpressionAdapter
 from .base import DomainInstance
 from .math_common import format_fraction
 from .numeric_comparison import NumericComparisonAdapter, NumericComparisonProblem
+from .quadratic_equation import QuadraticEquationAdapter, QuadraticEquationProblem
 
 
 class LinearEquationError(ValueError):
@@ -397,35 +398,47 @@ class MathInputAdapter:
         arithmetic: ArithmeticExpressionAdapter | None = None,
         comparison: NumericComparisonAdapter | None = None,
         linear: LinearEquationAdapter | None = None,
+        quadratic: QuadraticEquationAdapter | None = None,
     ) -> None:
         self.arithmetic = arithmetic or ArithmeticExpressionAdapter()
         self.comparison = comparison or NumericComparisonAdapter(
             arithmetic=self.arithmetic
         )
         self.linear = linear or LinearEquationAdapter()
+        self.quadratic = quadratic or QuadraticEquationAdapter()
 
     def adapt(
         self,
-        value: str | LinearEquationProblem | NumericComparisonProblem,
+        value: str
+        | LinearEquationProblem
+        | QuadraticEquationProblem
+        | NumericComparisonProblem,
     ) -> DomainInstance:
         if isinstance(value, NumericComparisonProblem):
             return self.comparison.adapt(value)
         if isinstance(value, LinearEquationProblem):
             return self.linear.adapt(value)
+        if isinstance(value, QuadraticEquationProblem):
+            return self.quadratic.adapt(value)
         if not isinstance(value, str):
             raise TypeError(
                 "math payload must be a string, NumericComparisonProblem, "
-                "or LinearEquationProblem"
+                "LinearEquationProblem, or QuadraticEquationProblem"
             )
         if self.comparison.looks_like(value):
             return self.comparison.adapt(value)
         if "=" in value:
+            if self.quadratic.looks_like(value):
+                return self.quadratic.adapt(value)
             return self.linear.adapt(value)
         return self.arithmetic.adapt(value)
 
     @staticmethod
     def project(
-        _value: str | LinearEquationProblem | NumericComparisonProblem,
+        _value: str
+        | LinearEquationProblem
+        | QuadraticEquationProblem
+        | NumericComparisonProblem,
         _result: SolveResult,
     ) -> bool:
         return False

@@ -62,6 +62,10 @@ def _status_claims(
     claims: list[tuple[str, tuple[str, ...]]] = []
     for item in _split_items(value):
         resolved = item
+        if item.startswith("지금_"):
+            current = item.removeprefix("지금_")
+            if current in known_requirements:
+                resolved = current
         if semantic_suffix and item not in known_requirements:
             candidate = f"{item}_{semantic_suffix}"
             if candidate in known_requirements:

@@ -147,6 +147,12 @@ from .domains.numeric_comparison import (
     NumericComparisonProblem,
     parse_numeric_comparison,
 )
+from .domains.quadratic_equation import (
+    QuadraticEquationAdapter,
+    QuadraticEquationError,
+    QuadraticEquationProblem,
+    parse_quadratic_equation,
+)
 from .domains.vision import VisionProblem, VisionRelationGoal, VisionWorldAdapter
 from .domains.raster_vision import (
     RasterAnalysis,
@@ -267,6 +273,17 @@ from .runtime import (
     TypedDomainRequest,
     UnifiedTypedReasoner,
     UnifiedTypedResult,
+)
+from .transitions import (
+    TemporalFact,
+    TransitionAction,
+    TransitionExecutor,
+    TransitionOperator,
+    TransitionPlanResult,
+    TransitionPlanner,
+    TransitionProofStep,
+    TransitionRegistry,
+    TransitionWorldState,
 )
 from .lmv_gate import (
     LMV_COMMON_CAPABILITIES,
@@ -516,6 +533,9 @@ __all__ = [
     "NumericComparisonError",
     "NumericComparisonParse",
     "NumericComparisonProblem",
+    "QuadraticEquationAdapter",
+    "QuadraticEquationError",
+    "QuadraticEquationProblem",
     "NumericConditionSpec",
     "NumericDataflowRuleSpec",
     "NumericMeasurementRef",
@@ -603,6 +623,7 @@ __all__ = [
     "TaskProfile",
     "Term",
     "TermApplication",
+    "TemporalFact",
     "TeacherProgramReview",
     "StructuredMeaningGraphAdapter",
     "StructuralSplitAudit",
@@ -611,6 +632,14 @@ __all__ = [
     "TypeValidationError",
     "TypedKernelBridge",
     "TypedRuleHypothesis",
+    "TransitionAction",
+    "TransitionExecutor",
+    "TransitionOperator",
+    "TransitionPlanResult",
+    "TransitionPlanner",
+    "TransitionProofStep",
+    "TransitionRegistry",
+    "TransitionWorldState",
     "TypedDataflowCompiler",
     "TypedDomainAdapter",
     "TypedDomainRequest",
@@ -677,6 +706,7 @@ __all__ = [
     "parse_arithmetic_expression",
     "parse_linear_equation",
     "parse_numeric_comparison",
+    "parse_quadratic_equation",
     "profile_learning_task",
     "promote_judged_fact",
     "promote_grounding_proposal",

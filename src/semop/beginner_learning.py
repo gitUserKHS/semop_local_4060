@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any, Sequence
@@ -152,6 +153,57 @@ def load_beginner_controller(
         ),
         feature_profile=str(getattr(profile, "value", profile)),
         checkpoint=checkpoint,
+    )
+
+
+def load_evaluated_controller(
+    report_path: str | Path,
+) -> LoadedBeginnerController:
+    """Load an explicitly selected NumPy candidate from an all-pass eval report."""
+
+    report_file = Path(report_path).resolve()
+    try:
+        report = json.loads(report_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid controller evaluation report") from exc
+    if not isinstance(report, dict) or report.get("suite") != (
+        "raw-grounded-self-learning"
+    ):
+        raise ValueError("unsupported controller evaluation report")
+    gates = report.get("gates")
+    artifact_info = report.get("artifact")
+    if not isinstance(gates, dict) or gates.get("all_passed") is not True:
+        raise ValueError("controller evaluation report did not pass every gate")
+    if not isinstance(artifact_info, dict):
+        raise ValueError("controller evaluation report has no artifact")
+    artifact_value = artifact_info.get("persisted_path")
+    if not isinstance(artifact_value, str) or not artifact_value.strip():
+        raise ValueError("controller evaluation report has no persisted candidate")
+    artifact = Path(artifact_value)
+    if not artifact.is_absolute():
+        artifact = (Path.cwd() / artifact).resolve()
+    try:
+        payload = artifact.read_bytes()
+    except OSError as exc:
+        raise ValueError("evaluated controller artifact is unavailable") from exc
+    expected_digest = _require_sha256(
+        artifact_info.get("sha256"),
+        "controller artifact",
+    )
+    if sha256(payload).hexdigest() != expected_digest:
+        raise ValueError("evaluated controller artifact hash mismatch")
+
+    from .tiny_controller import NumpyTinyController
+
+    policy = NumpyTinyController.from_artifact(payload)
+    expected_parameters = report.get("controller", {}).get("parameters")
+    if expected_parameters != policy.parameter_count:
+        raise ValueError("evaluated controller parameter count mismatch")
+    return LoadedBeginnerController(
+        policy=policy,
+        kind=str(report.get("controller", {}).get("kind", "")),
+        parameter_count=policy.parameter_count,
+        feature_profile=policy.config.feature_profile.value,
     )
 
 

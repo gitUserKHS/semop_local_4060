@@ -10,9 +10,29 @@ CPU inference lives in `semop.tiny_controller` and requires NumPy only. PyTorch 
 isolated in `semop.tiny_controller.training` and is needed only to train or export a
 model.
 
-## Default Architecture
+## Operating Profiles
 
-| Component | Default |
+The production incumbent remains the dependency-free sparse/goal-directed policy.
+`TinyControllerConfig.compact()` is the neural promotion candidate for ordinary PCs:
+
+| Component | Compact challenger |
+| --- | ---: |
+| Hidden dimension | 128 |
+| Shared relation message blocks | 2 |
+| Internal recurrent passes | 4 |
+| Hashed token buckets | 8,192 |
+| Relation buckets | 1,024 |
+| Operator buckets | 1,024 |
+| Parameter count | 1,458,698 |
+| Float32 uncompressed size | about 5.6 MiB |
+
+It becomes active only after the same sealed solve-rate, expansion, replay, and
+resource gates as every other controller. The larger constructor defaults below are
+kept for artifact compatibility and research ablation, not as the deployed default.
+
+## Full Ablation Architecture
+
+| Component | Full ablation |
 | --- | ---: |
 | Hidden dimension | 192 |
 | Shared relation message blocks | 2 |
@@ -146,11 +166,23 @@ promotes that controller on language only, then tests unseen math and vision ope
 names. A final joint holdout is used only after the controller and macro components
 have passed their own holdouts. Reproducible profiles now include the 12-parameter
 `typed_structure` sparse learner, a 29,834-parameter recurrent diagnostic learner,
-and the full 5,837,578-parameter recurrent learner. All three use the same independent gates; the
+the 1,458,698-parameter recurrent compact challenger, and the full
+5,837,578-parameter recurrent ablation. All four use the same independent gates; the
 recurrent profiles train only on three verified language traces and transfer the
 shared action-selection signal to unseen math and vision completion schemas. This is
 low-resource structural transfer, not free-form semantic learning. See
 `hierarchical_operator_brain.md`.
+
+Evaluate the ordinary-PC compact challenger on raw language training and untouched
+math/pixel transfer with:
+
+```powershell
+python tools/eval/evaluate_raw_grounded_self_learning.py `
+  --controller-profile recurrent-compact `
+  --controller-epochs 5 --device cuda `
+  --output artifacts/eval/raw_compact_controller.json `
+  --artifact-output artifacts/controller/raw_compact_controller.npz
+```
 
 Run an end-to-end verifier-generated training smoke test with a deliberately small
 debug architecture:
@@ -223,6 +255,14 @@ unseen domains. Language and math passed the 30% held-out median reduction gate;
 vision's dedicated distractor fell from 13 to 1 while its median remained 1 because
 most vision positives already require zero or one action. No production artifact is
 committed, and human-reviewed 20/100-shot transfer remains unevaluated.
+
+The current compact `typed_structure` challenger has now run end to end on RTX 4060.
+Five epochs over three verified raw-language traces produced a 5.42 MB NumPy artifact
+and reduced untouched math and pixel positive expansions from 6 to 2 in each domain.
+A fresh CPU-only process used about 20.5 MB additional peak RSS with p95 below 16 ms.
+On the independent hierarchical split, controller plus three verified macros reduced
+22 deterministic expansions to 10 and replayed all language, math, and vision proofs.
+Both are fixed-seed synthetic experiments; the artifacts remain explicit candidates.
 
 A 29,834-parameter composed-only diagnostic trained on 20 synthetic traces for five
 epochs reduced `composed-v4` expansion from 47 to 40 with soundness 100% and zero

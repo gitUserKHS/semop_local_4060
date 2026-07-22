@@ -112,6 +112,16 @@ median reduction in language and math. The fresh Horn distractor improved only f
 of broad language understanding. See `docs/lodo_controller_experiment.md`; synthetic
 counts are not reviewed 20/100-shot evidence.
 
+On 2026-07-22 the 1,458,698-parameter compact challenger was trained for five epochs
+from three raw language traces using the identity-free `typed_structure` profile.
+On untouched raw math and pixel tasks it reduced positive expansion from 6 to 2 in
+both domains (66.7%), with 100% replay-verified completion and zero false positives.
+The `.npz` is 5.42 MB; a fresh NumPy-only process added about 20.5 MB peak RSS and
+measured p95 below 16 ms. A separate hierarchical split reduced 22 deterministic
+expansions to 14 with the controller and to 10 with three induced macros (54.5%),
+while keeping all three domain proofs replayable. These are fixed-seed synthetic
+structural-transfer results, not human semantic correctness or 20/100-shot evidence.
+
 The 2026-07-17 v4 typed snapshot completed 134 fast tests in 13.532 test seconds and
 501 repository tests plus 20 subtests in 283.27 seconds. On that machine the
 goal-directed baseline
@@ -121,10 +131,11 @@ regression reference, not a cross-machine performance claim.
 ## Fast Core Suite
 
 ```powershell
-python -m unittest discover -s tests -p "test_typed_operator_*.py" -v
+python tools/eval/evaluate_low_resource_transfer.py --run-fast-tests
 ```
 
-This suite covers the typed kernel, symbolic baselines, direct language/math/vision
-adapters, migration runtime, controller runtime/training split, trace and macro
-constraints, and the benchmark schema. It is
-the 30-second CPU gate; the broader legacy suite remains a separate regression gate.
+The evaluator keeps an explicit file allowlist for the typed kernel, trust boundary,
+LMV contracts, controller runtime, prompt-first API, and transition layer. It is the
+30-second CPU gate. Tests that invoke a native C++ toolchain and the broader typed or
+legacy suites remain in the separate `python -m pytest` regression gate, so repository
+growth cannot silently turn the fast contract gate into the full suite.

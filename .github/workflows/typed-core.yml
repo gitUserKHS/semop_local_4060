@@ -47,6 +47,7 @@ jobs:
           tests/test_typed_operator_language_text.py
           tests/test_typed_operator_language_logic.py
           tests/test_typed_operator_linear_equation.py
+          tests/test_typed_operator_quadratic_equation.py
           tests/test_typed_operator_numeric_comparison.py
           tests/test_typed_operator_raster_vision.py
           tests/test_typed_operator_semantic_benchmark.py
@@ -56,6 +57,16 @@ jobs:
           tests/test_typed_operator_grounding_learning.py
           tests/test_typed_operator_grounding_eval.py
           tests/test_typed_operator_trust.py
+          tests/test_prompt_first_assistant.py
+          tests/test_conversation_memory.py
+          tests/test_memory_continuity_evaluation.py
+          tests/test_task_checkpoint_memory.py
+          tests/test_semantic_replay.py
+          tests/test_semantic_consolidation.py
+          tests/test_verified_semantic_curriculum.py
+          tests/test_semantic_development_evaluation.py
+          tests/test_semantic_student_evaluation.py
+          tests/test_semantic_learning_cycle.py
           -q
 
   numpy-controller:

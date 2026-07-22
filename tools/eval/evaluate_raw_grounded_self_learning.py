@@ -4,7 +4,9 @@ import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from time import perf_counter, process_time
 from typing import Any, Sequence
 
@@ -50,6 +52,7 @@ from semop.tiny_controller import (
 CONTROLLER_PROFILES = (
     "sparse",
     "recurrent-diagnostic",
+    "recurrent-compact",
     "recurrent-full",
 )
 WHITE = (255, 255, 255)
@@ -64,6 +67,7 @@ def evaluate_raw_grounded_self_learning(
     device: str = "cpu",
     seed: int = 31,
     min_transfer_expansion_reduction: float = 0.30,
+    artifact_output: str | Path | None = None,
 ) -> dict[str, Any]:
     """Train on raw language and evaluate untouched raw math and pixels."""
 
@@ -174,6 +178,7 @@ def evaluate_raw_grounded_self_learning(
     parameter_count = (
         active_candidate.parameter_count if active_candidate is not None else 0
     )
+    inference_resources = _measure_portable_inference(active_candidate, seed=seed)
     gates = {
         "raw_grounding_complete": (
             raw_result.grounding.training.complete
@@ -201,12 +206,23 @@ def evaluate_raw_grounded_self_learning(
         "primitive_full_replay_verified": primitive_replay,
         "portable_artifact_round_trip": artifact_round_trip,
         "portable_cpu_runtime": portable_cpu_runtime,
+        "fresh_process_inference_verified": (
+            inference_resources.get("verified") is True
+        ),
         "parameters_under_15m": parameter_count <= 15_000_000,
         "artifact_under_64mb": artifact_bytes <= 64 * 1024 * 1024,
         "transfer_p95_under_10s": candidate_metrics.p95_cpu_seconds <= 10.0,
-        "additional_peak_rss_under_512mb": max(0, peak_after - peak_before)
+        "additional_peak_rss_under_512mb": int(
+            inference_resources.get("additional_peak_rss_bytes", 2**63)
+        )
         <= 512 * 1024 * 1024,
     }
+    all_gates_passed = all(gates.values())
+    persisted_artifact = _persist_candidate_artifact(
+        active_candidate,
+        artifact_output,
+        allowed=all_gates_passed,
+    )
     return {
         "schema_version": 1,
         "suite": "raw-grounded-self-learning",
@@ -268,16 +284,85 @@ def evaluate_raw_grounded_self_learning(
         },
         "artifact": {
             "bytes": artifact_bytes,
+            "sha256": (
+                active_candidate.artifact_sha256
+                if active_candidate is not None
+                else None
+            ),
             "round_trip_verified": artifact_round_trip,
             "runtime": restored_runtime_name,
+            "candidate_only": True,
+            "persisted_path": persisted_artifact,
         },
         "resources": {
             "wall_seconds": wall_seconds,
             "peak_rss_bytes": peak_after,
-            "additional_peak_rss_bytes": max(0, peak_after - peak_before),
+            "training_additional_peak_rss_bytes": max(
+                0, peak_after - peak_before
+            ),
+            "cpu_inference": inference_resources,
+            "additional_peak_rss_bytes": int(
+                inference_resources.get("additional_peak_rss_bytes", 0)
+            ),
         },
-        "gates": {**gates, "all_passed": all(gates.values())},
+        "gates": {**gates, "all_passed": all_gates_passed},
     }
+
+
+def _measure_portable_inference(
+    candidate: Any,
+    *,
+    seed: int,
+) -> dict[str, Any]:
+    if candidate is None:
+        return {"available": False, "error": "no promoted candidate"}
+    with tempfile.TemporaryDirectory() as directory:
+        artifact = Path(directory) / f"controller{candidate.artifact_suffix}"
+        artifact.write_bytes(candidate.artifact)
+        command = [
+            sys.executable,
+            str(ROOT / "tools" / "eval" / "measure_raw_controller_inference.py"),
+            "--artifact",
+            str(artifact),
+            "--kind",
+            candidate.kind,
+            "--seed",
+            str(seed),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=60.0,
+                check=False,
+            )
+            payload = json.loads(completed.stdout.strip())
+        except (json.JSONDecodeError, OSError, subprocess.TimeoutExpired) as exc:
+            return {"available": False, "error": str(exc)}
+    if completed.returncode != 0:
+        return {
+            "available": False,
+            "error": payload.get("error", completed.stderr.strip()),
+        }
+    return dict(payload)
+
+
+def _persist_candidate_artifact(
+    candidate: Any,
+    output: str | Path | None,
+    *,
+    allowed: bool,
+) -> str | None:
+    if output is None or candidate is None or not allowed:
+        return None
+    destination = Path(output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_bytes(candidate.artifact)
+    temporary.replace(destination)
+    return str(destination.resolve())
 
 
 def _controller_learner(
@@ -292,12 +377,14 @@ def _controller_learner(
         return StructuralPolicyLearner()
     if profile == "recurrent-diagnostic":
         config = TinyControllerConfig.diagnostic()
+    elif profile == "recurrent-compact":
+        config = TinyControllerConfig.compact()
     elif profile == "recurrent-full":
         config = TinyControllerConfig()
     else:
         raise ValueError(
             "controller_profile must be sparse, recurrent-diagnostic, "
-            "or recurrent-full"
+            "recurrent-compact, or recurrent-full"
         )
     return TinyControllerPolicyLearner(
         config=config,
@@ -575,6 +662,11 @@ def main() -> int:
         default=0.30,
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--artifact-output",
+        type=Path,
+        help="write the candidate controller only when every evaluation gate passes",
+    )
     args = parser.parse_args()
     report = evaluate_raw_grounded_self_learning(
         controller_profile=args.controller_profile,
@@ -585,6 +677,7 @@ def main() -> int:
         min_transfer_expansion_reduction=(
             args.min_transfer_expansion_reduction
         ),
+        artifact_output=args.artifact_output,
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output is not None:

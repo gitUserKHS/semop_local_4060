@@ -61,13 +61,13 @@ def create_default_domain_catalog(
                 semantic_codec=MATH_SEMANTIC_CODEC,
                 input_contract=(
                     "exact arithmetic expression, numeric comparison, or one-variable "
-                    "linear equation"
+                    "linear or quadratic real equation"
                 ),
                 description_ko=(
                     "정확한 수식과 일차방정식을 typed 계산 프로그램으로 바꾼다."
                 ),
                 capabilities=_SHARED_CAPABILITIES
-                | {"exact_arithmetic", "linear_equation"},
+                | {"exact_arithmetic", "linear_equation", "quadratic_real_equation"},
             ),
             DomainSpec(
                 kind=DomainKind.VISION,

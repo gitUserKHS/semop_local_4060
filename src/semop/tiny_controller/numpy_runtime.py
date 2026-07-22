@@ -67,6 +67,20 @@ class TinyControllerConfig:
             operator_buckets=64,
         )
 
+    @classmethod
+    def compact(cls) -> "TinyControllerConfig":
+        """Return the 1.46M production challenger for ordinary-PC evaluation."""
+
+        return cls(
+            d_model=128,
+            token_buckets=8_192,
+            relation_buckets=1_024,
+            operator_buckets=1_024,
+            message_blocks=2,
+            recursion_steps=4,
+            feature_profile=ControllerFeatureProfile.TYPED_STRUCTURE,
+        )
+
 
 class NumpyTinyController:
     """Relation-aware recurrent policy runtime with no PyTorch dependency."""

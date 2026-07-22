@@ -17,6 +17,38 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+FAST_CORE_TEST_FILES = (
+    "tests/test_typed_operator_kernel.py",
+    "tests/test_typed_operator_domains.py",
+    "tests/test_typed_operator_adapters.py",
+    "tests/test_typed_operator_composition.py",
+    "tests/test_typed_operator_dataflow.py",
+    "tests/test_typed_operator_composed_scene.py",
+    "tests/test_typed_operator_language_text.py",
+    "tests/test_typed_operator_language_logic.py",
+    "tests/test_typed_operator_linear_equation.py",
+    "tests/test_typed_operator_quadratic_equation.py",
+    "tests/test_typed_operator_numeric_comparison.py",
+    "tests/test_typed_operator_raster_vision.py",
+    "tests/test_typed_operator_semantic_benchmark.py",
+    "tests/test_typed_operator_rule_discovery.py",
+    "tests/test_typed_operator_judging.py",
+    "tests/test_typed_operator_grounding.py",
+    "tests/test_typed_operator_grounding_learning.py",
+    "tests/test_typed_operator_grounding_eval.py",
+    "tests/test_typed_operator_trust.py",
+    "tests/test_prompt_first_assistant.py",
+    "tests/test_conversation_memory.py",
+    "tests/test_memory_continuity_evaluation.py",
+    "tests/test_task_checkpoint_memory.py",
+    "tests/test_semantic_replay.py",
+    "tests/test_semantic_consolidation.py",
+    "tests/test_verified_semantic_curriculum.py",
+    "tests/test_semantic_development_evaluation.py",
+    "tests/test_semantic_student_evaluation.py",
+    "tests/test_semantic_learning_cycle.py",
+)
+
 from semop.kernel import (
     Fact,
     FactStatus,
@@ -1421,12 +1453,9 @@ def _run_fast_core_tests() -> dict[str, Any]:
     command = [
         sys.executable,
         "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests",
-        "-p",
-        "test_typed_operator_*.py",
+        "pytest",
+        "-q",
+        *FAST_CORE_TEST_FILES,
     ]
     started = perf_counter()
     try:
@@ -1444,6 +1473,7 @@ def _run_fast_core_tests() -> dict[str, Any]:
             "available": True,
             "seconds": elapsed,
             "returncode": completed.returncode,
+            "test_files": list(FAST_CORE_TEST_FILES),
             "output_tail": output[-12:],
         }
     except subprocess.TimeoutExpired:
@@ -1451,6 +1481,7 @@ def _run_fast_core_tests() -> dict[str, Any]:
             "available": True,
             "seconds": perf_counter() - started,
             "returncode": -1,
+            "test_files": list(FAST_CORE_TEST_FILES),
             "reason": "fast core suite exceeded 35-second measurement timeout",
         }
 

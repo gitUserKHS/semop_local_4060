@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from time import perf_counter
@@ -34,6 +35,7 @@ from semop.tiny_controller import (
 CONTROLLER_PROFILES = (
     "sparse",
     "recurrent-diagnostic",
+    "recurrent-compact",
     "recurrent-full",
 )
 
@@ -50,12 +52,14 @@ def _controller_learner(
         return StructuralPolicyLearner()
     if profile == "recurrent-diagnostic":
         config = TinyControllerConfig.diagnostic()
+    elif profile == "recurrent-compact":
+        config = TinyControllerConfig.compact()
     elif profile == "recurrent-full":
         config = TinyControllerConfig()
     else:
         raise ValueError(
             "controller_profile must be sparse, recurrent-diagnostic, "
-            "or recurrent-full"
+            "recurrent-compact, or recurrent-full"
         )
     return TinyControllerPolicyLearner(
         config=config,
@@ -78,6 +82,7 @@ def evaluate_hierarchical_self_learning(
     controller_learning_rate: float = 1e-3,
     device: str = "cpu",
     min_joint_expansion_reduction: float = 0.50,
+    artifact_output: str | Path | None = None,
 ) -> dict[str, Any]:
     split = generate_hierarchical_brain_transfer_split(
         examples_per_domain,
@@ -190,6 +195,7 @@ def evaluate_hierarchical_self_learning(
 
     artifact_round_trip = False
     artifact_bytes = 0
+    brain_artifact = brain.to_artifact() if brain is not None else None
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "hierarchical-brain.json"
         persisted = HierarchicalSelfLearningLoop.persist_promoted(result, path)
@@ -200,6 +206,16 @@ def evaluate_hierarchical_self_learning(
                 learner,
             )
             artifact_round_trip = restored.to_artifact() == brain.to_artifact()
+
+    inference_resources = _measure_portable_inference(
+        brain_artifact,
+        controller_profile=controller_profile,
+        seed=seed,
+        examples_per_domain=examples_per_domain,
+        validation_per_domain=validation_per_domain,
+        heldout_per_domain=heldout_per_domain,
+        controller_domain=controller_domain,
+    )
 
     ablations = {
         "deterministic": result.deterministic.metrics.to_dict(),
@@ -268,13 +284,24 @@ def evaluate_hierarchical_self_learning(
         "false_positives_zero": result.joint.metrics.false_positives == 0,
         "primitive_full_replay_verified": primitive_replay,
         "artifact_round_trip_verified": artifact_round_trip,
+        "fresh_process_inference_verified": (
+            inference_resources.get("verified") is True
+        ),
         "parameters_under_15m": brain is not None
         and brain.parameter_count <= 15_000_000,
         "artifact_under_64mb": artifact_bytes <= 64 * 1024 * 1024,
         "joint_p95_under_10s": result.joint.metrics.p95_cpu_seconds <= 10.0,
-        "additional_peak_rss_under_512mb": max(0, peak_after - peak_before)
+        "additional_peak_rss_under_512mb": int(
+            inference_resources.get("additional_peak_rss_bytes", 2**63)
+        )
         <= 512 * 1024 * 1024,
     }
+    all_gates_passed = all(gates.values())
+    persisted_artifact = _persist_candidate_artifact(
+        brain_artifact,
+        artifact_output,
+        allowed=all_gates_passed,
+    )
     return {
         "schema_version": 1,
         "suite": "typed-hierarchical-self-learning",
@@ -348,14 +375,91 @@ def evaluate_hierarchical_self_learning(
             "bytes": artifact_bytes,
             "sha256": brain.artifact_sha256 if brain is not None else None,
             "round_trip_verified": artifact_round_trip,
+            "candidate_only": True,
+            "persisted_path": persisted_artifact,
         },
         "resources": {
             "wall_seconds": wall_seconds,
             "peak_rss_bytes": peak_after,
-            "additional_peak_rss_bytes": max(0, peak_after - peak_before),
+            "training_additional_peak_rss_bytes": max(
+                0, peak_after - peak_before
+            ),
+            "cpu_inference": inference_resources,
+            "additional_peak_rss_bytes": int(
+                inference_resources.get("additional_peak_rss_bytes", 0)
+            ),
         },
-        "gates": {**gates, "all_passed": all(gates.values())},
+        "gates": {**gates, "all_passed": all_gates_passed},
     }
+
+
+def _measure_portable_inference(
+    artifact: bytes | None,
+    *,
+    controller_profile: str,
+    seed: int,
+    examples_per_domain: int,
+    validation_per_domain: int,
+    heldout_per_domain: int,
+    controller_domain: str,
+) -> dict[str, Any]:
+    if artifact is None:
+        return {"available": False, "error": "no promoted brain"}
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "hierarchical-brain.json"
+        path.write_bytes(artifact)
+        command = [
+            sys.executable,
+            str(ROOT / "tools" / "eval" / "measure_hierarchical_brain_inference.py"),
+            "--artifact",
+            str(path),
+            "--profile",
+            controller_profile,
+            "--seed",
+            str(seed),
+            "--examples-per-domain",
+            str(examples_per_domain),
+            "--validation-per-domain",
+            str(validation_per_domain),
+            "--heldout-per-domain",
+            str(heldout_per_domain),
+            "--controller-domain",
+            controller_domain,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=60.0,
+                check=False,
+            )
+            payload = json.loads(completed.stdout.strip())
+        except (json.JSONDecodeError, OSError, subprocess.TimeoutExpired) as exc:
+            return {"available": False, "error": str(exc)}
+    if completed.returncode != 0:
+        return {
+            "available": False,
+            "error": payload.get("error", completed.stderr.strip()),
+        }
+    return dict(payload)
+
+
+def _persist_candidate_artifact(
+    artifact: bytes | None,
+    output: str | Path | None,
+    *,
+    allowed: bool,
+) -> str | None:
+    if artifact is None or output is None or not allowed:
+        return None
+    destination = Path(output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_bytes(artifact)
+    temporary.replace(destination)
+    return str(destination.resolve())
 
 
 def main() -> int:
@@ -389,6 +493,11 @@ def main() -> int:
         default=0.50,
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--artifact-output",
+        type=Path,
+        help="write the candidate brain only when every evaluation gate passes",
+    )
     args = parser.parse_args()
     report = evaluate_hierarchical_self_learning(
         examples_per_domain=args.examples_per_domain,
@@ -401,6 +510,7 @@ def main() -> int:
         controller_learning_rate=args.controller_learning_rate,
         device=args.device,
         min_joint_expansion_reduction=args.min_joint_expansion_reduction,
+        artifact_output=args.artifact_output,
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output is not None:

@@ -100,6 +100,21 @@ from .understanding_eval import SemOpUnderstandingEvaluator, UnderstandingEvalSu
 from .world_model_math import MathStrategyPrior, MathWorldCandidate, MathWorldCheck, WorldModelMathReasoner, WorldModelMathReport
 from .world_model_math_service import ProductionMathDecision, ProductionMathMetrics, ProductionMathReadiness, ProductionMathSelfTestCase, ProductionMathSelfTestResult, ProductionMathSelfTestSummary, ProductionMathServiceConfig, ProductionMathServiceResponse, WorldModelMathProductionService
 from .world_model_math_training import MathCaseEvaluation, MathTrainingCase, MathWorldModelEvaluationSummary, MathWorldModelTrainingSummary, WorldModelMathTrainer, ensure_starter_math_cases, load_math_training_cases
+from .assistant import AssistantConfig, SemOpAssistant
+from .artifact_promotion import ArtifactCandidate, ArtifactPromotionStore, PROMOTION_APPROVAL_ATTESTATION, PromotionGateReport
+from .conversation_memory import CorrectionPrototype, CorrectionPrototypeMatch, ConversationStore, ConversationTurn, ExplicitMemory, MemoryFacet, MemorySemanticRanker, UserCorrection, classify_memory_facets
+from .memory_evaluation import CorrectionConsolidationReport, EpisodicMemoryABReport, LongHistoryEpisodicReport, MemoryContinuityConfig, MemoryContinuityReport, MemoryRecallResult, SemanticMemoryABReport, SemanticParaphraseMemoryReport, TaskAutoResumeReport, TaskContextABReport, evaluate_correction_consolidation, evaluate_episodic_memory_effect, evaluate_long_history_episodic_recall, evaluate_long_session_memory_effect, evaluate_memory_continuity, evaluate_semantic_memory_effect, evaluate_semantic_paraphrase_memory, evaluate_task_auto_resume, evaluate_task_context_effect
+from .prompt_api import AnswerEnvelope, AnswerStatus, CognitiveOperator, ConversationMessage, ConversationRole, ImageRegion, PromptRequest, RecalledEpisode, RecalledMemory, ResourceMetrics, ResourceTier, SemanticProposal, SourceSpan, TaskContext
+from .prompt_compiler import PromptCompilation, PromptCompiler
+from .semantic_distillation import DistillationDecision, SemanticDistillationConfig, SemanticDistillationCorpus, SemanticDistillationRecord, build_training_messages
+from .semantic_experience import SEMANTIC_REVIEW_ATTESTATION, SemanticTraceDecision, SemanticTraceRecord, SemanticTraceReview, SemanticTraceSplit, SemanticTraceStats, SemanticTraceStore, canonical_completion_from_proposal, semantic_request_split, semantic_trace_split
+from .semantic_models import E5OperatorRetriever, FlorenceVisionSidecar, LexicalOperatorRetriever, ModelProfile, ModelSpec, QwenSemanticBackend, QwenSemanticConfig, VisionSidecarCandidate, resolve_model_profile
+from .semantic_memory import ReviewedSemanticMemory, SemanticMemoryMatch, SemanticPrototype
+from .semantic_replay import SemanticReplayBatch, SemanticReplayCandidate, SemanticReplayPlanner
+from .semantic_learning_cycle import SemanticLearningCycleResult, SemanticLearningCycleStatus, SemanticLearningReadiness, SemanticLearningRoleSummary, SemanticStudentLearningCycle, inspect_semantic_learning_readiness
+from .semantic_student_evaluation import SemanticRuntimeObservation, SemanticStudentEvaluation, SemanticStudentOutcome, evaluate_semantic_student, run_local_semantic_student_evaluation
+from .semantic_student_training import train_semantic_student
+from .task_memory import TaskCheckpoint, TaskCheckpointMatch, TaskCheckpointStore, TaskQueryKind, TaskStatus, is_task_resume_request, task_query_kind
 from .visual_geometry_3d import Scene3DReconstruction, ScenePrimitive3D, SceneRelation3D, VisualGeometry3DWorkbench, VisualGeometryBatchReconstructionSummary, VisualGeometryCollectionSummary, VisualGeometryDatasetSummary
 from .vlso.real_image_eval import RealImageEvalBuilder, RealImageEvalCaseCandidate, RealImageEvalBuildSummary, RealImageEvalFinalizeSummary
 from .vlso import AffordanceLabelDataset, AffordanceLabelExample, AffordanceLabelTarget, AffordancePrediction, AffordanceTrainingSummary, AffordanceWeightTrainer, DEFAULT_VISION_MODEL_ROOT, DetectorOutputAdapter, FrontierBundleItem, FrontierInstallSummary, FrontierSetupSummary, FrontierVisionInstaller, FrontierVisualSummary, FrontierVisionAdapter, FrontierVisionSpec, VisualSceneAdjudication, VisualSceneAdjudicator, GeometryPrimitiveBackbone, GeometryPrimitiveResult, GeometryReasoningResult, GeometryTopologyExtractor, GeometryTopologyResult, HybridMemoryMatch, ImageMaskPreprocessor, ImageParseResult, ImagePreprocessResult, JepaStructuralPredictor, PredictivePriorResult, LocalTextGenerator, OpenImagesAnnotationAdapter, OpenImagesPayloadSummary, OperatorType, RawImageObservationParser, SemanticRegionHypothesis, SemanticSceneAnalyzer, SemanticSceneHypothesis, SemanticSceneSummary, SharedWorldModel, StructuralOperatorBinding, SyntheticGeometryScene, SyntheticGeometrySceneBuilder, VisualAffordanceCandidate, VisualAffordanceFeatureExtractor, VisualClusterReviewDecision, VisualClusterReviewStore, VisualApprovedReviewRetrainer, VisualReviewRetrainSummary, VisualCollectionPlanItem, VisualCollectionRecord, VisualCollectionRunSummary, VisualCollectionSource, VisualConceptDataset, VisualConceptExample, VisualConceptLabelRecommender, VisualConceptLearningSummary, VisualConceptMatch, VisualConceptMemory, VisualConceptPrototypeTrainer, VisualConceptRecord, VisualConceptSelfTrainer, VisualConceptTarget, VisualDataCollector, VisualDownloadEntry, VisualDownloadSummary, VisualFamilyBatchSummary, VisualEmbeddingMatch, VisualEmbeddingRecord, VisualEmbeddingStore, VisualGeometryReasoner, VisualHybridMemory, VisualHybridMemoryResult, VisualObjectReasoner, VisualObjectReasoningResult, VisualObservation, VisualOperatorLearningSummary, VisualOperatorMatch, VisualOperatorMemory, VisualOperatorPrototypeTrainer, VisualOperatorRecord, VisualPseudoCluster, VisualSelfTrainingSummary, VisualStructuralOperatorInducer, VisualStructuralReasoningResult, VISION_BACKBONE_SPECS, VLSOAligner, VLSOAnswer, VLSOEntity, VLSOLanguageParser, VLSOOperator, VLSOQuestionAnswerer, VLSOReasoner, VLSORelation, VLSOVisualParser, VLSO_OPERATOR_TYPES, VisionBackboneSpec, VisionEmbeddingExtractor, WeakAffordanceClassifier, PseudoLabelAcceptanceConfig, GeometryPipelineSummary, VisualGeometryBootstrapPipeline, VlsoEvalCase, VlsoEvalResult, VlsoEvalSummary, VlsoGroundedEvaluator, VlsoReviewImpactEvaluator, VlsoStoreComparisonSummary, build_object_family_manifest, build_geometry_seed_manifest, resolve_local_vision_model_path
@@ -572,6 +587,107 @@ __all__ = [
     "PersistentBenchmarkCorpusSummary",
     "PromotedReviewBenchmarkCases",
 ]
+
+__all__.extend(
+    [
+        "AnswerEnvelope",
+        "AnswerStatus",
+        "AssistantConfig",
+        "ArtifactCandidate",
+        "ArtifactPromotionStore",
+        "CognitiveOperator",
+        "ConversationMessage",
+        "ConversationRole",
+        "CorrectionPrototype",
+        "CorrectionPrototypeMatch",
+        "CorrectionConsolidationReport",
+        "EpisodicMemoryABReport",
+        "ConversationStore",
+        "ConversationTurn",
+        "ExplicitMemory",
+        "MemoryFacet",
+        "MemorySemanticRanker",
+        "UserCorrection",
+        "MemoryContinuityConfig",
+        "MemoryContinuityReport",
+        "MemoryRecallResult",
+        "LongHistoryEpisodicReport",
+        "E5OperatorRetriever",
+        "DistillationDecision",
+        "FlorenceVisionSidecar",
+        "ImageRegion",
+        "LexicalOperatorRetriever",
+        "ModelProfile",
+        "ModelSpec",
+        "PromptCompilation",
+        "PromptCompiler",
+        "PromptRequest",
+        "RecalledEpisode",
+        "RecalledMemory",
+        "PROMOTION_APPROVAL_ATTESTATION",
+        "PromotionGateReport",
+        "QwenSemanticBackend",
+        "QwenSemanticConfig",
+        "ResourceMetrics",
+        "ResourceTier",
+        "SemOpAssistant",
+        "SemanticProposal",
+        "SemanticDistillationConfig",
+        "SemanticDistillationCorpus",
+    "SemanticDistillationRecord",
+    "SEMANTIC_REVIEW_ATTESTATION",
+    "SemanticTraceDecision",
+    "SemanticTraceRecord",
+    "SemanticTraceReview",
+    "SemanticTraceSplit",
+    "SemanticTraceStats",
+    "SemanticTraceStore",
+    "ReviewedSemanticMemory",
+    "SemanticMemoryMatch",
+    "SemanticMemoryABReport",
+    "SemanticParaphraseMemoryReport",
+    "TaskContextABReport",
+    "SemanticPrototype",
+    "SemanticReplayBatch",
+    "SemanticReplayCandidate",
+    "SemanticReplayPlanner",
+        "evaluate_memory_continuity",
+        "evaluate_long_history_episodic_recall",
+        "classify_memory_facets",
+        "evaluate_correction_consolidation",
+    "evaluate_episodic_memory_effect",
+    "evaluate_semantic_memory_effect",
+    "evaluate_semantic_paraphrase_memory",
+    "evaluate_task_context_effect",
+    "evaluate_task_auto_resume",
+    "SemanticRuntimeObservation",
+    "SemanticStudentEvaluation",
+    "SemanticStudentOutcome",
+    "SemanticLearningCycleResult",
+    "SemanticLearningCycleStatus",
+    "SemanticLearningReadiness",
+    "SemanticLearningRoleSummary",
+    "SemanticStudentLearningCycle",
+    "canonical_completion_from_proposal",
+    "evaluate_semantic_student",
+    "inspect_semantic_learning_readiness",
+    "run_local_semantic_student_evaluation",
+    "semantic_request_split",
+    "semantic_trace_split",
+    "train_semantic_student",
+        "SourceSpan",
+        "TaskCheckpoint",
+        "TaskCheckpointStore",
+        "TaskCheckpointMatch",
+        "TaskAutoResumeReport",
+        "TaskContext",
+        "TaskStatus",
+        "is_task_resume_request",
+        "VisionSidecarCandidate",
+        "resolve_model_profile",
+        "build_training_messages",
+    ]
+)
 
 
 
